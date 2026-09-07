@@ -22,6 +22,9 @@ BLOCK1_PARENT = "201bd595c0d349149e228dbc261bbb8f713ea5a1a2e0b8018667a029b2db185
 READTHROUGH_FILE = "docs/protected-source-block1-readthrough.json"
 COPY_INTERFACE_FILE = "docs/protected-source-copy-interface.json"
 CUTOVER_FILE = 'docs/protected-source-copy-cutover.json'
+RESEARCH_FILE = 'docs/protected-source-research-api.json'
+RESEARCH_PARENT = 'f110f04c79e4ae72023217c95799a4c85303cb0ef8f0b36395e82d1142389f0b'
+RESEARCH_PATHS = {'WalletHunterV05_final/webapp/server.py','WalletHunterV05_final/webapp/intelligence_api.py'}
 CUTOVER_PARENT = '61462cdc2660a634250496d0f8a983eab58ee34ff6da03b7fca85189d2d5027f'
 CUTOVER_PATHS = {'WalletHunterV05_final/' + p for p in (
     'core/execution_journal.py', 'core/trading_engine.py', 'core/foundation/contracts.py',
@@ -269,6 +272,24 @@ def check(root):
             return report
         effective.update({name: row['reviewed_sha256'] for name, row in rows.items()})
         report['transition_chain'].append({'phase':'copy-cutover', 'files':rows})
+    research = root / RESEARCH_FILE
+    if research.exists() or research.is_symlink():
+        try:
+            if research.is_symlink() or not cutover.is_file() or cutover.is_symlink(): raise ValueError('invalid_research_parent')
+            document=json.loads(research.read_bytes())
+            parent=hashlib.sha256(cutover.read_bytes()).hexdigest()
+            if set(document)!={'phase','parent_manifest_sha256','files'} or document['phase']!='research-api' or parent!=RESEARCH_PARENT or document['parent_manifest_sha256']!=parent:
+                raise ValueError('invalid_research_manifest')
+            rows=document['files']
+            if set(rows)!=RESEARCH_PATHS: raise ValueError('invalid_research_paths')
+            for name,row in rows.items():
+                if set(row)!={'previous_sha256','reviewed_sha256'} or row['previous_sha256']!=effective.get(name) or not re.fullmatch('[a-f0-9]{64}',row['reviewed_sha256']):
+                    raise ValueError('invalid_research_transition')
+            effective.update({name:row['reviewed_sha256'] for name,row in rows.items()})
+            report['transition_chain'].append({'phase':'research-api','files':rows})
+        except (ValueError,OSError,TypeError) as exc:
+            report.update(status='FAIL',reason=str(exc))
+            return report
     report["changed"] = [name for name, digest in effective.items()
                          if (root / name).is_symlink() or not (root / name).is_file()
                          or hashlib.sha256((root / name).read_bytes()).hexdigest() != digest]

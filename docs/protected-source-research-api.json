@@ -1,0 +1,14 @@
+{
+  "phase": "research-api",
+  "parent_manifest_sha256": "f110f04c79e4ae72023217c95799a4c85303cb0ef8f0b36395e82d1142389f0b",
+  "files": {
+    "WalletHunterV05_final/webapp/server.py": {
+      "previous_sha256": "b64f3b3d09b83b85cb5ac2e7329daaa5dda3ec676cea08f364199f7e47bb6096",
+      "reviewed_sha256": "3672d934e3629892e25a7717523e320812ab012228cb8291fcf53e55d329f130"
+    },
+    "WalletHunterV05_final/webapp/intelligence_api.py": {
+      "previous_sha256": null,
+      "reviewed_sha256": "b95e1e67b766cac6990c3eb9cc4b18cec166c1e310f8df7389c15b5d7a30d50c"
+    }
+  }
+}

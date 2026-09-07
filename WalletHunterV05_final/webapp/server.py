@@ -101,6 +101,10 @@ def require_user(init_data: str | None) -> dict:
     return telegram_user(init_data or "")
 
 
+from webapp.intelligence_api import router as intelligence_router
+app.include_router(intelligence_router(os.path.join(ROOT, 'data', 'intelligence.sqlite'), settings.hl_mode, require_user))
+
+
 def short_address(value: str) -> str:
     return value if len(value) <= 12 else f"{value[:6]}…{value[-4:]}"
 

@@ -44,7 +44,13 @@ been installed. Existing public REST request timeout remains 20 seconds.
 
 ## Remaining product work
 
+The existing authenticated FastAPI application now exposes `/api/intelligence`
+and `/api/intelligence/stream`. These read the dedicated `data/intelligence.sqlite`
+in SQLite read-only mode; they do not create the database or start the worker.
+The SSE feed uses bounded batches, per-user connection caps, heartbeats and a
+resume cursor. Data is public research only, never private user-account state.
+
 Manual/confirmed-AI gateway migration; authorization and autonomous allocation;
 PAPER/SHADOW lifecycle and outcomes; calibration/promotion gates; authenticated
-dashboard integration; Telegram workflow; full end-to-end financial recovery.
+dashboard UI integration; Telegram workflow; full end-to-end financial recovery.
 Do not enable autonomous MAINNET or label this checkpoint product-complete.

@@ -214,3 +214,48 @@ class IntelligenceTests(unittest.TestCase):
             for node in ast.walk(tree):
                 if isinstance(node,ast.ImportFrom): self.assertNotIn(node.module,forbidden)
             self.assertNotIn('private_key',path.read_text(encoding='utf-8'))
+    def test_research_http_authentication_and_bounds(self):
+        from fastapi import FastAPI, HTTPException
+        from fastapi.testclient import TestClient
+        from webapp.intelligence_api import router
+        def auth(token):
+            if token!='synthetic-user': raise HTTPException(401,'unauthorized')
+            return {'id':7}
+        app=FastAPI(); app.include_router(router(self.path,'TESTNET',auth))
+        with TestClient(app) as client:
+            self.assertEqual(client.get('/api/intelligence').status_code,401)
+            self.assertEqual(client.get('/api/intelligence/stream').status_code,401)
+            self.assertEqual(client.get('/api/intelligence?limit=51',headers={'x-telegram-init-data':'synthetic-user'}).status_code,422)
+            response=client.get('/api/intelligence',headers={'x-telegram-init-data':'synthetic-user'})
+            self.assertEqual(response.status_code,200)
+            self.assertFalse(response.json()['execution_enabled'])
+    def test_research_view_no_creation_and_network_isolation(self):
+        from webapp.intelligence_api import ResearchView
+        absent=Path(self.path).with_name('absent.sqlite')
+        self.assertEqual(ResearchView(absent,'TESTNET').read()['reason'],'WORKER_NOT_STARTED')
+        self.assertFalse(absent.exists())
+        self.discover(); before=Path(self.path).read_bytes()
+        first=ResearchView(self.path,'TESTNET').read(limit=1)
+        self.assertEqual(len(first['events']),1)
+        second=ResearchView(self.path,'TESTNET').read(after=first['cursor'])
+        self.assertGreater(second['cursor'],first['cursor'])
+        self.assertEqual(ResearchView(self.path,'MAINNET').read()['events'],[])
+        self.assertEqual(Path(self.path).read_bytes(),before)
+    def test_sse_reconnect_payload_and_disconnect(self):
+        import asyncio
+        from fastapi import FastAPI
+        from webapp.intelligence_api import router
+        self.discover()
+        api=router(self.path,'TESTNET',lambda token:{'id':7})
+        endpoint=next(r.endpoint for r in api.routes if r.path=='/api/intelligence/stream')
+        class Request:
+            async def is_disconnected(self): return False
+        async def one():
+            response=await endpoint(Request(),0,'synthetic')
+            output=await anext(response.body_iterator)
+            await response.body_iterator.aclose()
+            return output
+        output=asyncio.run(one())
+        self.assertIn('event: research',output)
+        self.assertIn('WALLET_DISCOVERED',output)
+        self.assertNotIn('private_key',output)

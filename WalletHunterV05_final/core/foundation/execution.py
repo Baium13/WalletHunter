@@ -287,12 +287,18 @@ class ExecutionGateway:
         with self.store.transaction() as db:
             row = db.execute("SELECT status,receipt FROM intents WHERE id=? AND scope=?", (intent.intent_id, scope_key(intent.scope))).fetchone()
             if not row: raise ValueError("No durable intent")
-            if row["status"] not in {"SUBMITTING", "UNKNOWN"}:
+            if row["status"] not in {"SUBMITTING", "UNKNOWN", "PARTIAL"}:
                 return ExecutionReceipt.model_validate_json(row["receipt"])
             current = self.store.portfolio_in(db, intent.scope)
             if current != before and intent.version == 1: receipt = self._unknown(intent, now)
             if intent.version in (2,3) and report is not None and report.after.revision <= current.revision:
-                receipt = self._unknown(intent, now)
+                # A repeated query may return the same durable partial
+                # snapshot. Preserve that proven partial state instead of
+                # downgrading it or pretending the remainder was filled.
+                previous = json.loads(row["receipt"]) if row["receipt"] else {}
+                if not (row["status"] == "PARTIAL" and previous.get("status") == "PARTIAL"
+                        and report.after == current):
+                    receipt = self._unknown(intent, now)
             if intent.version == 3 and current != before: receipt = self._unknown(intent, now)
             if receipt.status != "UNKNOWN":
                 after = report.after
@@ -305,8 +311,10 @@ class ExecutionGateway:
                 self.store.publish_portfolio_in(db, after, intent.correlation_id)
             kind = {"FILLED": "ORDER_FILLED", "PARTIAL": "ORDER_PARTIALLY_FILLED", "REJECTED": "ORDER_REJECTED", "UNKNOWN": "EXECUTION_UNKNOWN", "CONFIGURED": "LEVERAGE_CONFIGURED"}[receipt.status]
             # Repeated UNKNOWN queries must not collide with the original timestamp.
-            if receipt.status != "UNKNOWN" or row["status"] != "UNKNOWN": self._event(db, intent, kind, receipt, now)
-            if receipt.status in {"FILLED", "PARTIAL"}:
+            status_changed = receipt.status != row["status"]
+            if status_changed:
+                self._event(db, intent, kind, receipt, now)
+            if status_changed and receipt.status in {"FILLED", "PARTIAL"}:
                 self._event(db, intent, {'OPEN':'POSITION_OPENED','ADD':'POSITION_INCREASED','REDUCE':'POSITION_REDUCED','CLOSE':'POSITION_CLOSED' if receipt.status == 'FILLED' else 'POSITION_REDUCED'}[intent.action], receipt, now)
             db.execute("UPDATE intents SET status=?,receipt=? WHERE id=?", (receipt.status, encoded(receipt), intent.intent_id))
         return receipt
@@ -316,7 +324,8 @@ class ExecutionGateway:
         with self.store.transaction() as db:
             row = db.execute("SELECT body,status,receipt FROM intents WHERE id=? AND scope=?", (intent.intent_id, scope_key(intent.scope))).fetchone()
             if not row or row["body"] != encoded(intent): raise ValueError("Unknown intent identity")
-            if row["status"] not in {"SUBMITTING", "UNKNOWN"}: return ExecutionReceipt.model_validate_json(row["receipt"])
+            if row["status"] not in {"SUBMITTING", "UNKNOWN", "PARTIAL"}:
+                return ExecutionReceipt.model_validate_json(row["receipt"])
             prestate = db.execute("SELECT body FROM intent_prestate WHERE id=?", (intent.intent_id,)).fetchone()
             if not prestate: raise ValueError("Missing pre-execution evidence; no retry")
             before = PortfolioSnapshot.model_validate_json(prestate[0])

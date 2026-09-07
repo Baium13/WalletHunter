@@ -6,6 +6,7 @@ canonical risk/execution gateway.
 """
 import math
 import hashlib
+import json
 import os
 import sqlite3
 import time
@@ -255,6 +256,24 @@ def _manual_position(client, coin, dex):
     return matches[0] if matches else None
 
 
+def _canonical_position(engine, scope, coin, dex):
+    """Use the gateway's settled snapshot, not a later unconstrained read."""
+    from core.foundation.store import Store
+    try:
+        portfolio = Store(engine.journal.path).portfolio(scope)
+    except Exception as exc:
+        raise ValueError('Canonical position evidence unavailable') from exc
+    symbol = coin.split(':')[-1]
+    row = next((position for position in portfolio.positions
+                if position.instrument.symbol == symbol and position.instrument.dex == (dex or '')), None)
+    if row is None:
+        return None
+    return {'coin': f"{dex+':' if dex else ''}{symbol}", 'dex': dex or '',
+            'side': row.side, 'size': row.size, 'entry_price': row.entry_price,
+            'position_value': row.notional, 'leverage': row.leverage,
+            'margin_used': row.margin}
+
+
 def _finish_manual(engine, operation, receipt, client, spec, coin, dex, *, finalize=True):
     """Project only proven terminal fills into the legacy provenance journal."""
     if not finalize or not operation or not receipt:
@@ -263,7 +282,7 @@ def _finish_manual(engine, operation, receipt, client, spec, coin, dex, *, final
         # The canonical reservation and parent journal intentionally remain
         # pending until a later query proves a terminal outcome.
         return
-    position = _manual_position(client, coin, dex)
+    position = _canonical_position(engine, receipt.scope, coin, dex)
     managed = position is not None and float(position.get('size', 0) or 0) > 0
     if receipt.status == 'REJECTED':
         outcome = {'ok': False, 'action': spec.get('action', 'MANUAL_LEADER'),
@@ -416,3 +435,60 @@ def execute_manual_leader(*, engine, account, client, operation, event_id, actio
 
     target_side = leader_side
     return prepared(float(plan['target_margin']), target_side, action, operation)
+
+
+def recover_pending_manual_leader(engine, account, client, *, limit=3):
+    """Query-only recovery for Manual Leader intents after a restart.
+
+    This intentionally shares the canonical adapter/gateway and never submits
+    a second order.  A parent journal envelope is considered Manual Leader
+    state only when its persisted strategy marker proves that attribution.
+    """
+    from core.settings import validated_network
+    from core.foundation.contracts import Scope, OrderIntent, PortfolioSnapshot
+    from core.foundation.copy_execution import HyperliquidExecutionAdapter
+    from core.foundation.risk import RiskGateway, RiskPolicy
+    from core.foundation.execution import ExecutionGateway
+    from core.foundation.store import Store, scope_key
+    if type(limit) is not int or not 1 <= limit <= 20:
+        raise ValueError('Bounded recovery limit required')
+    scope = ManualLeaderCopyService._scope(account, client)
+    validated_network(scope.network)
+    store = Store(engine.journal.path)
+    with store.transaction() as db:
+        rows = db.execute(
+            "SELECT i.body,i.status,p.body AS pre,r.body AS policy,o.id AS parent,o.intent AS envelope "
+            "FROM intents i JOIN intent_prestate p ON p.id=i.id JOIN policies r "
+            "ON r.hash=json_extract(i.decision,'$.policy_hash') JOIN operations o "
+            "ON o.id=json_extract(i.body,'$.parent_intent_id') "
+            "WHERE i.scope=? AND i.status IN ('SUBMITTING','UNKNOWN','PARTIAL') LIMIT ?",
+            (scope_key(scope), limit)).fetchall()
+    recovered = []
+    for row in rows:
+        try:
+            envelope = json.loads(row['envelope'])
+            if envelope.get('strategy') != 'MANUAL_LEADER_COPY':
+                continue
+            intent = OrderIntent.model_validate_json(row['body'])
+            before = PortfolioSnapshot.model_validate_json(row['pre'])
+            adapter = HyperliquidExecutionAdapter(client, scope, lambda: int(time.time() * 1000), before)
+            gateway = ExecutionGateway(store, RiskGateway(RiskPolicy.model_validate_json(row['policy'])), adapter,
+                                       lambda: int(time.time() * 1000))
+            receipt = gateway.recover(intent)
+            if receipt.status in {'FILLED', 'CONFIGURED', 'REJECTED'}:
+                position = _canonical_position(engine, receipt.scope, intent.instrument.symbol, intent.instrument.dex)
+                old_side = position.get('side') if position else ('LONG' if intent.side == 'BUY' else 'SHORT')
+                notional = (position.get('position_value') if position else intent.size * intent.limit_price)
+                margin = (position.get('margin_used') if position else notional / intent.leverage)
+                spec = {'action': intent.action, 'side': old_side,
+                        'sources': [{'wallet': intent.source, 'signed_notional':
+                                     float(notional) * (1 if old_side == 'LONG' else -1),
+                                     'margin': float(margin)}]}
+                _finish_manual(engine, row['parent'], receipt, client, spec,
+                               intent.instrument.symbol, intent.instrument.dex)
+            recovered.append({'intent_id': intent.intent_id, 'status': receipt.status})
+        except Exception:
+            # A failed evidence query keeps the durable reservation/HOLD; the
+            # next bounded recovery cycle may try the read again.
+            continue
+    return tuple(recovered)

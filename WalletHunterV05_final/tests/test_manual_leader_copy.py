@@ -198,3 +198,62 @@ class ManualLeaderCopyTests(unittest.TestCase):
             self.assertFalse(close)
         finally:
             case.doCleanups()
+
+    def test_partial_manual_fill_is_retained_for_query_only_recovery(self):
+        import test_engine_safety as fixture
+        from core.manual_leader_copy import execute_manual_leader, recover_pending_manual_leader
+        from unittest.mock import patch
+        case = fixture.EngineSafetyTests(methodName='runTest')
+        case.setUp()
+        account = {'_tenant': '1', 'address': fixture.ACCOUNT, '_sources': ()}
+        try:
+            case.client.fill_fraction = .5
+            result = execute_manual_leader(engine=case.engine, account=account,
+                client=case.client, operation=None, event_id='partial-1', action='OPEN',
+                leader_margin=10000., leader_capital=100000., allocatable_capital=100.,
+                current_margin=0., spec={'leader': fixture.SOURCE_A, 'allocation_pct': 80.,
+                    'coin': 'BTC', 'side': 'LONG', 'leverage': 5, 'market_type': 'CRYPTO'})
+            self.assertEqual(result.status, 'PARTIAL')
+            self.assertIn('BTC|', case.engine.journal.pending(fixture.ACCOUNT))
+            calls = len(case.client.calls)
+            recovered = recover_pending_manual_leader(case.engine, account, case.client)
+            self.assertEqual(case.client.calls.__len__(), calls)
+            self.assertEqual(recovered[0]['status'], 'PARTIAL')
+            self.assertIn('BTC|', case.engine.journal.pending(fixture.ACCOUNT))
+            with patch.object(case.client, 'submit_copy_ioc') as submit:
+                duplicate = execute_manual_leader(engine=case.engine, account=account,
+                    client=case.client, operation=None, event_id='partial-1', action='OPEN',
+                    leader_margin=10000., leader_capital=100000., allocatable_capital=100.,
+                    current_margin=0., spec={'leader': fixture.SOURCE_A, 'allocation_pct': 80.,
+                        'coin': 'BTC', 'side': 'LONG', 'leverage': 5, 'market_type': 'CRYPTO'})
+            self.assertEqual(duplicate['status'], 'DUPLICATE')
+            submit.assert_not_called()
+        finally:
+            case.doCleanups()
+
+    def test_unknown_manual_execution_recovers_without_resubmission(self):
+        import test_engine_safety as fixture
+        from core.manual_leader_copy import execute_manual_leader, recover_pending_manual_leader
+        from unittest.mock import patch
+        case = fixture.EngineSafetyTests(methodName='runTest')
+        case.setUp()
+        account = {'_tenant': '1', 'address': fixture.ACCOUNT, '_sources': ()}
+        try:
+            original = case.client.submit_copy_ioc
+            def acknowledged_lost(*args, **kwargs):
+                original(*args, **kwargs)
+                raise TimeoutError('acknowledgement lost')
+            with patch.object(case.client, 'submit_copy_ioc', side_effect=acknowledged_lost):
+                first = execute_manual_leader(engine=case.engine, account=account,
+                    client=case.client, operation=None, event_id='unknown-1', action='OPEN',
+                    leader_margin=10000., leader_capital=100000., allocatable_capital=100.,
+                    current_margin=0., spec={'leader': fixture.SOURCE_A, 'allocation_pct': 80.,
+                        'coin': 'BTC', 'side': 'LONG', 'leverage': 5, 'market_type': 'CRYPTO'})
+            self.assertEqual(first.status, 'UNKNOWN')
+            calls = len(case.client.calls)
+            recovered = recover_pending_manual_leader(case.engine, account, case.client)
+            self.assertEqual(recovered[0]['status'], 'FILLED')
+            self.assertEqual(len(case.client.calls), calls)
+            self.assertFalse(case.engine.journal.pending(fixture.ACCOUNT))
+        finally:
+            case.doCleanups()

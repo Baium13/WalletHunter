@@ -632,7 +632,8 @@ class AiUserOrders:
                 raise ValueError("proposal_expired_before_submission")
             from core.confirmed_execution_adapter import confirmed_ai_order, execute_confirmed_ai
             if canonical_context is not None:
-                response = execute_confirmed_ai(canonical_context, coin=payload['coin'], dex=payload.get('dex',''),
+                route_context = canonical_context(payload) if callable(canonical_context) else canonical_context
+                response = execute_confirmed_ai(route_context, coin=payload['coin'], dex=payload.get('dex',''),
                     side='BUY' if payload['direction']=='LONG' else 'SELL', size=payload['size'],
                     price=payload['limit_price'], action='OPEN', source='ai')
                 status = getattr(response, 'status', 'UNKNOWN')

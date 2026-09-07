@@ -36,6 +36,7 @@ from core.ai_user_orders import AiUserOrders
 from core.ai_position_actions import AiPositionActions
 from core.ai_review import AiReview, account_guard
 from core.manual_positions import ManualPositions, ManualActionError
+from core.confirmed_execution_adapter import build_context
 from core.execution_journal import ExecutionJournal
 from core.ai_policy import ReviewPolicy
 from core.fill_history import HistoryIncomplete
@@ -543,8 +544,12 @@ def manual_action(user_id, payload, action):
             if (profile.get("account") or {}).get("address") != account["address"]:
                 raise HTTPException(409, "Account changed; reload")
             runtime = profile["runtime"]
-            service = ManualPositions(account_client_for(profile), runtime,
-                                      lambda: storage.update_runtime(user_id, runtime))
+            account_client = account_client_for(profile)
+            service = ManualPositions(account_client, runtime,
+                                      lambda: storage.update_runtime(user_id, runtime),
+                                      canonical_context=build_context(account_client, tenant=user_id,
+                                          coin=payload.coin.strip(), dex=payload.dex.strip().lower(), action='CLOSE',
+                                          source='manual', store_path=os.path.join(ROOT, 'runtime', 'canonical.sqlite')))
             if action == "stop":
                 return service.set_stop_loss(payload.coin.strip(), payload.dex.strip().lower(), payload.price)
             if action == "delete":
@@ -799,7 +804,9 @@ def ai_order_decision(proposal_id: str, payload: AiOrderDecisionInput, x_telegra
             # invoke this signing factory. Decline has no exchange dependency.
             result = ai_user_orders.decide(user["id"], proposal_id, payload.confirm,
                 profile, public_account_for(profile) if payload.confirm else None,
-                lambda: account_client_for(profile), persist_runtime, int(time.time() * 1000))
+                lambda: account_client_for(profile), persist_runtime, int(time.time() * 1000),
+                canonical_context=(lambda p: build_context(account_client_for(profile), tenant=user['id'], coin=p['coin'],
+                    dex=p.get('dex',''), action='OPEN', source='ai', store_path=os.path.join(ROOT,'runtime','canonical.sqlite'))) if payload.confirm else None)
             return {"result": result,
                 "user_orders": ai_user_orders.summary(user["id"], profile, int(time.time() * 1000))}
         except HTTPException:
@@ -835,7 +842,9 @@ def ai_position_decision(proposal_id: str, payload: AiOrderDecisionInput, x_tele
         try:
             result = ai_position_actions.decide(user["id"], proposal_id, payload.confirm, profile,
                 public_account_for(profile) if payload.confirm else None,
-                lambda: account_client_for(profile), persist_runtime, int(time.time() * 1000))
+                lambda: account_client_for(profile), persist_runtime, int(time.time() * 1000),
+                canonical_context=(lambda p: build_context(account_client_for(profile), tenant=user['id'], coin=p['coin'],
+                    dex=p.get('dex',''), action='REDUCE', source=p.get('source_wallet','ai'), store_path=os.path.join(ROOT,'runtime','canonical.sqlite'))) if payload.confirm else None)
             return {"result": result, "position_actions": ai_position_actions.summary(user["id"], profile, int(time.time() * 1000))}
         except HTTPException:
             raise

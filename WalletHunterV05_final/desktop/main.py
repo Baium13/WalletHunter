@@ -267,9 +267,9 @@ async def show_menu(event, edit=False):
             runtime["controller_message_id"] = int(message.id)
             store.update_runtime(event.sender_id, runtime)
             remember_chat_message(event.sender_id, owner_profile, message)
-        except Exception as exc: print("[SAVE MENU]", event.sender_id, exc)
+        except Exception as exc: print("[SAVE MENU]", event.sender_id, type(exc).__name__)
         try: await client.pin_message(event.sender_id, message, notify=False)
-        except Exception as exc: print("[PIN MENU]", event.sender_id, exc)
+        except Exception as exc: print("[PIN MENU]", event.sender_id, type(exc).__name__)
 
 async def save_profile(uid, p):
     save_profile_guarded(store, uid, p)
@@ -315,7 +315,7 @@ async def clear_private_chat(uid, p, keep_message_id=None):
             deleted += len(batch)
         except Exception as exc:
             failed.extend(batch)
-            print("[CLEAR CHAT]", uid, exc)
+            print("[CLEAR CHAT]", uid, type(exc).__name__)
     runtime["journal"], runtime["last_error"] = [], ""
     runtime["pending_notifications"] = []
     if runtime.get("paper_runtime"):
@@ -672,7 +672,7 @@ async def scheduled_report(uid, p, c, days, title):
         pf = "∞" if report.profit_factor == float("inf") else f"{report.profit_factor:.2f}"
         message = await client.send_message(uid, f"<b>🧾 {title}</b>\n\nBalance: <b>${balance_value:,.2f}</b>\nExposure: <b>${exposure:,.2f}</b> · Positions: <b>{len(positions)}</b>\nRealized PnL: <b>${report.net_pnl:+,.2f}</b>\nWin rate: <b>{report.win_rate:.1f}%</b> · PF: <b>{pf}</b>", parse_mode="html")
         remember_notification(uid, p, message)
-    except Exception as exc: print("[REPORT]", uid, exc)
+    except Exception as exc: print("[REPORT]", uid, type(exc).__name__)
 
 async def watcher_cycle():
     # Bound concurrent users, but never cancel a possibly submitted execution.
@@ -736,9 +736,9 @@ async def ai_review_watcher():
                         _, fresh = profile(uid)
                         remember_notification(uid, fresh, message)
                 except Exception as exc:
-                    print("[AI REVIEW]", uid, exc)
+                    print("[AI REVIEW]", uid, type(exc).__name__)
         except Exception as exc:
-            print("[AI REVIEW LOOP]", exc)
+            print("[AI REVIEW LOOP]", type(exc).__name__)
         await asyncio.sleep(60)
 
 def reconcile_ai_lifecycle(uid):
@@ -774,7 +774,7 @@ async def main():
         )
         response.raise_for_status()
     except Exception as exc:
-        print("[WEBAPP MENU]", exc)
+        print("[WEBAPP MENU]", type(exc).__name__)
     print("[RUN] WalletHunter V07 running")
     asyncio.create_task(watcher())
     asyncio.create_task(ai_trader_watcher())

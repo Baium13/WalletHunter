@@ -14,6 +14,16 @@ from unittest.mock import patch
 
 
 class BackupRuntimeTests(unittest.TestCase):
+    def test_bot_exception_logging_cannot_emit_token_urls(self):
+        import ast
+        source = Path(__file__).resolve().parents[1]/"desktop"/"main.py"
+        tree = ast.parse(source.read_text(encoding="utf-8"))
+        for handler in (n for n in ast.walk(tree) if isinstance(n, ast.ExceptHandler) and n.name):
+            for call in (n for n in ast.walk(handler) if isinstance(n, ast.Call)
+                         and isinstance(n.func, ast.Name) and n.func.id == "print"):
+                self.assertFalse(any(isinstance(arg, ast.Name) and arg.id == handler.name for arg in call.args),
+                                 "Never print raw exceptions containing token-bearing URLs")
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
@@ -127,6 +137,7 @@ class BackupRuntimeTests(unittest.TestCase):
     def test_archive_and_sensitive_members_have_owner_only_permissions(self):
         os.chmod(self.root/".env", 0o644)
         output, _ = self.run_backup()
+        self.assertEqual((self.root/"backups").stat().st_mode & 0o077, 0)
         self.assertEqual(output.stat().st_mode & 0o077, 0)
         with tarfile.open(output, "r:gz") as archive:
             for member in archive.getmembers():

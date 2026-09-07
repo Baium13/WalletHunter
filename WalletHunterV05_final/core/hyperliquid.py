@@ -141,7 +141,7 @@ class HyperliquidReader:
         try:
             values.update(self.leverage_limits("xyz").values())
         except Exception as exc:
-            print("[HL] xyz leverage metadata:", exc)
+            print("[HL] xyz leverage metadata:", type(exc).__name__)
         return sorted(values)
 
     def account_value(self, wallet, dex=""):

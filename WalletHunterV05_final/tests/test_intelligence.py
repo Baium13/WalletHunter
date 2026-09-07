@@ -56,6 +56,41 @@ class IntelligenceTests(unittest.TestCase):
         self.assertEqual(next(a for a in agents if a.agent_id=='order_flow').direction,'WAIT')
         self.assertEqual(consensus(event,agents,NOW+1000,self.worker.policy).decision,'COPY_LONG')
         for a in agents: self.assertEqual(a.model_validate_json(a.model_dump_json()),a)
+    def autonomous_ledger(self,positions=(),reservations=(),**changes):
+        from core.foundation.autonomous_allocation import AutonomousAllocationPolicy,AutonomousLedger
+        from core.foundation.contracts import Scope,PortfolioSnapshot
+        portfolio=PortfolioSnapshot(scope=Scope(tenant='7',account=ADDRESS,network='TESTNET'),revision=1,
+            exchange_ms=NOW+1000,received_ms=NOW+1000,equity=3000.,sizing_capital=3000.,available_collateral=3000.,
+            completeness='COMPLETE',evidence='FAKE')
+        policy=AutonomousAllocationPolicy(scope=portfolio.scope,allocation_limit=1000.,other_allocation_limits=(1000.,1000.),
+            entry_fraction=.1,max_position_margin=100.,max_leverage=5)
+        p=portfolio.model_copy(update={'positions':positions,**changes})
+        return AutonomousLedger(p,policy,reservations)
+    def test_autonomous_ledger_no_borrowing_and_deterministic_size(self):
+        ledger=self.autonomous_ledger()
+        self.assertEqual(ledger.allocation('intelligence').available,1000)
+        self.assertEqual(ledger.size(100.,5,.01,.8,.5),2.)
+        self.assertEqual(ledger.size(100.,5,.01,0.,.5),0.)
+        for value in (float('nan'),float('inf'),-1.,1.1):
+            with self.assertRaises(ValueError): ledger.size(100.,5,.01,value,.5)
+    def test_autonomous_ledger_shared_held_capital_and_reservations(self):
+        from core.foundation.contracts import Position,Contribution,InstrumentId
+        from core.foundation.ledger import Reservation
+        p=Position(instrument=InstrumentId(network='TESTNET',symbol='BTC'),side='LONG',size=20.,entry_price=100.,
+            notional=2000.,margin=1000.,leverage=2,held=True,evidence='VERIFIED',order_ids=('1',),
+            contributions=(Contribution(source='intelligence',notional=1400.),Contribution(source='copy-a',notional=600.)))
+        ledger=self.autonomous_ledger((p,),(Reservation('unknown-1','intelligence',100.,101.),))
+        a=ledger.allocation('intelligence')
+        self.assertEqual((a.committed,a.reserved,a.available),(700.,100.,200.))
+        self.assertEqual(ledger.available_capacity,2899.)
+    def test_autonomous_ledger_fails_closed_on_external_and_invalid_reservation(self):
+        from core.foundation.ledger import Reservation
+        for row in (Reservation('bad','intelligence',float('nan'),1.),Reservation('bad','intelligence',-1.,1.)):
+            ledger=self.autonomous_ledger(reservations=(row,))
+            self.assertIsNone(ledger.available_capacity)
+            with self.assertRaises(ValueError): ledger.allocation('intelligence')
+        ledger=self.autonomous_ledger(sizing_capital=2000.)
+        self.assertIn('ALLOCATION_OVERCOMMITTED',ledger.errors)
     def test_missing_context_blocks_actionable_consensus(self):
         event,_,run=self.actionable(); agents=run(None)
         self.assertEqual(next(a for a in agents if a.agent_id=='risk_context').direction,'BLOCK')

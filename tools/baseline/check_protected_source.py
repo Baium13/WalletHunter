@@ -17,6 +17,23 @@ P12_PARENT_SHA256 = "7e302162316f26082b1b3ef91efb7386e2029a92e7304d71446be9844df
 P11_REGRESSION_PATH = "WalletHunterV05_final/tests/test_ownership_history_cache.py"
 P11_REGRESSION_SHA256 = "059ec37273dd9d72f3d6afa49eb785e70581f862f20c24e2c1ebc7d3b62a135f"
 SPRINT_FILE = "docs/protected-source-phase1.json"
+BLOCK1_FILE = "docs/protected-source-block1.json"
+BLOCK1_PARENT = "201bd595c0d349149e228dbc261bbb8f713ea5a1a2e0b8018667a029b2db185e"
+BLOCK1_PATHS = {"WalletHunterV05_final/core/foundation/" + name + ".py" for name in
+                ("__init__", "contracts", "ledger", "store", "data", "risk", "execution")} | {"WalletHunterV05_final/tests/test_foundation.py"}
+
+
+def reviewed_block1(previous, document, parent_digest):
+    if (not isinstance(document, dict) or set(document) != {"phase", "parent_manifest_sha256", "files"}
+            or document["phase"] != "block1" or parent_digest != BLOCK1_PARENT
+            or document["parent_manifest_sha256"] != parent_digest):
+        raise ValueError("invalid_block1_parent_or_schema")
+    rows = document["files"]
+    if not isinstance(rows, dict) or set(rows) != BLOCK1_PATHS or set(rows) & set(previous):
+        raise ValueError("block1_must_only_add_reviewed_paths")
+    if any(not isinstance(d, str) or not re.fullmatch(r"[a-f0-9]{64}", d) for d in rows.values()):
+        raise ValueError("invalid_block1_digest")
+    return rows
 SPRINT_PARENT = "af06edabf7c302caf86ade2211ef5338559b8221009910b41ba019cc8d2590b9"
 SPRINT_PATHS = {"WalletHunterV05_final/" + name for name in (
     "core/ai_position_actions.py", "core/ai_user_orders.py", "core/execution_journal.py",
@@ -143,6 +160,17 @@ def check(root):
         effective["WalletHunterV05_final/tests/test_source_allocation.py"] = "3aa7d3c96d485a610e27e0fa69b03ab651d1ce48d4387b4a35acf83143e85cee"
         report.update(phase="1", reviewed_transitions=rows, effective_protected_files=len(effective))
         report["transition_chain"].append({"phase": "1", "files": rows})
+    block1 = root / BLOCK1_FILE
+    if block1.exists() or block1.is_symlink():
+        try:
+            if block1.is_symlink() or report["phase"] != "1": raise ValueError("block1_requires_phase1_parent")
+            rows = reviewed_block1(effective, json.loads(block1.read_bytes()), hashlib.sha256(sprint.read_bytes()).hexdigest())
+        except (ValueError, OSError) as exc:
+            report.update(status="FAIL", reason=str(exc))
+            return report
+        effective.update(rows)
+        report.update(phase="block1", effective_protected_files=len(effective))
+        report["transition_chain"].append({"phase": "block1", "files": rows})
     report["changed"] = [name for name, digest in effective.items()
                          if (root / name).is_symlink() or not (root / name).is_file()
                          or hashlib.sha256((root / name).read_bytes()).hexdigest() != digest]

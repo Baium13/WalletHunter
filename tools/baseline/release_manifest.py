@@ -39,6 +39,10 @@ def main():
             "validation_sha256": digest("docs/phase1-validation.json"),
             "protected_manifest_sha256": digest("docs/protected-source-phase1.json"),
             "production_deployed": False}
+    if (ROOT / "docs/block1-validation.json").is_file():
+        manifest["core_architecture"] = {"status": "PARTIAL", "live_enabled": False,
+            "validation_sha256": digest("docs/block1-validation.json"),
+            "protected_manifest_sha256": digest("docs/protected-source-block1.json")}
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     print(json.dumps({"manifest": str(args.output), "commit": manifest["git_commit"]}))

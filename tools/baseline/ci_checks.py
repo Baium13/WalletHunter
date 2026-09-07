@@ -13,6 +13,8 @@ ROOT = Path(__file__).resolve().parents[2]
 def phase_arguments(root):
     # main() first verifies this exact, narrowly scoped hash transition. Never
     # change the historical runner default or infer phase from test counts.
+    if (root / "docs/protected-source-block1.json").is_file():
+        return ["--phase", "block1"]
     if (root / "docs/protected-source-phase1.json").is_file():
         return ["--phase", "1"]
     if (root / "docs/protected-source-p1.2.json").is_file():

@@ -1,0 +1,57 @@
+{
+  "block": 1,
+  "status": "PARTIAL",
+  "application_revision": "b358c9b2ac1c0b311b149111fbd3a24e385ee668",
+  "milestones": {
+    "contracts": "PASS",
+    "ledger": "PARTIAL",
+    "events_replay": "PASS",
+    "market_account_data": "PARTIAL",
+    "risk_gateway": "PASS",
+    "execution_gateway": "PARTIAL",
+    "reconciliation": "PARTIAL",
+    "fake_e2e": "PASS"
+  },
+  "python": {
+    "tests": 774,
+    "passed": 773,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 1,
+    "duration_seconds": 124.11
+  },
+  "javascript": {
+    "tests": 96,
+    "passed": 96
+  },
+  "safety": {
+    "sandbox": 14,
+    "repository": 54,
+    "passed": 68
+  },
+  "new_core": {
+    "tests": 32,
+    "passed": 32
+  },
+  "phase1_regression": "PASS",
+  "phase1_application_source_changed": false,
+  "production_state_changed": false,
+  "autonomous_mainnet_ai": false,
+  "source_unchanged_during_final_run": true,
+  "protected_manifest_sha256": "1c5467be2f29f3760ea1e2828a2f709f476c3744a24a34033c71f9aa9c36bd91",
+  "full_local_report_sha256": "c1d35a5694af8361121c41369325735c921a0c948824160d211bb5e783a51da5",
+  "limitations": [
+    "New execution supports granted FAKE/PAPER OPEN intents only",
+    "Live account adapter remains UNKNOWN; no atomic account evidence contract is fabricated",
+    "Legacy journal ownership and reservations are not migrated into new ledger",
+    "Copy/manual/confirmed-AI routes remain unchanged; no new live signing adapter",
+    "Actual Hyperliquid fill proof adapter is not migrated into new reconciliation",
+    "Hosted Linux CI and auxiliary browser execution not newly verified"
+  ],
+  "warnings": [
+    "One pre-existing POSIX permission test skipped on Windows",
+    "Existing Starlette HTTPX deprecation warning",
+    "Windows uses disposable language-guarded isolation, not an attested OS network namespace"
+  ],
+  "ready_for_wallet_discovery_execution": false
+}

@@ -1,0 +1,14 @@
+{
+  "phase": "block1",
+  "parent_manifest_sha256": "201bd595c0d349149e228dbc261bbb8f713ea5a1a2e0b8018667a029b2db185e",
+  "files": {
+    "WalletHunterV05_final/core/foundation/__init__.py": "b8bd79f8e6fdcb6326ebc52e068e34451a937b23dbf1dc631c55e02cf84d5899",
+    "WalletHunterV05_final/core/foundation/contracts.py": "c8d5ec529ca3eed87461f08d1238c8191f7917bd0e27004a4e5bf71bea01221d",
+    "WalletHunterV05_final/core/foundation/data.py": "f37d2441fe67252586a117e0d4aed4e782811084bbf1672cb525812f8b87f963",
+    "WalletHunterV05_final/core/foundation/execution.py": "64f987c1a2e3bcdab8fb9ac1b4c8add737c3673084a288efb0f3bc8154678b5b",
+    "WalletHunterV05_final/core/foundation/ledger.py": "dcf0832f1628bbe12fb673eb847a46abc27137100d94f62031fbb39e6b192f0a",
+    "WalletHunterV05_final/core/foundation/risk.py": "c08cfd5a640da26ae373f842a3c04a6734c00771234d93838a939e39a370dc9b",
+    "WalletHunterV05_final/core/foundation/store.py": "28484851c79ca7572893076e6f9ce4834169cef752156c14c4785435c359da24",
+    "WalletHunterV05_final/tests/test_foundation.py": "1611bfae7ecaa8b38269a8785434b1d2f9cd97d41815a7880fbf04e845530600"
+  }
+}

@@ -514,5 +514,28 @@ class SprintTransitionTests(unittest.TestCase):
         self.assertNotIn("WalletHunterV05_final/tests/test_source_allocation.py", protected.SPRINT_PATHS)
 
 
+class Block1TransitionTests(unittest.TestCase):
+    def test_only_additive_core_paths_are_allowed(self):
+        import copy
+        previous = {protected.TRANSITION_PATH: "0"*64}
+        document = {"phase": "block1", "parent_manifest_sha256": protected.BLOCK1_PARENT,
+                    "files": {name: "1"*64 for name in protected.BLOCK1_PATHS}}
+        self.assertEqual(protected.reviewed_block1(previous, document, protected.BLOCK1_PARENT), document["files"])
+        for fault in ("parent", "override", "digest", "missing"):
+            changed = copy.deepcopy(document)
+            name = next(iter(changed["files"]))
+            if fault == "parent": changed["parent_manifest_sha256"] = "0"*64
+            if fault == "override": changed["files"][protected.TRANSITION_PATH] = "1"*64
+            if fault == "digest": changed["files"][name] = "*"
+            if fault == "missing": changed["files"].pop(name)
+            with self.subTest(fault=fault), self.assertRaises(ValueError):
+                protected.reviewed_block1(previous, changed, protected.BLOCK1_PARENT)
+
+    def test_block1_protects_prior_evidence(self):
+        for filename in ("baseline-tests.json", "p1.1-validation.json", "p1.2-validation.json", "phase1-validation.json"):
+            args = runner.argument_parser().parse_args(["--phase", "block1", "--report", str(runner.REPOSITORY/"docs"/filename)])
+            with self.assertRaises(ValueError): runner.validate_options(args, runner.REPOSITORY/"WalletHunterV05_final")
+
+
 if __name__ == "__main__":
     unittest.main()

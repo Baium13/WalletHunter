@@ -6,6 +6,12 @@ load_dotenv()
 def _bool(name, default=False):
     return os.getenv(name, str(default)).strip().lower() in {"1","true","yes","on"}
 
+def validated_network(mode):
+    value = str(mode).strip().upper()
+    if value not in {"MAINNET", "TESTNET"}:
+        raise ValueError("HL_MODE must be MAINNET or TESTNET; PAPER is an execution mode, not a network")
+    return value
+
 @dataclass(frozen=True)
 class Settings:
     telegram_api_id:int
@@ -28,7 +34,7 @@ def load():
         os.getenv("TELEGRAM_API_HASH","").strip(),
         os.getenv("TELEGRAM_BOT_TOKEN","").strip(),
         int(os.getenv("TELEGRAM_OWNER_ID","0") or 0),
-        os.getenv("HL_MODE","MAINNET").strip().upper(),
+        validated_network(os.getenv("HL_MODE","MAINNET")),
         _bool("AUTO_TRADING",False),
         os.getenv("MASTER_KEY","").strip(),
         max(1, int(os.getenv("MAX_LEVERAGE","20") or 20)),

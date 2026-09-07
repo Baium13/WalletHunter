@@ -41,7 +41,10 @@ def verify_account_control(address, private_key, info):
     raise ValueError("Signer does not control this account; vault/subaccount routing is unsupported")
 
 class HyperliquidAccount:
-    def __init__(self, address, private_key, mode="MAINNET"):
+    def __init__(self, address, private_key, mode="MAINNET", slippage_pct=0.5):
+        from core.settings import validated_network
+        self.network = mode = validated_network(mode)
+        self.close_slippage_pct = slippage_pct
         self.address=address.strip(); self.base=constants.TESTNET_API_URL if mode=="TESTNET" else constants.MAINNET_API_URL
         self.info=Info(self.base,skip_ws=True,timeout=20)
         self.exchange=None
@@ -556,6 +559,7 @@ class HyperliquidAccount:
         return 10 ** (-self._sz_decimals(self._sdk_coin(coin, dex)))
 
     def market_open(self, coin, is_buy, size, dex="", leverage=1, slippage_pct=0.5):
+        slippage_pct = self._slippage(slippage_pct)
         if not self.exchange:
             return {"status": "paper"}
 
@@ -587,13 +591,21 @@ class HyperliquidAccount:
             slippage=float(slippage_pct) / 100.0
         )
 
-    def market_close(self,coin,dex=""):
+    @staticmethod
+    def _slippage(value):
+        from core.capital_snapshot import finite_amount
+        value = finite_amount(value, "slippage percent")
+        if not 0 < value <= 10: raise ValueError("Slippage percent outside (0,10]")
+        return value
+
+    def market_close(self,coin,dex="",slippage_pct=None):
+        slippage_pct = self._slippage(slippage_pct if slippage_pct is not None else getattr(self, "close_slippage_pct", 0.5))
         if not self.exchange:
             return {"status":"paper"}
 
         coin = self._sdk_coin(coin, dex)
 
-        return self.exchange.market_close(coin)
+        return self.exchange.market_close(coin, slippage=slippage_pct / 100.0)
 
     def place_stop_loss(self, coin, side, size, trigger_price, dex=""):
         """Place a reduce-only stop-market order which survives this process."""
@@ -619,6 +631,7 @@ class HyperliquidAccount:
             return {"status": "paper"}
         return self.exchange.cancel(self._sdk_coin(coin, dex), oid)
     def market_reduce(self, coin, is_buy, size, dex="", slippage_pct=0.5):
+        slippage_pct = self._slippage(slippage_pct)
         if not self.exchange:
             return {"status": "paper"}
 
@@ -649,6 +662,10 @@ class HyperliquidAccount:
             px = float(bids[0]["px"])
 
 
+        from core.capital_snapshot import finite_amount
+        px = finite_amount(px, "reduce order price")
+        if px <= 0: raise ValueError("Invalid reduce order price")
+        px = self.exchange._slippage_price(coin, is_buy, slippage_pct / 100.0, px)
         sz_decimals = self._sz_decimals(coin)
         size = round(float(size), sz_decimals)
 
@@ -736,15 +753,18 @@ class HyperliquidAccount:
         fills = fetch_fills(lambda payload: self.info.post("/info", payload), self.address, start_ms, end)
         return math.fsum(float(fill["closedPnl"]) for fill in filter_perp_fills(fills))
 
-    def cancel_open_orders(self):
-        """Cancel every resting order on supported perps and XYZ."""
+    def cancel_open_orders(self, owned_order_ids=(), *, include_unrelated=False):
+        """Default scope is explicit owned IDs, never all manual protection."""
         if not self.exchange:
             return []
         responses = []
+        allowed = {str(oid) for oid in owned_order_ids}
+        if not allowed and not include_unrelated: return responses
         for dex in ("", "xyz"):
             for order in self.info.open_orders(self.address, dex=dex):
                 coin = str(order.get("coin") or "")
                 oid = order.get("oid")
                 if not coin or oid is None: continue
+                if not include_unrelated and str(oid) not in allowed: continue
                 responses.append(self.exchange.cancel(self._sdk_coin(coin, dex), oid))
         return responses

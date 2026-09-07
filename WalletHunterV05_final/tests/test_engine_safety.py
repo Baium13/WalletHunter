@@ -107,7 +107,7 @@ class ExchangeBoundary:
     def market_reduce(self, coin, buy, size, dex, slippage):
         return self._trade("reduce", coin, buy, size, dex)
 
-    def market_close(self, coin, dex=""):
+    def market_close(self, coin, dex="", slippage_pct=0.5):
         key = CopyEngine._key(coin, dex)
         self.calls.append(("close", key))
         if self.partial_close and key in self.rows:
@@ -119,6 +119,19 @@ class ExchangeBoundary:
 
 
 class EngineSafetyTests(unittest.TestCase):
+    def test_execution_network_identity_is_persisted_and_mismatch_holds(self):
+        self.client.network = self.engine.reader.network = "MAINNET"
+        self.run_cycle()
+        owned = self.engine.journal.owned(ACCOUNT)
+        self.assertTrue(owned)
+        self.assertTrue(all(row["network"] == "MAINNET" for row in owned.values()))
+        self.client.calls.clear()
+        self.client.network = self.engine.reader.network = "TESTNET"
+        self.run_cycle()
+        self.assertEqual(self.client.calls, [])
+        self.assertTrue(self.store.profile(1)[1]["runtime"]["recovery_required"])
+        self.assertEqual(self.engine.journal.owned(ACCOUNT), owned)
+
     def test_delayed_execution_proof_keeps_unknown_and_does_not_retry(self):
         def unavailable(*args): raise ValueError("Synthetic delayed order visibility")
         self.client.verify_copy_execution = unavailable

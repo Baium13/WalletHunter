@@ -64,6 +64,32 @@ class ExactExchange:
 
 
 class PositionActionSdkTests(unittest.TestCase):
+    def test_invalid_network_is_rejected_before_any_transport(self):
+        from core.settings import validated_network
+        from core.hyperliquid import HyperliquidReader
+        for mode in ("PAPER", "", "unknown", None):
+            for factory in (validated_network, HyperliquidReader, lambda m: HyperliquidAccount(ACCOUNT, None, m)):
+                with self.subTest(mode=mode), self.assertRaises(ValueError): factory(mode)
+        self.assertEqual(validated_network(" testnet "), "TESTNET")
+
+    def test_close_slippage_is_explicit_and_cancellation_preserves_unrelated_orders(self):
+        from types import SimpleNamespace
+        calls = []
+        client = HyperliquidAccount.__new__(HyperliquidAccount)
+        client.address = ACCOUNT
+        client.exchange = SimpleNamespace(market_close=lambda coin, **kw: calls.append((coin, kw)),
+            cancel=lambda coin, oid: calls.append((coin, oid)))
+        client.info = SimpleNamespace(open_orders=lambda address, dex: [{"coin": "BTC", "oid": 1}, {"coin": "BTC", "oid": 2}] if not dex else [])
+        client.market_close("BTC", slippage_pct=0.5)
+        self.assertEqual(calls, [("BTC", {"slippage": 0.005})])
+        for value in (float("nan"), float("inf"), -1, 0, 11):
+            with self.assertRaises(ValueError): client.market_close("BTC", slippage_pct=value)
+        calls.clear()
+        self.assertEqual(client.cancel_open_orders(), [])
+        self.assertEqual(calls, [])
+        client.cancel_open_orders([1])
+        self.assertEqual(calls, [("BTC", 1)])
+
     def test_account_control_is_derived_or_exchange_delegated_without_trading(self):
         from eth_account import Account
         from integrations.hyperliquid import verify_account_control

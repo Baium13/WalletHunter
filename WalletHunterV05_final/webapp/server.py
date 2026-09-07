@@ -147,6 +147,10 @@ def dashboard(x_telegram_init_data: str | None = Header(default=None)):
     return {
         "user": user["name"],
         "live": settings.auto_trading,
+        "execution_scope": {"network": settings.hl_mode,
+            "copy_mode": "LIVE" if settings.auto_trading else "PAPER",
+            "manual_and_confirmed_orders": "EXPLICIT_CONFIRMATION_CAN_EXECUTE_ON_SELECTED_NETWORK",
+            "autonomous_ai_mainnet": False},
         "copy_enabled": bool(profile.get("copy_enabled")),
         "balance": balance,
         "balance_error": balance_error,
@@ -503,7 +507,7 @@ def account_client_for(profile: dict) -> HyperliquidAccount:
     account = profile.get("account")
     if not account:
         raise HTTPException(400, "Hyperliquid-аккаунт не подключён.")
-    return HyperliquidAccount(account["address"], storage.decrypt(account["private_key"]), settings.hl_mode)
+    return HyperliquidAccount(account["address"], storage.decrypt(account["private_key"]), settings.hl_mode, slippage_pct=settings.max_slippage_pct)
 
 
 def own_position(profile: dict, coin: str, dex: str) -> dict:

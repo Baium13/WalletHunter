@@ -69,7 +69,7 @@ def account_client(uid, p):
     cached = clients.get(str(uid))
     key_version = hashlib.sha256(account["private_key"].encode()).hexdigest()
     if not cached or cached.address.lower() != account["address"].lower() or getattr(cached, "key_version", None) != key_version:
-        cached = HyperliquidAccount(account["address"], store.decrypt(account["private_key"]), S.hl_mode)
+        cached = HyperliquidAccount(account["address"], store.decrypt(account["private_key"]), S.hl_mode, slippage_pct=S.max_slippage_pct)
         cached.key_version = key_version
         clients[str(uid)] = cached
     return cached

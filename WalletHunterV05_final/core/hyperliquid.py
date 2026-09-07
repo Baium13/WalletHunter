@@ -6,6 +6,8 @@ from core.capital_snapshot import read_capital_snapshot, strict_spot_usdc, finit
 
 class HyperliquidReader:
     def __init__(self, mode="MAINNET"):
+        from core.settings import validated_network
+        self.network = mode = validated_network(mode)
         self.base_url = (
             "https://api.hyperliquid.xyz/info"
             if mode != "TESTNET"

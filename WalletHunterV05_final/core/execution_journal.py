@@ -52,6 +52,10 @@ class ExecutionJournal:
         return intents
 
     def prepare(self, account, market, intent):
+        intent = dict(intent)
+        network = intent.get("network", "LEGACY_UNKNOWN")
+        if network not in {"MAINNET", "TESTNET", "LEGACY_UNKNOWN"}:
+            raise ValueError("Invalid execution network identity")
         now, oid = time.time(), uuid.uuid4().hex
         with closing(self.connect()) as db:
             db.execute("BEGIN IMMEDIATE")
@@ -72,6 +76,8 @@ class ExecutionJournal:
             db.execute("UPDATE operations SET status=?,updated=?,outcome=? WHERE id=?",
                        (status, time.time(), json.dumps(result), oid))
             if ownership is not None:
+                network = json.loads(row["intent"]).get("network", "LEGACY_UNKNOWN")
+                if network != "LEGACY_UNKNOWN": ownership = dict(ownership, network=network)
                 stamp = (ownership.get("position") or {}).get("snapshot_started_ms") or int(time.time() * 1000)
                 ownership = dict(ownership, verified_at_ms=stamp)
                 db.execute("INSERT OR REPLACE INTO ownership VALUES(?,?,?,?,?)",

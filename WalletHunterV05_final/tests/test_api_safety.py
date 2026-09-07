@@ -102,7 +102,7 @@ class OfflineAccount:
             return {"status": "ok", "response": {"data": {"statuses": [{"error": "Rejected cancel"}]}}}
         self.orders = [o for o in self.orders if o["oid"] != oid]
         return {"status": "ok", "response": {"data": {"statuses": ["success"]}}}
-    def market_close(self, coin, dex):
+    def market_close(self, coin, dex, slippage_pct=0.5):
         self.calls.append(("close", coin, dex))
         self.rows = [dict(self.rows[0], size=.5)] if self.partial else []
         return {"status": "ok", "response": {"data": {"statuses": [{"filled": {"totalSz": "2"}}]}}}

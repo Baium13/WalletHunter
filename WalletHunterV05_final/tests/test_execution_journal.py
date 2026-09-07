@@ -4,6 +4,16 @@ from core.execution_journal import ExecutionJournal
 
 
 class JournalTests(unittest.TestCase):
+    def test_pending_network_survives_restart_without_fabricating_legacy_identity(self):
+        with tempfile.TemporaryDirectory() as root:
+            log = ExecutionJournal(root)
+            log.prepare("a", "BTC|", {"network": "TESTNET"})
+            log.prepare("a", "ETH|", {})
+            pending = ExecutionJournal(root).pending_intents("a")
+            self.assertEqual(pending["BTC|"]["network"], "TESTNET")
+            self.assertEqual(pending["ETH|"].get("network", "LEGACY_UNKNOWN"), "LEGACY_UNKNOWN")
+            with self.assertRaises(ValueError): log.prepare("a", "SOL|", {"network": "invalid"})
+
     def test_prepared_survives_restart_and_prevents_duplicate(self):
         with tempfile.TemporaryDirectory() as root:
             log=ExecutionJournal(root)

@@ -549,6 +549,7 @@ class AiPositionActions:
         runtime = profile.setdefault("runtime", {})
         try:
             operation = self.journal.prepare(row["account"], key, {"action": "AI_POSITION_"+payload["action"], "proposal_id": proposal_id,
+                "network": payload["network"],
                 "source_wallet": payload["source_wallet"], "position_before": _identity(payload["position_before"]), "size": payload["size"], "cloid": payload["cloid"]})
             self._finish(proposal_id, "SUBMITTING", {"reason": "intent_persisted"}, now, operation)
             runtime.setdefault("ai_position_action_holds", {})[key] = {"proposal_id": proposal_id, "status": "SUBMITTING", "operation_id": operation}

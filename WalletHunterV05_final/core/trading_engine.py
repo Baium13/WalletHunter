@@ -215,6 +215,9 @@ class CopyEngine:
                 return []
 
     async def _sync_locked(self, user_id, profile, client, snapshots, notify):
+        network = getattr(client, "network", None)
+        if network and getattr(self.reader, "network", network) != network:
+            raise ValueError("Reader/signing network mismatch; reconciliation required")
         account = profile["account"]
         live = self.settings.auto_trading and client.exchange is not None
         target_balance = await asyncio.to_thread(client.balance)
@@ -344,10 +347,17 @@ class CopyEngine:
         owned = self.journal.owned(account["address"]) if live and self.journal else {}
         pending_before_recovery = self.journal.pending(account["address"]) if live and self.journal else set()
         recovery_holds = set()
+        if live and self.journal and network:
+            for encoded, intent in self.journal.pending_intents(account["address"]).items():
+                if intent.get("network") != network: recovery_holds.add(encoded)
         # A confirmed SQLite execution may survive a crash before state.json.
         # Recover only its EXACT verified position with no later exchange fills.
         # Matching a symbol alone must never adopt an unrelated manual order.
         for encoded, record in owned.items():
+            network = getattr(client, "network", None)
+            if network and (record.get("network") != network or getattr(self.reader, "network", network) != network):
+                recovery_holds.add(encoded)
+                continue
             if encoded in ai_user_holds:
                 continue
             key = self._from_runtime(encoded)
@@ -368,7 +378,8 @@ class CopyEngine:
                     "action":"observed_flat", "status":"complete", "flat":True,
                     "reason":"Exchange position disappeared outside a confirmed copy close", "created":time.time()}
                 persist()  # Durable HOLD before modifying the ownership record.
-                operation = self.journal.prepare(account["address"], encoded, {"action":"OBSERVED_FLAT", "before":record})
+                operation = self.journal.prepare(account["address"], encoded, {"action":"OBSERVED_FLAT", "before":record,
+                    "network": getattr(client, "network", "LEGACY_UNKNOWN")})
                 self.journal.finish(operation, {"ok":True,"action":"OBSERVED_FLAT","orders_sent":0},
                     dict(record, managed=False, size=0, position=None, attribution="exchange_flat_observed_not_bot_execution"))
                 managed.discard(key)
@@ -880,7 +891,7 @@ class CopyEngine:
             lev_changed = bool(existing) and abs(float(existing.get("leverage", 1)) - spec["leverage"]) > 1e-9
             if live and self.journal and (reverse or abs(delta) > tolerance or lev_changed):
                 operation = self.journal.prepare(account["address"], self._runtime_key(key), {
-                    "before": existing, "target": spec, "action": "RECONCILE"})
+                    "before": existing, "target": spec, "action": "RECONCILE", "network": getattr(client, "network", "LEGACY_UNKNOWN")})
             if reverse:
                 reversal_runtime = profile.get("runtime") if live and profile.get("user_id") else None
                 reversal_persist = (lambda: self.storage.update_runtime(profile["user_id"], reversal_runtime)) if reversal_runtime is not None else None
@@ -983,9 +994,11 @@ class CopyEngine:
         operation = None
         try:
             if live and journalled and self.journal:
-                operation = self.journal.prepare(account["address"], market_key(position), {"action": "CLOSE", "before": position})
+                operation = self.journal.prepare(account["address"], market_key(position), {"action": "CLOSE", "before": position,
+                    "network": getattr(client, "network", "LEGACY_UNKNOWN")})
             submitted_ms = int(time.time() * 1000)
-            response = await asyncio.to_thread(client.market_close, position["coin"], position.get("dex") or "") if live else {"status": "paper"}
+            response = await asyncio.to_thread(client.market_close, position["coin"], position.get("dex") or "",
+                slippage_pct=self.settings.max_slippage_pct) if live else {"status": "paper"}
             if live:
                 error = client.order_error(response)
                 if error:
@@ -1025,7 +1038,8 @@ class CopyEngine:
                 for response in responses:
                     error = client.response_error(response)
                     if error: raise RuntimeError(error)
-            results.append(Result(True, "ORDERS_CANCELLED", account["name"], "", paper=not live))
+            results.append(Result(True, "ORDERS_CANCELLED", account["name"], "", paper=not live,
+                error="Scope: explicitly owned orders only; unrelated manual protection retained"))
             if close_managed:
                 managed = {self._from_runtime(item) for item in runtime.get("managed", [])}
                 positions = (await asyncio.to_thread(client.positions, True, True)) if live else list((runtime.get("positions") or {}).values())

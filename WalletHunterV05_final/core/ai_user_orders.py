@@ -620,6 +620,7 @@ class AiUserOrders:
         runtime = profile.setdefault("runtime", {})
         try:
             operation = self.journal.prepare(address, key, {"action": "AI_USER_OPEN", "proposal_id": proposal_id,
+                "network": payload["network"],
                 "coin": payload["coin"], "direction": payload["direction"], "size": payload["size"],
                 "limit_price": payload["limit_price"], "leverage": payload["leverage"], "cloid": payload["cloid"]})
             self._write_result(proposal_id, "SUBMITTING", {"reason": "intent_persisted"}, now, operation)

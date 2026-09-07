@@ -1,0 +1,9 @@
+telethon>=1.42,<2
+python-dotenv>=1.0,<2
+hyperliquid-python-sdk>=0.21,<1
+eth-account>=0.13,<1
+cryptography>=43,<48
+requests>=2.31,<3
+fastapi>=0.115,<1
+uvicorn>=0.30,<1
+pydantic>=2.9,<3

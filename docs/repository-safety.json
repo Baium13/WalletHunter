@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "phase": "0",
+  "initial_git_commits": 0,
+  "initial_git_tracked_files": 0,
+  "history_rewritten": false,
+  "credentials_rotated": false,
+  "production_accessed": false,
+  "sensitive_files_deleted": false,
+  "existing_application_files_in_initial_inventory": 145,
+  "existing_files_missing_after_phase0": [],
+  "existing_application_files_modified": [
+    "WalletHunterV05_final/.env.example",
+    "WalletHunterV05_final/requirements.txt"
+  ],
+  "protected_application_test_and_operations_files": 131,
+  "protected_files_modified": [],
+  "local_runtime_state_hash_unchanged": true,
+  "repository_guard_tests": {
+    "discovered": 19,
+    "passed": 19,
+    "failed": 0,
+    "duration_seconds": 0.017
+  },
+  "source_syntax_checks": {
+    "python_files": 101,
+    "javascript_files": 27,
+    "status": "PASS",
+    "application_entrypoints_executed": false
+  },
+  "secret_checks": {
+    "candidate_and_index_scans": "PASS",
+    "matching_values_printed": false,
+    "reviewed_synthetic_fixture_exemptions": 1,
+    "methods": ["prohibited paths", "credential patterns", "UTF-16/32 text", "staged file modes"],
+    "limitations": "Focused baseline guard, not a claim to identify all arbitrary encodings or previously shared copies."
+  },
+  "ignored_categories": [
+    "environment and secrets", "SSH/TLS/private keys", "Telegram sessions",
+    "runtime JSON/SQLite", "backups and release archives", "logs and temporary files",
+    "virtual environments and dependency caches", "IDE metadata", "generated visual reports",
+    "historical operational reports"
+  ],
+  "not_verified": ["production installation", "actual production restore", "hosted Linux CI", "20 auxiliary browser scenarios"]
+}

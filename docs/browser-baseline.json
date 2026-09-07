@@ -1,0 +1,189 @@
+{
+  "schema_version": 1,
+  "recorded_date": "2026-09-07",
+  "status": "NOT_RUN",
+  "assessment_method": "static source inspection and local dependency JSON/file-version inventory only",
+  "scope": "Four additional automated real-browser visual harnesses outside the Python and Node built-in suites",
+  "full_project_baseline_status": "PARTIAL",
+  "discovered_suites": 4,
+  "discovered_scenarios": 20,
+  "executed_suites": 0,
+  "executed_scenarios": 0,
+  "not_run_reason": "Every original harness hardcodes installed Microsoft Edge (channel=msedge). Phase 0 has no reproducibly pinned Edge runtime with OS-level network isolation. Page HTTP interception alone does not establish browser-wide egress denial. No browser was substituted or launched.",
+  "dependencies": {
+    "node_observed_version": "24.19.0",
+    "playwright_observed_version": "1.62.1",
+    "playwright_core_observed_version": "1.62.1",
+    "playwright_node_requirement": ">=20",
+    "metadata_source": "Existing bundled package.json and playwright-core/browsers.json; no npm install/import",
+    "requested_browser_channel": "msedge",
+    "installed_windows_edge_file_version": "152.0.4191.66",
+    "playwright_default_chromium_revision": "1234",
+    "playwright_default_chromium_version": "151.0.7922.34",
+    "default_chromium_is_requested_edge": false,
+    "optional_macos_dependency": {
+      "name": "fsevents",
+      "version": "2.3.2",
+      "needed_for_this_windows_baseline": false
+    }
+  },
+  "shared_requirements": {
+    "browser_child_process": true,
+    "persistent_browser_profile": false,
+    "application_server": false,
+    "loopback_tcp_server": false,
+    "telegram_authentication": false,
+    "production_account_data": false,
+    "read_only_assets": "WalletHunterV05_final/webapp/static",
+    "dimensions": [
+      320,
+      390
+    ],
+    "height_px": 844,
+    "languages": [
+      "ru",
+      "en"
+    ],
+    "network": "Synthetic https://offline-wallet.test routes or about:blank; protocol automation uses browser pipes, no test HTTP server is required.",
+    "outputs": "Explicit positional output directory should be a new per-suite subdirectory under ignored .phase0/. Defaults are not used in Phase 0."
+  },
+  "safety_limits": [
+    "Original page.route handlers intercept page HTTP but do not provide OS-level network isolation for browser background traffic.",
+    "Service workers are not explicitly blocked and WebSocket routing is not guarded by the harnesses; current inspected frontend has no service-worker/WebSocket usage.",
+    "The baseline Node preload intentionally denies child processes. It must not be globally relaxed merely to run these harnesses.",
+    "A future dedicated stage must use a trusted, pinned Edge/runtime image and --network none (or equivalent), copy only allowlisted source/assets, provide no credentials, and restrict output paths.",
+    "Keep original harnesses byte-identical. Do not silently switch channel=msedge to Chromium or count historical screenshots as new passed tests."
+  ],
+  "suites": [
+    {
+      "name": "ui_modes_visual_audit.cjs",
+      "path": "WalletHunterV05_final/scripts/ui_modes_visual_audit.cjs",
+      "sha256": "380e8a1521556b2710075d1648eef09689b4eebcb314cff3c4cee6cac1df0494",
+      "status": "NOT_RUN",
+      "scenarios": 4,
+      "scope": "AI mode switches, learning card, privacy, overflow and >=48px controls",
+      "assets": [
+        "style.css",
+        "ai.css",
+        "ai-modes.js",
+        "ai-learning.js",
+        "ai-user-orders.js",
+        "ai-review.js"
+      ],
+      "page_routes": [
+        "GET synthetic /",
+        "synthetic /api/ai",
+        "synthetic /api/ai/modes; only in-memory enabled flag changes"
+      ],
+      "route_limit": "Matches pathname without validating origin/method; unexpected pathname throws. There is no route.continue, but browser-wide traffic is outside this handler.",
+      "expected_fake_posts_per_scenario": 1,
+      "expected_screenshots": 8,
+      "json_report_file": null,
+      "stdout_report": true,
+      "default_output": "ui-audit relative to cwd",
+      "fixture_notes": [
+        "rescue.trigger_roe_pct=-50 is stale relative to shared runtime threshold -40; original fixture preserved."
+      ]
+    },
+    {
+      "name": "ui_user_orders_visual_audit.cjs",
+      "path": "WalletHunterV05_final/scripts/ui_user_orders_visual_audit.cjs",
+      "sha256": "74ba8bfd8933f9b7a35b2a5e72a714547b08b8678b90be9a85c8e228b277d75c",
+      "status": "NOT_RUN",
+      "scenarios": 4,
+      "scope": "Exact frozen user-order preview, privacy confirm guard, fake Confirm/Decline, history and >=48px controls",
+      "assets": [
+        "style.css",
+        "ai.css",
+        "ai-user-orders.js"
+      ],
+      "page_routes": [
+        "All page HTTP aborted; page.setContent HTML; injected in-memory api function"
+      ],
+      "expected_fake_posts_per_scenario": 1,
+      "expected_screenshots": 4,
+      "json_report_file": null,
+      "stdout_report": true,
+      "default_output": "ui-user-orders-audit relative to cwd",
+      "fixture_notes": [
+        "MAINNET is only a synthetic displayed label; no signing client or backend exists in this harness."
+      ]
+    },
+    {
+      "name": "ui_position_actions_visual_audit.cjs",
+      "path": "WalletHunterV05_final/scripts/ui_position_actions_visual_audit.cjs",
+      "sha256": "1896779a0ac6a8f53b3d0ef95d1ace56848416cbafc6f8cbf5b3fa74800212a0",
+      "status": "NOT_RUN",
+      "scenarios": 4,
+      "scope": "REDUCE/AVERAGE proposals, eight factors, translations, privacy, fake confirmed reduce, explicit HOLD resume/cancel, overflow and >=52px controls",
+      "assets": [
+        "style.css",
+        "ai.css",
+        "ai-modes.js",
+        "ai-learning.js",
+        "ai-user-orders.js",
+        "ai-position-actions.js",
+        "ai-review.js"
+      ],
+      "page_routes": [
+        "GET synthetic /",
+        "GET synthetic /api/ai",
+        "POST synthetic-reduce decision",
+        "POST synthetic /api/ai/positions/resume"
+      ],
+      "route_limit": "Origin/method allowlist; other origins abort and unexpected local paths fail assertions. Dialogs are synthetic browser confirms.",
+      "expected_fake_posts_per_scenario": 2,
+      "expected_screenshots": 20,
+      "json_report_file": "position-actions-report.json",
+      "stdout_report": true,
+      "default_output": "../ui-audit-20260906-10 relative to cwd",
+      "fixture_notes": [
+        "Supporting trader limits entry_pct=1/max_leverage=20 are stale relative to current shared entry policy 10/40; position-action target policy -40 is current."
+      ]
+    },
+    {
+      "name": "ui_startup_visual_audit.cjs",
+      "path": "WalletHunterV05_final/scripts/ui_startup_visual_audit.cjs",
+      "sha256": "d530b19ae604e1a38957465ec393297973743602424f0a8c640c98a23a38200a",
+      "status": "NOT_RUN",
+      "scenarios": 8,
+      "deep_links": [
+        false,
+        true
+      ],
+      "scope": "Actual index/static scripts, #ai-position deep link, delayed dashboard, all six tabs, chart selections, header/navigation overflow and zero mutations",
+      "assets": [
+        "Actual index.html and local static module/style/image assets including lazy ai-review.js"
+      ],
+      "page_routes": [
+        "GET synthetic / and bounded local /static/*",
+        "Mock Telegram Web App script",
+        "GET synthetic /api/dashboard",
+        "GET synthetic /api/ai",
+        "GET synthetic /api/chart",
+        "GET synthetic /api/markets",
+        "GET synthetic /api/price"
+      ],
+      "route_limit": "All non-GET requests abort; unknown origins abort; local static resolution checks containment. Current fixture deliberately introduces 180ms dashboard delay.",
+      "expected_fake_posts_per_scenario": 0,
+      "expected_screenshots": 16,
+      "json_report_file": "startup-report.json",
+      "stdout_report": true,
+      "default_output": "../ui-audit-20260906-10 relative to cwd",
+      "fixture_notes": [
+        "Requires index build 20260906-11; no fixture or application build was altered in Phase 0."
+      ]
+    }
+  ],
+  "expected_output_if_all_run": {
+    "screenshots": 48,
+    "json_reports": 2,
+    "stdout_summaries": 4
+  },
+  "actual_output": {
+    "screenshots": 0,
+    "json_reports": 0,
+    "browser_processes_launched": 0
+  },
+  "next_step": "Provision a separate reproducible Edge browser test image/stage and run original harnesses against copied assets under OS egress denial. Until then report the existing Python/Node suite results separately and full automated baseline PARTIAL."
+}

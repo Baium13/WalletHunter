@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "baseline": "phase-0-pre-architecture",
+  "application_directory": "WalletHunterV05_final",
+  "observed_application_label": "WalletHunter V07",
+  "observed_ui_build": "20260906-11",
+  "git_commit": "RESOLVED_FROM_CLEAN_HEAD_BY_tools/baseline/release_manifest.py",
+  "python": "3.12.14",
+  "node_test_runtime": "24.19.0",
+  "dependency_locks": [
+    "WalletHunterV05_final/requirements.lock",
+    "WalletHunterV05_final/requirements-dev.lock",
+    "WalletHunterV05_final/requirements-build.lock"
+  ],
+  "deployment": {
+    "target": "Ubuntu systemd; existing production installation not changed or reverified",
+    "telegram_entrypoint": "python -m desktop.main",
+    "telegram_file": "WalletHunterV05_final/desktop/main.py",
+    "web_entrypoint": "uvicorn webapp.server:app --host 127.0.0.1 --port 8090 --proxy-headers",
+    "working_directory": "WalletHunterV05_final",
+    "services": ["wallethunter", "wallethunter-web", "wallethunter-backup.timer"],
+    "network_modes_in_existing_code": ["MAINNET", "TESTNET"],
+    "copy_execution_switch": "AUTO_TRADING; not a global manual-execution switch",
+    "production_configuration_verified": false
+  },
+  "state": {
+    "json_default_version": 2,
+    "sqlite_schema_registry": "None; individual CREATE TABLE IF NOT EXISTS definitions",
+    "migration_performed": false,
+    "recovery_document": "docs/RECOVERY.md"
+  },
+  "protected_source_manifest": "docs/protected-source.json",
+  "test_baseline": "docs/baseline-tests.json",
+  "unresolved_findings": "docs/PHASE1_FINDINGS.md"
+}

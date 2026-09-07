@@ -1,0 +1,14 @@
+[Unit]
+Description=Wallet Hunter Telegram Mini App
+After=network.target
+
+[Service]
+User=ubuntu
+WorkingDirectory=/home/ubuntu/WalletHunterV07/WalletHunterV05_final
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/ubuntu/WalletHunterV07/WalletHunterV05_final/.venv/bin/uvicorn webapp.server:app --host 127.0.0.1 --port 8090 --proxy-headers
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

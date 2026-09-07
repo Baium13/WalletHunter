@@ -1,0 +1,1518 @@
+{
+  "schema_version": 1,
+  "verification": {
+    "date": "2026-09-07",
+    "fresh_windows_install": {
+      "python": "3.12.14",
+      "system_site_packages": false,
+      "installed_package_count": 51,
+      "version_mismatches": 0,
+      "unrelated_packages": 0,
+      "pip_check": "No broken requirements found."
+    },
+    "linux_artifact_checks": [
+      {
+        "target": "linux-x86_64",
+        "artifacts": 47,
+        "wheels": 46,
+        "sdists": 1,
+        "sha256_verified": true,
+        "metadata_dependency_errors": 0,
+        "linux_executed": false
+      },
+      {
+        "target": "linux-aarch64",
+        "artifacts": 47,
+        "wheels": 46,
+        "sdists": 1,
+        "sha256_verified": true,
+        "metadata_dependency_errors": 0,
+        "linux_executed": false
+      }
+    ],
+    "application_imported_by_dependency_check": false,
+    "production_accessed": false
+  },
+  "scope": "local audit dependency baseline, not production",
+  "observed_date": "2026-09-07",
+  "python_version": "3.12.14",
+  "implementation": "CPython",
+  "observed_platform": "Windows AMD64",
+  "source_environment": ".venv-audit (include-system-site-packages=true)",
+  "runtime_roots": [
+    "telethon",
+    "python-dotenv",
+    "hyperliquid-python-sdk",
+    "eth-account",
+    "cryptography",
+    "requests",
+    "fastapi",
+    "uvicorn",
+    "pydantic"
+  ],
+  "development_roots": [
+    "httpx"
+  ],
+  "build_roots": [
+    "pip",
+    "setuptools",
+    "wheel",
+    "packaging"
+  ],
+  "supported_targets": [
+    "windows-amd64",
+    "linux-x86_64",
+    "linux-aarch64"
+  ],
+  "linux_glibc_max_tag": "2.35",
+  "packages": [
+    {
+      "name": "annotated-doc",
+      "version": "0.0.5",
+      "requires_active": [],
+      "requires_python": ">=3.9",
+      "runtime": true,
+      "dev": false,
+      "build": false,
+      "direct_runtime": false,
+      "direct_dev": false,
+      "artifacts": [
+        {
+          "filename": "annotated_doc-0.0.5-py3-none-any.whl",
+          "sha256": "117bac03a25ede5df5440e855b32d556049ca169ead221505badf432fed4b101",
+          "url": "https://files.pythonhosted.org/packages/3e/30/e900b21425a860e195f32e37657aa1f7c7f2b1bfb26f03ca209b90933c06/annotated_doc-0.0.5-py3-none-any.whl",
+          "kind": "wheel"
+        }
+      ],
+      "target_artifacts": {
+        "windows-amd64": "annotated_doc-0.0.5-py3-none-any.whl",
+        "linux-x86_64": "annotated_doc-0.0.5-py3-none-any.whl",
+        "linux-aarch64": "annotated_doc-0.0.5-py3-none-any.whl"
+      }
+    },
+    {
+      "name": "annotated-types",
+      "version": "0.8.0",
+      "requires_active": [],
+      "requires_python": ">=3.10",
+      "runtime": true,
+      "dev": false,
+      "build": false,
+      "direct_runtime": false,
+      "direct_dev": false,
+      "artifacts": [
+        {
+          "filename": "annotated_types-0.8.0-py3-none-any.whl",
+          "sha256": "f072f4d804ea359e4eaf198b1af7a8b0943881a87f31bb764f8bf219bb9419e0",
+          "url": "https://files.pythonhosted.org/packages/99/91/8acff4f5e50511b911bbccb72b8628a49c68ce14148cd9f6431094859a90/annotated_types-0.8.0-py3-none-any.whl",
+          "kind": "wheel"
+        }
+      ],
+      "target_artifacts": {
+        "windows-amd64": "annotated_types-0.8.0-py3-none-any.whl",
+        "linux-x86_64": "annotated_types-0.8.0-py3-none-any.whl",
+        "linux-aarch64": "annotated_types-0.8.0-py3-none-any.whl"
+      }
+    },
+    {
+      "name": "anyio",
+      "version": "4.15.1",
+      "requires_active": [
+        "idna>=2.8",
+        "typing_extensions>=4.16.0; python_version < \"3.15\""
+      ],
+      "requires_python": ">=3.10",
+      "runtime": true,
+      "dev": false,
+      "build": false,
+      "direct_runtime": false,
+      "direct_dev": false,
+      "artifacts": [
+        {
+          "filename": "anyio-4.15.1-py3-none-any.whl",
+          "sha256": "6152fdbbf9a77fdec97731721bebf7c4c44f7c29b424b0065826173efc7ed101",
+          "url": "https://files.pythonhosted.org/packages/12/b8/4bd346e22b28902df4d651910f5242c28d84e4a5c2435ca5c3f797ed7e2e/anyio-4.15.1-py3-none-any.whl",
+          "kind": "wheel"
+        }
+      ],
+      "target_artifacts": {
+        "windows-amd64": "anyio-4.15.1-py3-none-any.whl",
+        "linux-x86_64": "anyio-4.15.1-py3-none-any.whl",
+        "linux-aarch64": "anyio-4.15.1-py3-none-any.whl"
+      }
+    },
+    {
+      "name": "bitarray",
+      "version": "3.11.0",
+      "requires_active": [],
+      "requires_python": ">=3.7",
+      "runtime": true,
+      "dev": false,
+      "build": false,
+      "direct_runtime": false,
+      "direct_dev": false,
+      "artifacts": [
+        {
+          "filename": "bitarray-3.11.0-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl",
+          "sha256": "823638d0a900cea53c173fb31f5f1f4b913065a92fa3406d9b20eb7b7ebf189d",
+          "url": "https://files.pythonhosted.org/packages/03/30/edaec4a0fffd04ee98b1425a597dc1d350c4def690b0a34815a75e5c2c33/bitarray-3.11.0-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl",
+          "kind": "wheel"
+        },
+        {
+          "filename": "bitarray-3.11.0-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl",
+          "sha256": "52741a1d24a3723a8151259906cf1befeaf3d4ccf7d3e27e8be4334590b59bcd",
+          "url": "https://files.pythonhosted.org/packages/9a/1c/35b3f34fee6f91f708eb81af03438afc137b2e5fc0e27ec11d948287f64c/bitarray-3.11.0-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl",
+          "kind": "wheel"
+        },
+        {
+          "filename": "bitarray-3.11.0-cp312-cp312-win_amd64.whl",
+          "sha256": "5db38c0a36d07190c3629c65dab2504233a56b1c35d8b1cc3d7369943d028711",
+          "url": "https://files.pythonhosted.org/packages/f1/c4/0a1608187e6d21b30c341ebcce6f75efbc8fe289f87ad58aa4149ce59828/bitarray-3.11.0-cp312-cp312-win_amd64.whl",
+          "kind": "wheel"
+        }
+      ],
+      "target_artifacts": {
+        "windows-amd64": "bitarray-3.11.0-cp312-cp312-win_amd64.whl",
+        "linux-x86_64": "bitarray-3.11.0-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl",
+        "linux-aarch64": "bitarray-3.11.0-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl"
+      }
+    },
+    {
+      "name": "certifi",
+      "version": "2026.7.22",
+      "requires_active": [],
+      "requires_python": ">=3.7",
+      "runtime": true,
+      "dev": false,
+      "build": false,
+      "direct_runtime": false,
+      "direct_dev": false,
+      "artifacts": [
+        {
+          "filename": "certifi-2026.7.22-py3-none-any.whl",
+          "sha256": "62f22742b58a1a33014a2b6b706588a8d7e2a88ae7bd1a6ebe8c992928483775",
+          "url": "https://files.pythonhosted.org/packages/0b/a7/71ac2cff56fec219ed242bb11b8efb69fcc4bec75db06fb7bfe35de520e6/certifi-2026.7.22-py3-none-any.whl",
+          "kind": "wheel"
+        }
+      ],
+      "target_artifacts": {
+        "windows-amd64": "certifi-2026.7.22-py3-none-any.whl",
+        "linux-x86_64": "certifi-2026.7.22-py3-none-any.whl",
+        "linux-aarch64": "certifi-2026.7.22-py3-none-any.whl"
+      }
+    },
+    {
+      "name": "cffi",
+      "version": "2.1.1",
+      "requires_active": [
+        "pycparser; implementation_name != \"PyPy\""
+      ],
+      "requires_python": ">=3.10",
+      "runtime": true,
+      "dev": false,
+      "build": false,
+      "direct_runtime": false,
+      "direct_dev": false,
+      "artifacts": [
+        {
+          "filename": "cffi-2.1.1-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.whl",
+          "sha256": "68e62fe11f30d5ca8289242866f0a5291402d8529ca2178ab8afc5c9694ae890",
+          "url": "https://files.pythonhosted.org/packages/44/de/f98430906df1545ffde0d543dd124a7a439bc2cd32b36b9c53f805df7333/cffi-2.1.1-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.whl",
+          "kind": "wheel"
+        },
+        {
+          "filename": "cffi-2.1.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl",
+          "sha256": "c1453022f490d2459a11819d83ad1d586e9ff65a12ac3e705ffebd46d3685dcf",
+          "url": "https://files.pythonhosted.org/packages/b1/db/dceb9dd5b231e1da801793f8acc9f3c52a7e1afe40bb1aae37e02b0faad5/cffi-2.1.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl",
+          "kind": "wheel"
+        },
+        {
+          "filename": "cffi-2.1.1-cp312-cp312-win_amd64.whl",
+          "sha256": "f53e442b08449d42821fa4a4fba000095af9f62742a500f978a9f557ec44339a",
+          "url": "https://files.pythonhosted.org/packages/d9/79/615cc094e2fb508cade7de88d3b4f6c4ec2bab695c97bce9153dc65aadf5/cffi-2.1.1-cp312-cp312-win_amd64.whl",
+          "kind": "wheel"
+        }
+      ],
+      "target_artifacts": {
+        "windows-amd64": "cffi-2.1.1-cp312-cp312-win_amd64.whl",
+        "linux-x86_64": "cffi-2.1.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl",
+        "linux-aarch64": "cffi-2.1.1-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.whl"
+      }
+    },
+    {
+      "name": "charset-normalizer",
+      "version": "3.5.1",
+      "requires_active": [],
+      "requires_python": ">=3.7",
+      "runtime": true,
+      "dev": false,
+      "build": false,
+      "direct_runtime": false,
+      "direct_dev": false,
+      "artifacts": [
+        {
+          "filename": "charset_normalizer-3.5.1-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl",
+          "sha256": "4582c27e8c889d64811987b5967fbd3ae0c823fe1fd933b543d55ac20bb475fa",
+          "url": "https://files.pythonhosted.org/packages/9a/4c/be49ada26b1f0232d57aa89bbebf997a5cc2332a5616b6eca26ff680044d/charset_normalizer-3.5.1-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl",
+          "kind": "wheel"
+        },
+        {
+          "filename": "charset_normalizer-3.5.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl",
+          "sha256": "b9af956078716df40d985fb0dfeb2c2120c5ca92ba4ff4b388acfd01cdc14d08",
+          "url": "https://files.pythonhosted.org/packages/6f/89/bb5108dc6c3651dca963f2b0a3ba19bbcb370c94e1b6d3e0e844a58e6dca/charset_normalizer-3.5.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl",
+          "kind": "wheel"
+        },
+        {
+          "filename": "charset_normalizer-3.5.1-cp312-cp312-win_amd64.whl",
+          "sha256": "3617ac3cfd8b9888f145ad89dd6e692285834b0201c6074a5eeaad3fd4d668c2",
+          "url": "https://files.pythonhosted.org/packages/9d/7a/4c6c298171e6b3e745633180ff59350fc0ca0db1ffd28df1e369e0579f71/charset_normalizer-3.5.1-cp312-cp312-win_amd64.whl",
+          "kind": "wheel"
+        }
+      ],
+      "target_artifacts": {
+        "windows-amd64": "charset_normalizer-3.5.1-cp312-cp312-win_amd64.whl",
+        "linux-x86_64": "charset_normalizer-3.5.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl",
+        "linux-aarch64": "charset_normalizer-3.5.1-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl"
+      }
+    },
+    {
+      "name": "ckzg",
+      "version": "2.1.8",
+      "requires_active": [],
+      "requires_python": null,
+      "runtime": true,
+      "dev": false,
+      "build": false,
+      "direct_runtime": false,
+      "direct_dev": false,
+      "artifacts": [
+        {
+          "filename": "ckzg-2.1.8-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl",
+          "sha256": "9bdb7f51ee3cf8e45451bee8c6dce975fddadfe231174d8de9c27a3aa27741b8",
+          "url": "https://files.pythonhosted.org/packages/71/42/79280e02d7a8f7b4f97d581b013024c8695ff6a54cd4851f033d8a4733b7/ckzg-2.1.8-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl",
+          "kind": "wheel"
+        },
+        {
+          "filename": "ckzg-2.1.8-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl",
+          "sha256": "10339d23e36b8a0a4e6fda7f6c72d6b2fd4e1506f7b64a661ba8c706ee33f335",
+          "url": "https://files.pythonhosted.org/packages/43/af/d0ed7c7b2babfa76e91190a90e8e1f93729d63370493c2c79acfe9002abe/ckzg-2.1.8-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl",
+          "kind": "wheel"
+        },
+        {
+          "filename": "ckzg-2.1.8-cp312-cp312-win_amd64.whl",
+          "sha256": "a30f2b980929e898f0b28aa6bf9ae35e7afd5884e354376ad3744669b7cacf3e",
+          "url": "https://files.pythonhosted.org/packages/91/94/381f0c9ce5d6514b0141fd55117980c82aad1e8c93c91e5c3d30a5752e52/ckzg-2.1.8-cp312-cp312-win_amd64.whl",
+          "kind": "wheel"
+        }
+      ],
+      "target_artifacts": {
+        "windows-amd64": "ckzg-2.1.8-cp312-cp312-win_amd64.whl",
+        "linux-x86_64": "ckzg-2.1.8-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl",
+        "linux-aarch64": "ckzg-2.1.8-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl"
+      }
+    },
+    {
+      "name": "click",
+      "version": "8.5.0",
+      "requires_active": [],
+      "requires_python": ">=3.10",
+      "runtime": true,
+      "dev": false,
+      "build": false,
+      "direct_runtime": false,
+      "direct_dev": false,
+      "artifacts": [
+        {
+          "filename": "click-8.5.0-py3-none-any.whl",
+          "sha256": "255bc9599cf7748b4b1a446ccc735421bd08a2ae529a8b88597d3de5664ee360",
+          "url": "https://files.pythonhosted.org/packages/58/50/6c0d534c5f134586a8e1ba4e330569e32f057e33372ae556463212fb4cd3/click-8.5.0-py3-none-any.whl",
+          "kind": "wheel"
+        }
+      ],
+      "target_artifacts": {
+        "windows-amd64": "click-8.5.0-py3-none-any.whl",
+        "linux-x86_64": "click-8.5.0-py3-none-any.whl",
+        "linux-aarch64": "click-8.5.0-py3-none-any.whl"
+      }
+    },
+    {
+      "name": "cryptography",
+      "version": "47.0.0",
+      "requires_active": [
+        "cffi>=2.0.0 ; python_full_version >= '3.9' and platform_python_implementation != 'PyPy'"
+      ],
+      "requires_python": ">=3.8, !=3.9.0, !=3.9.1",
+      "runtime": true,
+      "dev": false,
+      "build": false,
+      "direct_runtime": true,
+      "direct_dev": false,
+      "artifacts": [
+        {
+          "filename": "cryptography-47.0.0-cp311-abi3-manylinux_2_34_aarch64.whl",
+          "sha256": "6f29f36582e6151d9686235e586dd35bb67491f024767d10b842e520dc6a07ac",
+          "url": "https://files.pythonhosted.org/packages/df/fd/32db38e3ad0cb331f0691cb4c7a8a6f176f679124dee746b3af6633db4d9/cryptography-47.0.0-cp311-abi3-manylinux_2_34_aarch64.whl",
+          "kind": "wheel"
+        },
+        {
+          "filename": "cryptography-47.0.0-cp311-abi3-manylinux_2_34_x86_64.whl",
+          "sha256": "4e1de79e047e25d6e9f8cea71c86b4a53aced64134f0f003bbcbf3655fd172c8",
+          "url": "https://files.pythonhosted.org/packages/34/4f/e5711b28e1901f7d480a2b1b688b645aa4c77c73f10731ed17e7f7db3f0d/cryptography-47.0.0-cp311-abi3-manylinux_2_34_x86_64.whl",
+          "kind": "wheel"
+        },
+        {
+          "filename": "cryptography-47.0.0-cp311-abi3-win_amd64.whl",
+          "sha256": "f5c3296dab66202f1b18a91fa266be93d6aa0c2806ea3d67762c69f60adc71aa",
+          "url": "https://files.pythonhosted.org/packages/b2/dc/1b901990b174786569029f67542b3edf72ac068b6c3c8683c17e6a2f5363/cryptography-47.0.0-cp311-abi3-win_amd64.whl",
+          "kind": "wheel"
+        }
+      ],
+      "target_artifacts": {
+        "windows-amd64": "cryptography-47.0.0-cp311-abi3-win_amd64.whl",
+        "linux-x86_64": "cryptography-47.0.0-cp311-abi3-manylinux_2_34_x86_64.whl",
+        "linux-aarch64": "cryptography-47.0.0-cp311-abi3-manylinux_2_34_aarch64.whl"
+      }
+    },
+    {
+      "name": "cytoolz",
+      "version": "1.1.0",
+      "requires_active": [
+        "toolz>=0.8.0"
+      ],
+      "requires_python": ">=3.9",
+      "runtime": true,
+      "dev": false,
+      "build": false,
+      "direct_runtime": false,
+      "direct_dev": false,
+      "artifacts": [
+        {
+          "filename": "cytoolz-1.1.0-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl",
+          "sha256": "82779049f352fb3ab5e8c993ab45edbb6e02efb1f17f0b50f4972c706cc51d76",
+          "url": "https://files.pythonhosted.org/packages/25/73/9b25bb7ed8d419b9d6ff2ae0b3d06694de79a3f98f5169a1293ff7ad3a3f/cytoolz-1.1.0-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl",
+          "kind": "wheel"
+        },
+        {
+          "filename": "cytoolz-1.1.0-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl",
+          "sha256": "c7a98deb11ccd8e5d9f9441ef2ff3352aab52226a2b7d04756caaa53cd612363",
+          "url": "https://files.pythonhosted.org/packages/e1/93/c647bc3334355088c57351a536c2d4a83dd45f7de591fab383975e45bff9/cytoolz-1.1.0-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl",
+          "kind": "wheel"
+        },
+        {
+          "filename": "cytoolz-1.1.0-cp312-cp312-win_amd64.whl",
+          "sha256": "07156987f224c6dac59aa18fb8bf91e1412f5463961862716a3381bf429c8699",
+          "url": "https://files.pythonhosted.org/packages/ad/33/4c9bdf8390dc01d2617c7f11930697157164a52259b6818ddfa2f94f89f4/cytoolz-1.1.0-cp312-cp312-win_amd64.whl",
+          "kind": "wheel"
+        }
+      ],
+      "target_artifacts": {
+        "windows-amd64": "cytoolz-1.1.0-cp312-cp312-win_amd64.whl",
+        "linux-x86_64": "cytoolz-1.1.0-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl",
+        "linux-aarch64": "cytoolz-1.1.0-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl"
+      }
+    },
+    {
+      "name": "eth-abi",
+      "version": "6.0.0",
+      "requires_active": [
+        "eth-utils>=2.0.0",
+        "eth-typing>=3.0.0",
+        "parsimonious<0.11.0,>=0.10.0"
+      ],
+      "requires_python": "<4,>=3.10",
+      "runtime": true,
+      "dev": false,
+      "build": false,
+      "direct_runtime": false,
+      "direct_dev": false,
+      "artifacts": [
+        {
+          "filename": "eth_abi-6.0.0-py3-none-any.whl",
+          "sha256": "05ad63b50bd5448cfac0079b3cc5464de7464b4336a2496bf368d5808c7f9e9f",
+          "url": "https://files.pythonhosted.org/packages/7d/ec/dd7efe731fb2b3bd22501b61af73d7f8c1076fbf0b4b81b1b283b0afca50/eth_abi-6.0.0-py3-none-any.whl",
+          "kind": "wheel"
+        }
+      ],
+      "target_artifacts": {
+        "windows-amd64": "eth_abi-6.0.0-py3-none-any.whl",
+        "linux-x86_64": "eth_abi-6.0.0-py3-none-any.whl",
+        "linux-aarch64": "eth_abi-6.0.0-py3-none-any.whl"
+      }
+    },
+    {
+      "name": "eth-account",
+      "version": "0.13.7",
+      "requires_active": [
+        "bitarray>=2.4.0",
+        "eth-abi>=4.0.0-b.2",
+        "eth-keyfile<0.9.0,>=0.7.0",
+        "eth-keys>=0.4.0",
+        "eth-rlp>=2.1.0",
+        "eth-utils>=2.0.0",
+        "hexbytes>=1.2.0",
+        "rlp>=1.0.0",
+        "ckzg>=2.0.0",
+        "pydantic>=2.0.0"
+      ],
+      "requires_python": ">=3.8, <4",
+      "runtime": true,
+      "dev": false,
+      "build": false,
+      "direct_runtime": true,
+      "direct_dev": false,
+      "artifacts": [
+        {
+          "filename": "eth_account-0.13.7-py3-none-any.whl",
+          "sha256": "39727de8c94d004ff61d10da7587509c04d2dc7eac71e04830135300bdfc6d24",
+          "url": "https://files.pythonhosted.org/packages/46/18/088fb250018cbe665bc2111974301b2d59f294a565aff7564c4df6878da2/eth_account-0.13.7-py3-none-any.whl",
+          "kind": "wheel"
+        }
+      ],
+      "target_artifacts": {
+        "windows-amd64": "eth_account-0.13.7-py3-none-any.whl",
+        "linux-x86_64": "eth_account-0.13.7-py3-none-any.whl",
+        "linux-aarch64": "eth_account-0.13.7-py3-none-any.whl"
+      }
+    },
+    {
+      "name": "eth-hash",
+      "version": "0.8.0",
+      "requires_active": [],
+      "requires_python": ">=3.10, <4",
+      "runtime": true,
+      "dev": false,
+      "build": false,
+      "direct_runtime": false,
+      "direct_dev": false,
+      "artifacts": [
+        {
+          "filename": "eth_hash-0.8.0-py3-none-any.whl",
+          "sha256": "523718a51b369ab89866b929a5c93c52978cd866ea309192ad980dd8271f9fac",
+          "url": "https://files.pythonhosted.org/packages/87/87/b36792150ca0b28e4df683a34be15a61461ca0e349e5b5cf3ec8f694edb9/eth_hash-0.8.0-py3-none-any.whl",
+          "kind": "wheel"
+        }
+      ],
+      "target_artifacts": {
+        "windows-amd64": "eth_hash-0.8.0-py3-none-any.whl",
+        "linux-x86_64": "eth_hash-0.8.0-py3-none-any.whl",
+        "linux-aarch64": "eth_hash-0.8.0-py3-none-any.whl"
+      }
+    },
+    {
+      "name": "eth-keyfile",
+      "version": "0.8.1",
+      "requires_active": [
+        "eth-utils >=2",
+        "eth-keys >=0.4.0",
+        "pycryptodome <4,>=3.6.6"
+      ],
+      "requires_python": ">=3.8, <4",
+      "runtime": true,
+      "dev": false,
+      "build": false,
+      "direct_runtime": false,
+      "direct_dev": false,
+      "artifacts": [
+        {
+          "filename": "eth_keyfile-0.8.1-py3-none-any.whl",
+          "sha256": "65387378b82fe7e86d7cb9f8d98e6d639142661b2f6f490629da09fddbef6d64",
+          "url": "https://files.pythonhosted.org/packages/88/fc/48a586175f847dd9e05e5b8994d2fe8336098781ec2e9836a2ad94280281/eth_keyfile-0.8.1-py3-none-any.whl",
+          "kind": "wheel"
+        }
+      ],
+      "target_artifacts": {
+        "windows-amd64": "eth_keyfile-0.8.1-py3-none-any.whl",
+        "linux-x86_64": "eth_keyfile-0.8.1-py3-none-any.whl",
+        "linux-aarch64": "eth_keyfile-0.8.1-py3-none-any.whl"
+      }
+    },
+    {
+      "name": "eth-keys",
+      "version": "0.8.0",
+      "requires_active": [
+        "eth-typing>=3",
+        "eth-utils>=2"
+      ],
+      "requires_python": "<4,>=3.10",
+      "runtime": true,
+      "dev": false,
+      "build": false,
+      "direct_runtime": false,
+      "direct_dev": false,
+      "artifacts": [
+        {
+          "filename": "eth_keys-0.8.0-py3-none-any.whl",
+          "sha256": "a7b94222638cccbdf2b5dae5c365d883a96826d82bb0faeb56baa65375f514ae",
+          "url": "https://files.pythonhosted.org/packages/f9/f5/24806598664a2fbc65d5ed4f0e9e986e7f9061e3b43738412c8df7ba1cbd/eth_keys-0.8.0-py3-none-any.whl",
+          "kind": "wheel"
+        }
+      ],
+      "target_artifacts": {
+        "windows-amd64": "eth_keys-0.8.0-py3-none-any.whl",
+        "linux-x86_64": "eth_keys-0.8.0-py3-none-any.whl",
+        "linux-aarch64": "eth_keys-0.8.0-py3-none-any.whl"
+      }
+    },
+    {
+      "name": "eth-rlp",
+      "version": "3.0.0",
+      "requires_active": [
+        "eth-utils>=2.0.0",
+        "hexbytes>=1.2.0",
+        "rlp>=3.0.0"
+      ],
+      "requires_python": "<4,>=3.10",
+      "runtime": true,
+      "dev": false,
+      "build": false,
+      "direct_runtime": false,
+      "direct_dev": false,
+      "artifacts": [
+        {
+          "filename": "eth_rlp-3.0.0-py3-none-any.whl",
+          "sha256": "32f355261c36ad2c369db098170f873123795667e50d496b034f369e2c9d2346",
+          "url": "https://files.pythonhosted.org/packages/ab/35/a3071f2a7ee701f99c8562865edbc426991d0964543d2947901b4135f259/eth_rlp-3.0.0-py3-none-any.whl",
+          "kind": "wheel"
+        }
+      ],
+      "target_artifacts": {
+        "windows-amd64": "eth_rlp-3.0.0-py3-none-any.whl",
+        "linux-x86_64": "eth_rlp-3.0.0-py3-none-any.whl",
+        "linux-aarch64": "eth_rlp-3.0.0-py3-none-any.whl"
+      }
+    },
+    {
+      "name": "eth-typing",
+      "version": "6.0.0",
+      "requires_active": [
+        "typing_extensions>=4.5.0"
+      ],
+      "requires_python": ">=3.10, <4",
+      "runtime": true,
+      "dev": false,
+      "build": false,
+      "direct_runtime": false,
+      "direct_dev": false,
+      "artifacts": [
+        {
+          "filename": "eth_typing-6.0.0-py3-none-any.whl",
+          "sha256": "ee74fb641eb36dd885e1c42c2a3055314efa532b3e71480816df70a94d35cfb9",
+          "url": "https://files.pythonhosted.org/packages/aa/0d/e756622fab29f404d846d7464f929d642a7ee6eff5b38bcc79e7c64ac630/eth_typing-6.0.0-py3-none-any.whl",
+          "kind": "wheel"
+        }
+      ],
+      "target_artifacts": {
+        "windows-amd64": "eth_typing-6.0.0-py3-none-any.whl",
+        "linux-x86_64": "eth_typing-6.0.0-py3-none-any.whl",
+        "linux-aarch64": "eth_typing-6.0.0-py3-none-any.whl"
+      }
+    },
+    {
+      "name": "eth-utils",
+      "version": "5.3.1",
+      "requires_active": [
+        "eth-hash>=0.3.1",
+        "eth-typing>=5.0.0",
+        "cytoolz>=0.10.1; implementation_name == \"cpython\"",
+        "pydantic<3,>=2.0.0"
+      ],
+      "requires_python": ">=3.8, <4",
+      "runtime": true,
+      "dev": false,
+      "build": false,
+      "direct_runtime": false,
+      "direct_dev": false,
+      "artifacts": [
+        {
+          "filename": "eth_utils-5.3.1-py3-none-any.whl",
+          "sha256": "1f5476d8f29588d25b8ae4987e1ffdfae6d4c09026e476c4aad13b32dda3ead0",
+          "url": "https://files.pythonhosted.org/packages/bf/4d/257cdc01ada430b8e84b9f2385c2553f33218f5b47da9adf0a616308d4b7/eth_utils-5.3.1-py3-none-any.whl",
+          "kind": "wheel"
+        }
+      ],
+      "target_artifacts": {
+        "windows-amd64": "eth_utils-5.3.1-py3-none-any.whl",
+        "linux-x86_64": "eth_utils-5.3.1-py3-none-any.whl",
+        "linux-aarch64": "eth_utils-5.3.1-py3-none-any.whl"
+      }
+    },
+    {
+      "name": "fastapi",
+      "version": "0.141.1",
+      "requires_active": [
+        "starlette>=0.46.0",
+        "pydantic>=2.9.0",
+        "typing-extensions>=4.8.0",
+        "typing-inspection>=0.4.2",
+        "annotated-doc>=0.0.2"
+      ],
+      "requires_python": ">=3.10",
+      "runtime": true,
+      "dev": false,
+      "build": false,
+      "direct_runtime": true,
+      "direct_dev": false,
+      "artifacts": [
+        {
+          "filename": "fastapi-0.141.1-py3-none-any.whl",
+          "sha256": "bfb91aa2d334c61cb35ba9a116fc123b3d3df31640b801cf57a7a78ec3f603b3",
+          "url": "https://files.pythonhosted.org/packages/cb/03/10388a42375ee7e4ac9b94eb2c5c569c8b5795e377e701c9ac3ad63de890/fastapi-0.141.1-py3-none-any.whl",
+          "kind": "wheel"
+        }
+      ],
+      "target_artifacts": {
+        "windows-amd64": "fastapi-0.141.1-py3-none-any.whl",
+        "linux-x86_64": "fastapi-0.141.1-py3-none-any.whl",
+        "linux-aarch64": "fastapi-0.141.1-py3-none-any.whl"
+      }
+    },
+    {
+      "name": "h11",
+      "version": "0.16.0",
+      "requires_active": [],
+      "requires_python": ">=3.8",
+      "runtime": true,
+      "dev": false,
+      "build": false,
+      "direct_runtime": false,
+      "direct_dev": false,
+      "artifacts": [
+        {
+          "filename": "h11-0.16.0-py3-none-any.whl",
+          "sha256": "63cf8bbe7522de3bf65932fda1d9c2772064ffb3dae62d55932da54b31cb6c86",
+          "url": "https://files.pythonhosted.org/packages/04/4b/29cac41a4d98d144bf5f6d33995617b185d14b22401f75ca86f384e87ff1/h11-0.16.0-py3-none-any.whl",
+          "kind": "wheel"
+        }
+      ],
+      "target_artifacts": {
+        "windows-amd64": "h11-0.16.0-py3-none-any.whl",
+        "linux-x86_64": "h11-0.16.0-py3-none-any.whl",
+        "linux-aarch64": "h11-0.16.0-py3-none-any.whl"
+      }
+    },
+    {
+      "name": "hexbytes",
+      "version": "2.0.0",
+      "requires_active": [],
+      "requires_python": "<4,>=3.10",
+      "runtime": true,
+      "dev": false,
+      "build": false,
+      "direct_runtime": false,
+      "direct_dev": false,
+      "artifacts": [
+        {
+          "filename": "hexbytes-2.0.0-py3-none-any.whl",
+          "sha256": "5425bd7ac83cdd9791c13a5bf97cfe9b9609a304b1ef3ab146adfd50de06cf0e",
+          "url": "https://files.pythonhosted.org/packages/e8/72/c7049aabd9e05efebc29b10208b11e5ae5cf819f48685ffced6abf871d10/hexbytes-2.0.0-py3-none-any.whl",
+          "kind": "wheel"
+        }
+      ],
+      "target_artifacts": {
+        "windows-amd64": "hexbytes-2.0.0-py3-none-any.whl",
+        "linux-x86_64": "hexbytes-2.0.0-py3-none-any.whl",
+        "linux-aarch64": "hexbytes-2.0.0-py3-none-any.whl"
+      }
+    },
+    {
+      "name": "httpcore",
+      "version": "1.0.9",
+      "requires_active": [
+        "certifi",
+        "h11>=0.16"
+      ],
+      "requires_python": ">=3.8",
+      "runtime": false,
+      "dev": true,
+      "build": false,
+      "direct_runtime": false,
+      "direct_dev": false,
+      "artifacts": [
+        {
+          "filename": "httpcore-1.0.9-py3-none-any.whl",
+          "sha256": "2d400746a40668fc9dec9810239072b40b4484b640a8c38fd654a024c7a1bf55",
+          "url": "https://files.pythonhosted.org/packages/7e/f5/f66802a942d491edb555dd61e3a9961140fd64c90bce1eafd741609d334d/httpcore-1.0.9-py3-none-any.whl",
+          "kind": "wheel"
+        }
+      ],
+      "target_artifacts": {
+        "windows-amd64": "httpcore-1.0.9-py3-none-any.whl",
+        "linux-x86_64": "httpcore-1.0.9-py3-none-any.whl",
+        "linux-aarch64": "httpcore-1.0.9-py3-none-any.whl"
+      }
+    },
+    {
+      "name": "httpx",
+      "version": "0.28.1",
+      "requires_active": [
+        "anyio",
+        "certifi",
+        "httpcore==1.*",
+        "idna"
+      ],
+      "requires_python": ">=3.8",
+      "runtime": false,
+      "dev": true,
+      "build": false,
+      "direct_runtime": false,
+      "direct_dev": true,
+      "artifacts": [
+        {
+          "filename": "httpx-0.28.1-py3-none-any.whl",
+          "sha256": "d909fcccc110f8c7faf814ca82a9a4d816bc5a6dbfea25d6591d6985b8ba59ad",
+          "url": "https://files.pythonhosted.org/packages/2a/39/e50c7c3a983047577ee07d2a9e53faf5a69493943ec3f6a384bdc792deb2/httpx-0.28.1-py3-none-any.whl",
+          "kind": "wheel"
+        }
+      ],
+      "target_artifacts": {
+        "windows-amd64": "httpx-0.28.1-py3-none-any.whl",
+        "linux-x86_64": "httpx-0.28.1-py3-none-any.whl",
+        "linux-aarch64": "httpx-0.28.1-py3-none-any.whl"
+      }
+    },
+    {
+      "name": "hyperliquid-python-sdk",
+      "version": "0.24.0",
+      "requires_active": [
+        "eth-account (>=0.10.0,<0.14.0)",
+        "eth-utils (>=2.1.0,<6.0.0)",
+        "msgpack (>=1.0.5,<2.0.0)",
+        "requests (>=2.31.0,<3.0.0)",
+        "websocket-client (>=1.5.1,<2.0.0)"
+      ],
+      "requires_python": ">=3.9,<4.0",
+      "runtime": true,
+      "dev": false,
+      "build": false,
+      "direct_runtime": true,
+      "direct_dev": false,
+      "artifacts": [
+        {
+          "filename": "hyperliquid_python_sdk-0.24.0-py3-none-any.whl",
+          "sha256": "f472dd4f6d8ef0e66182c7627276400462c86fbc0929eb5b63feda3ae45605f6",
+          "url": "https://files.pythonhosted.org/packages/59/fe/6e869c47b361b4992885991c0063ba92cb10747523ea0a4cca6f74240d1e/hyperliquid_python_sdk-0.24.0-py3-none-any.whl",
+          "kind": "wheel"
+        }
+      ],
+      "target_artifacts": {
+        "windows-amd64": "hyperliquid_python_sdk-0.24.0-py3-none-any.whl",
+        "linux-x86_64": "hyperliquid_python_sdk-0.24.0-py3-none-any.whl",
+        "linux-aarch64": "hyperliquid_python_sdk-0.24.0-py3-none-any.whl"
+      }
+    },
+    {
+      "name": "idna",
+      "version": "3.19",
+      "requires_active": [],
+      "requires_python": ">=3.9",
+      "runtime": true,
+      "dev": false,
+      "build": false,
+      "direct_runtime": false,
+      "direct_dev": false,
+      "artifacts": [
+        {
+          "filename": "idna-3.19-py3-none-any.whl",
+          "sha256": "815e7be7a7806d54abb586dc943addc79e8b2ee16915059658cbeff4b1b43bf4",
+          "url": "https://files.pythonhosted.org/packages/57/b0/0e52c878c53f245edd3a11020f20979b3f490f245af532c7cae3027754b5/idna-3.19-py3-none-any.whl",
+          "kind": "wheel"
+        }
+      ],
+      "target_artifacts": {
+        "windows-amd64": "idna-3.19-py3-none-any.whl",
+        "linux-x86_64": "idna-3.19-py3-none-any.whl",
+        "linux-aarch64": "idna-3.19-py3-none-any.whl"
+      }
+    },
+    {
+      "name": "msgpack",
+      "version": "1.2.2",
+      "requires_active": [],
+      "requires_python": ">=3.10",
+      "runtime": true,
+      "dev": false,
+      "build": false,
+      "direct_runtime": false,
+      "direct_dev": false,
+      "artifacts": [
+        {
+          "filename": "msgpack-1.2.2-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl",
+          "sha256": "90986cc9aab9d7d1d8f38bcbf65d3f7ac83bdd90c35765db7d691b4829698cba",
+          "url": "https://files.pythonhosted.org/packages/da/c0/d3ede9f5d16acb4c05a9281859f1e99ef9f877a928eb78454c37f70db001/msgpack-1.2.2-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl",
+          "kind": "wheel"
+        },
+        {
+          "filename": "msgpack-1.2.2-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl",
+          "sha256": "77c2e018417dc1d66f235e383877ee885b60ade9d29e494dd581e08af2cb1923",
+          "url": "https://files.pythonhosted.org/packages/41/f0/29f591bea185616cf417645ac03bd3ad9b317483ad8572160e325f7fe777/msgpack-1.2.2-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl",
+          "kind": "wheel"
+        },
+        {
+          "filename": "msgpack-1.2.2-cp312-cp312-win_amd64.whl",
+          "sha256": "b68614fba0570349833b7dd999ff0aed4e5cc8d9eb6e3a7d4527be33c65e33d3",
+          "url": "https://files.pythonhosted.org/packages/85/98/a33b8b4af14e3476bb0da1b8c36ef7a0f28dcf95db1c5e68ff88cb89d591/msgpack-1.2.2-cp312-cp312-win_amd64.whl",
+          "kind": "wheel"
+        }
+      ],
+      "target_artifacts": {
+        "windows-amd64": "msgpack-1.2.2-cp312-cp312-win_amd64.whl",
+        "linux-x86_64": "msgpack-1.2.2-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl",
+        "linux-aarch64": "msgpack-1.2.2-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl"
+      }
+    },
+    {
+      "name": "packaging",
+      "version": "26.3",
+      "requires_active": [],
+      "requires_python": ">=3.9",
+      "runtime": false,
+      "dev": false,
+      "build": true,
+      "direct_runtime": false,
+      "direct_dev": false,
+      "artifacts": [
+        {
+          "filename": "packaging-26.3-py3-none-any.whl",
+          "sha256": "d7193f7c8e4e93f444fde0262bf90af30e16fa0ad0ad44cb553c87339b23cd1c",
+          "url": "https://files.pythonhosted.org/packages/63/34/ba1c580383c9eada3711951fef0795c80b829a078d72188184bcab9dd527/packaging-26.3-py3-none-any.whl",
+          "kind": "wheel"
+        }
+      ],
+      "target_artifacts": {
+        "windows-amd64": "packaging-26.3-py3-none-any.whl",
+        "linux-x86_64": "packaging-26.3-py3-none-any.whl",
+        "linux-aarch64": "packaging-26.3-py3-none-any.whl"
+      }
+    },
+    {
+      "name": "parsimonious",
+      "version": "0.10.0",
+      "requires_active": [
+        "regex (>=2022.3.15)"
+      ],
+      "requires_python": null,
+      "runtime": true,
+      "dev": false,
+      "build": false,
+      "direct_runtime": false,
+      "direct_dev": false,
+      "artifacts": [
+        {
+          "filename": "parsimonious-0.10.0-py3-none-any.whl",
+          "sha256": "982ab435fabe86519b57f6b35610aa4e4e977e9f02a14353edf4bbc75369fc0f",
+          "url": "https://files.pythonhosted.org/packages/aa/0f/c8b64d9b54ea631fcad4e9e3c8dbe8c11bb32a623be94f22974c88e71eaf/parsimonious-0.10.0-py3-none-any.whl",
+          "kind": "wheel"
+        }
+      ],
+      "target_artifacts": {
+        "windows-amd64": "parsimonious-0.10.0-py3-none-any.whl",
+        "linux-x86_64": "parsimonious-0.10.0-py3-none-any.whl",
+        "linux-aarch64": "parsimonious-0.10.0-py3-none-any.whl"
+      }
+    },
+    {
+      "name": "pip",
+      "version": "25.0.1",
+      "requires_active": [],
+      "requires_python": ">=3.8",
+      "runtime": false,
+      "dev": false,
+      "build": true,
+      "direct_runtime": false,
+      "direct_dev": false,
+      "artifacts": [
+        {
+          "filename": "pip-25.0.1-py3-none-any.whl",
+          "sha256": "c46efd13b6aa8279f33f2864459c8ce587ea6a1a59ee20de055868d8f7688f7f",
+          "url": "https://files.pythonhosted.org/packages/c9/bc/b7db44f5f39f9d0494071bddae6880eb645970366d0a200022a1a93d57f5/pip-25.0.1-py3-none-any.whl",
+          "kind": "wheel"
+        }
+      ],
+      "target_artifacts": {
+        "windows-amd64": "pip-25.0.1-py3-none-any.whl",
+        "linux-x86_64": "pip-25.0.1-py3-none-any.whl",
+        "linux-aarch64": "pip-25.0.1-py3-none-any.whl"
+      }
+    },
+    {
+      "name": "pyaes",
+      "version": "1.6.1",
+      "requires_active": [],
+      "requires_python": null,
+      "runtime": true,
+      "dev": false,
+      "build": false,
+      "direct_runtime": false,
+      "direct_dev": false,
+      "artifacts": [
+        {
+          "filename": "pyaes-1.6.1.tar.gz",
+          "sha256": "02c1b1405c38d3c370b085fb952dd8bea3fadcee6411ad99f312cc129c536d8f",
+          "url": "https://files.pythonhosted.org/packages/44/66/2c17bae31c906613795711fc78045c285048168919ace2220daa372c7d72/pyaes-1.6.1.tar.gz",
+          "kind": "sdist"
+        }
+      ],
+      "target_artifacts": {
+        "windows-amd64": "pyaes-1.6.1.tar.gz",
+        "linux-x86_64": "pyaes-1.6.1.tar.gz",
+        "linux-aarch64": "pyaes-1.6.1.tar.gz"
+      }
+    },
+    {
+      "name": "pyasn1",
+      "version": "0.6.4",
+      "requires_active": [],
+      "requires_python": ">=3.8",
+      "runtime": true,
+      "dev": false,
+      "build": false,
+      "direct_runtime": false,
+      "direct_dev": false,
+      "artifacts": [
+        {
+          "filename": "pyasn1-0.6.4-py3-none-any.whl",
+          "sha256": "deda9277cfd454080ec40b207fb6df82206a3a2688735233cdcd8d3d565f088b",
+          "url": "https://files.pythonhosted.org/packages/9a/3b/6163796d69c3977d1e4287bea4a6979161cbbdd170ebb430511e8e1999ce/pyasn1-0.6.4-py3-none-any.whl",
+          "kind": "wheel"
+        }
+      ],
+      "target_artifacts": {
+        "windows-amd64": "pyasn1-0.6.4-py3-none-any.whl",
+        "linux-x86_64": "pyasn1-0.6.4-py3-none-any.whl",
+        "linux-aarch64": "pyasn1-0.6.4-py3-none-any.whl"
+      }
+    },
+    {
+      "name": "pycparser",
+      "version": "3.0",
+      "requires_active": [],
+      "requires_python": ">=3.10",
+      "runtime": true,
+      "dev": false,
+      "build": false,
+      "direct_runtime": false,
+      "direct_dev": false,
+      "artifacts": [
+        {
+          "filename": "pycparser-3.0-py3-none-any.whl",
+          "sha256": "b727414169a36b7d524c1c3e31839a521725078d7b2ff038656844266160a992",
+          "url": "https://files.pythonhosted.org/packages/0c/c3/44f3fbbfa403ea2a7c779186dc20772604442dde72947e7d01069cbe98e3/pycparser-3.0-py3-none-any.whl",
+          "kind": "wheel"
+        }
+      ],
+      "target_artifacts": {
+        "windows-amd64": "pycparser-3.0-py3-none-any.whl",
+        "linux-x86_64": "pycparser-3.0-py3-none-any.whl",
+        "linux-aarch64": "pycparser-3.0-py3-none-any.whl"
+      }
+    },
+    {
+      "name": "pycryptodome",
+      "version": "3.23.0",
+      "requires_active": [],
+      "requires_python": ">=2.7, !=3.0.*, !=3.1.*, !=3.2.*, !=3.3.*, !=3.4.*, !=3.5.*, !=3.6.*",
+      "runtime": true,
+      "dev": false,
+      "build": false,
+      "direct_runtime": false,
+      "direct_dev": false,
+      "artifacts": [
+        {
+          "filename": "pycryptodome-3.23.0-cp37-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl",
+          "sha256": "67bd81fcbe34f43ad9422ee8fd4843c8e7198dd88dd3d40e6de42ee65fbe1490",
+          "url": "https://files.pythonhosted.org/packages/50/52/adaf4c8c100a8c49d2bd058e5b551f73dfd8cb89eb4911e25a0c469b6b4e/pycryptodome-3.23.0-cp37-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl",
+          "kind": "wheel"
+        },
+        {
+          "filename": "pycryptodome-3.23.0-cp37-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
+          "sha256": "c8987bd3307a39bc03df5c8e0e3d8be0c4c3518b7f044b0f4c15d1aa78f52575",
+          "url": "https://files.pythonhosted.org/packages/5f/e9/a09476d436d0ff1402ac3867d933c61805ec2326c6ea557aeeac3825604e/pycryptodome-3.23.0-cp37-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
+          "kind": "wheel"
+        },
+        {
+          "filename": "pycryptodome-3.23.0-cp37-abi3-win_amd64.whl",
+          "sha256": "c75b52aacc6c0c260f204cbdd834f76edc9fb0d8e0da9fbf8352ef58202564e2",
+          "url": "https://files.pythonhosted.org/packages/54/2f/e97a1b8294db0daaa87012c24a7bb714147c7ade7656973fd6c736b484ff/pycryptodome-3.23.0-cp37-abi3-win_amd64.whl",
+          "kind": "wheel"
+        }
+      ],
+      "target_artifacts": {
+        "windows-amd64": "pycryptodome-3.23.0-cp37-abi3-win_amd64.whl",
+        "linux-x86_64": "pycryptodome-3.23.0-cp37-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
+        "linux-aarch64": "pycryptodome-3.23.0-cp37-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl"
+      }
+    },
+    {
+      "name": "pydantic",
+      "version": "2.13.5",
+      "requires_active": [
+        "annotated-types>=0.6.0",
+        "pydantic-core==2.46.5",
+        "typing-extensions>=4.14.1",
+        "typing-inspection>=0.4.2"
+      ],
+      "requires_python": ">=3.9",
+      "runtime": true,
+      "dev": false,
+      "build": false,
+      "direct_runtime": true,
+      "direct_dev": false,
+      "artifacts": [
+        {
+          "filename": "pydantic-2.13.5-py3-none-any.whl",
+          "sha256": "346a034f080da3755d8e9cb5e00e8b07de1d39e4f6e2c87d8ab7cafa0b269a73",
+          "url": "https://files.pythonhosted.org/packages/eb/47/c95ffc2009878c7aac0c5e08528022dcb885933252a88b5f170058014464/pydantic-2.13.5-py3-none-any.whl",
+          "kind": "wheel"
+        }
+      ],
+      "target_artifacts": {
+        "windows-amd64": "pydantic-2.13.5-py3-none-any.whl",
+        "linux-x86_64": "pydantic-2.13.5-py3-none-any.whl",
+        "linux-aarch64": "pydantic-2.13.5-py3-none-any.whl"
+      }
+    },
+    {
+      "name": "pydantic-core",
+      "version": "2.46.5",
+      "requires_active": [
+        "typing-extensions>=4.14.1"
+      ],
+      "requires_python": ">=3.9",
+      "runtime": true,
+      "dev": false,
+      "build": false,
+      "direct_runtime": false,
+      "direct_dev": false,
+      "artifacts": [
+        {
+          "filename": "pydantic_core-2.46.5-cp312-cp312-manylinux_2_17_aarch64.manylinux2014_aarch64.whl",
+          "sha256": "4fdc8b93a41521988916eeaa271173fcca7fa0803d62f87675aac8dcec1c8e29",
+          "url": "https://files.pythonhosted.org/packages/09/f0/2a8ce3849e299d44e2d2c196b6082643a3235565a735cb51db7a6261f614/pydantic_core-2.46.5-cp312-cp312-manylinux_2_17_aarch64.manylinux2014_aarch64.whl",
+          "kind": "wheel"
+        },
+        {
+          "filename": "pydantic_core-2.46.5-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
+          "sha256": "0fc5be0abd4a407e200d844b404e33639a554e7bd0d448e7b9ae181be4789ac2",
+          "url": "https://files.pythonhosted.org/packages/c0/a4/eb9409ec0736e50aa70a412f16c204ed149516846912f7e6724d4c73ee53/pydantic_core-2.46.5-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
+          "kind": "wheel"
+        },
+        {
+          "filename": "pydantic_core-2.46.5-cp312-cp312-win_amd64.whl",
+          "sha256": "5e81740c09e310f5aa5cbd3e434a01c154d4bef93241c7877b39f211d2b78ba8",
+          "url": "https://files.pythonhosted.org/packages/cf/c9/4c19f41b84cf6b622a72fbeed7665b25d47a187d68d47d0d430c07f23268/pydantic_core-2.46.5-cp312-cp312-win_amd64.whl",
+          "kind": "wheel"
+        }
+      ],
+      "target_artifacts": {
+        "windows-amd64": "pydantic_core-2.46.5-cp312-cp312-win_amd64.whl",
+        "linux-x86_64": "pydantic_core-2.46.5-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
+        "linux-aarch64": "pydantic_core-2.46.5-cp312-cp312-manylinux_2_17_aarch64.manylinux2014_aarch64.whl"
+      }
+    },
+    {
+      "name": "python-dotenv",
+      "version": "1.2.3",
+      "requires_active": [],
+      "requires_python": ">=3.10",
+      "runtime": true,
+      "dev": false,
+      "build": false,
+      "direct_runtime": true,
+      "direct_dev": false,
+      "artifacts": [
+        {
+          "filename": "python_dotenv-1.2.3-py3-none-any.whl",
+          "sha256": "904552145e8bfed22162c09dab1c2b9b54fefa7b23ba780f4f26ca0316b0f0d9",
+          "url": "https://files.pythonhosted.org/packages/0d/17/c5c6b53ddc18f297992099b3d9ec16c855c0ccc83263a21fe4d1c625ec6c/python_dotenv-1.2.3-py3-none-any.whl",
+          "kind": "wheel"
+        }
+      ],
+      "target_artifacts": {
+        "windows-amd64": "python_dotenv-1.2.3-py3-none-any.whl",
+        "linux-x86_64": "python_dotenv-1.2.3-py3-none-any.whl",
+        "linux-aarch64": "python_dotenv-1.2.3-py3-none-any.whl"
+      }
+    },
+    {
+      "name": "regex",
+      "version": "2026.9.3",
+      "requires_active": [],
+      "requires_python": ">=3.10",
+      "runtime": true,
+      "dev": false,
+      "build": false,
+      "direct_runtime": false,
+      "direct_dev": false,
+      "artifacts": [
+        {
+          "filename": "regex-2026.9.3-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl",
+          "sha256": "233662cf8cfdfe3c0e58aa8f7bbefc579b5be0ac34546f123c159804179e8687",
+          "url": "https://files.pythonhosted.org/packages/cb/b4/4987bf0f17604669b4ea5aef219886d0a73188c4716ff3a7d275d4d15c15/regex-2026.9.3-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl",
+          "kind": "wheel"
+        },
+        {
+          "filename": "regex-2026.9.3-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl",
+          "sha256": "665207e41bacd435db001099eeab44103197c2c1a729d73ade74688a905ed4ce",
+          "url": "https://files.pythonhosted.org/packages/4b/8b/9cc6d4123033f7cb82df6cd8ce19eb0fc18a964afe060a03c9b26757c9f3/regex-2026.9.3-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl",
+          "kind": "wheel"
+        },
+        {
+          "filename": "regex-2026.9.3-cp312-cp312-win_amd64.whl",
+          "sha256": "1ba1dbbb93c5c5629c1861763aec5bfa9f05ad24ef450694130e25029ce7bc36",
+          "url": "https://files.pythonhosted.org/packages/d5/49/4c40cf722d84d60e807a08ef4c3f579216bf97df60c4a1b10be49655d302/regex-2026.9.3-cp312-cp312-win_amd64.whl",
+          "kind": "wheel"
+        }
+      ],
+      "target_artifacts": {
+        "windows-amd64": "regex-2026.9.3-cp312-cp312-win_amd64.whl",
+        "linux-x86_64": "regex-2026.9.3-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl",
+        "linux-aarch64": "regex-2026.9.3-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl"
+      }
+    },
+    {
+      "name": "requests",
+      "version": "2.34.2",
+      "requires_active": [
+        "charset_normalizer<4,>=2",
+        "idna<4,>=2.5",
+        "urllib3<3,>=1.26",
+        "certifi>=2023.5.7"
+      ],
+      "requires_python": ">=3.10",
+      "runtime": true,
+      "dev": false,
+      "build": false,
+      "direct_runtime": true,
+      "direct_dev": false,
+      "artifacts": [
+        {
+          "filename": "requests-2.34.2-py3-none-any.whl",
+          "sha256": "2a0d60c172f83ac6ab31e4554906c0f3b3588d37b5cb939b1c061f4907e278e0",
+          "url": "https://files.pythonhosted.org/packages/a0/f4/c67b0b3f1b9245e8d266f0f112c500d50e5b4e83cb6f3b71b6528104182a/requests-2.34.2-py3-none-any.whl",
+          "kind": "wheel"
+        }
+      ],
+      "target_artifacts": {
+        "windows-amd64": "requests-2.34.2-py3-none-any.whl",
+        "linux-x86_64": "requests-2.34.2-py3-none-any.whl",
+        "linux-aarch64": "requests-2.34.2-py3-none-any.whl"
+      }
+    },
+    {
+      "name": "rlp",
+      "version": "5.0.0",
+      "requires_active": [
+        "eth-utils>=2"
+      ],
+      "requires_python": "<4,>=3.10",
+      "runtime": true,
+      "dev": false,
+      "build": false,
+      "direct_runtime": false,
+      "direct_dev": false,
+      "artifacts": [
+        {
+          "filename": "rlp-5.0.0-py3-none-any.whl",
+          "sha256": "9525fb895d3a6540b7401eadd11c1b64740a5eccb82e543ac7e9735d319b0977",
+          "url": "https://files.pythonhosted.org/packages/a7/35/26ea7adca149e506bb03c50ade0c4d96cf269e6fc13a2b3f726d65905ffb/rlp-5.0.0-py3-none-any.whl",
+          "kind": "wheel"
+        }
+      ],
+      "target_artifacts": {
+        "windows-amd64": "rlp-5.0.0-py3-none-any.whl",
+        "linux-x86_64": "rlp-5.0.0-py3-none-any.whl",
+        "linux-aarch64": "rlp-5.0.0-py3-none-any.whl"
+      }
+    },
+    {
+      "name": "rsa",
+      "version": "4.9.1",
+      "requires_active": [
+        "pyasn1 (>=0.1.3)"
+      ],
+      "requires_python": ">=3.6,<4",
+      "runtime": true,
+      "dev": false,
+      "build": false,
+      "direct_runtime": false,
+      "direct_dev": false,
+      "artifacts": [
+        {
+          "filename": "rsa-4.9.1-py3-none-any.whl",
+          "sha256": "68635866661c6836b8d39430f97a996acbd61bfa49406748ea243539fe239762",
+          "url": "https://files.pythonhosted.org/packages/64/8d/0133e4eb4beed9e425d9a98ed6e081a55d195481b7632472be1af08d2f6b/rsa-4.9.1-py3-none-any.whl",
+          "kind": "wheel"
+        }
+      ],
+      "target_artifacts": {
+        "windows-amd64": "rsa-4.9.1-py3-none-any.whl",
+        "linux-x86_64": "rsa-4.9.1-py3-none-any.whl",
+        "linux-aarch64": "rsa-4.9.1-py3-none-any.whl"
+      }
+    },
+    {
+      "name": "setuptools",
+      "version": "84.0.0",
+      "requires_active": [],
+      "requires_python": ">=3.10",
+      "runtime": false,
+      "dev": false,
+      "build": true,
+      "direct_runtime": false,
+      "direct_dev": false,
+      "artifacts": [
+        {
+          "filename": "setuptools-84.0.0-py3-none-any.whl",
+          "sha256": "51a52592b3b99e102b609654876bd65f19f999935166d1352678931132b0c670",
+          "url": "https://files.pythonhosted.org/packages/95/9c/c510029fc6ef33a6275cd2c5d3cecd6613dfd6aa401d57c54f1c18852ccf/setuptools-84.0.0-py3-none-any.whl",
+          "kind": "wheel"
+        }
+      ],
+      "target_artifacts": {
+        "windows-amd64": "setuptools-84.0.0-py3-none-any.whl",
+        "linux-x86_64": "setuptools-84.0.0-py3-none-any.whl",
+        "linux-aarch64": "setuptools-84.0.0-py3-none-any.whl"
+      }
+    },
+    {
+      "name": "starlette",
+      "version": "1.6.0",
+      "requires_active": [
+        "anyio<5,>=3.6.2",
+        "typing-extensions>=4.10.0; python_version < '3.13'"
+      ],
+      "requires_python": ">=3.10",
+      "runtime": true,
+      "dev": false,
+      "build": false,
+      "direct_runtime": false,
+      "direct_dev": false,
+      "artifacts": [
+        {
+          "filename": "starlette-1.6.0-py3-none-any.whl",
+          "sha256": "a86dd39d14bb45f85a3d18525215a9ef0cfd1f192ac793220e72598c90335f0c",
+          "url": "https://files.pythonhosted.org/packages/c8/cb/6a6a47d5b464bd08695d254f3da6e7986cc70c9fa5d778eda57538edfe56/starlette-1.6.0-py3-none-any.whl",
+          "kind": "wheel"
+        }
+      ],
+      "target_artifacts": {
+        "windows-amd64": "starlette-1.6.0-py3-none-any.whl",
+        "linux-x86_64": "starlette-1.6.0-py3-none-any.whl",
+        "linux-aarch64": "starlette-1.6.0-py3-none-any.whl"
+      }
+    },
+    {
+      "name": "telethon",
+      "version": "1.44.0",
+      "requires_active": [
+        "pyaes",
+        "rsa"
+      ],
+      "requires_python": ">=3.5",
+      "runtime": true,
+      "dev": false,
+      "build": false,
+      "direct_runtime": true,
+      "direct_dev": false,
+      "artifacts": [
+        {
+          "filename": "telethon-1.44.0-py3-none-any.whl",
+          "sha256": "52fc49efb67a4916c2aedcb295ad286f4afa2aba9bf15d83ed2acdc64af0c718",
+          "url": "https://files.pythonhosted.org/packages/82/fd/4ad621d7a4b8655dfc964ee1c1267407496ec6fd10c91901a64ea29c16c8/telethon-1.44.0-py3-none-any.whl",
+          "kind": "wheel"
+        }
+      ],
+      "target_artifacts": {
+        "windows-amd64": "telethon-1.44.0-py3-none-any.whl",
+        "linux-x86_64": "telethon-1.44.0-py3-none-any.whl",
+        "linux-aarch64": "telethon-1.44.0-py3-none-any.whl"
+      }
+    },
+    {
+      "name": "toolz",
+      "version": "1.1.0",
+      "requires_active": [],
+      "requires_python": ">=3.9",
+      "runtime": true,
+      "dev": false,
+      "build": false,
+      "direct_runtime": false,
+      "direct_dev": false,
+      "artifacts": [
+        {
+          "filename": "toolz-1.1.0-py3-none-any.whl",
+          "sha256": "15ccc861ac51c53696de0a5d6d4607f99c210739caf987b5d2054f3efed429d8",
+          "url": "https://files.pythonhosted.org/packages/fb/12/5911ae3eeec47800503a238d971e51722ccea5feb8569b735184d5fcdbc0/toolz-1.1.0-py3-none-any.whl",
+          "kind": "wheel"
+        }
+      ],
+      "target_artifacts": {
+        "windows-amd64": "toolz-1.1.0-py3-none-any.whl",
+        "linux-x86_64": "toolz-1.1.0-py3-none-any.whl",
+        "linux-aarch64": "toolz-1.1.0-py3-none-any.whl"
+      }
+    },
+    {
+      "name": "typing-extensions",
+      "version": "4.16.0",
+      "requires_active": [],
+      "requires_python": ">=3.9",
+      "runtime": true,
+      "dev": false,
+      "build": false,
+      "direct_runtime": false,
+      "direct_dev": false,
+      "artifacts": [
+        {
+          "filename": "typing_extensions-4.16.0-py3-none-any.whl",
+          "sha256": "481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8",
+          "url": "https://files.pythonhosted.org/packages/49/d3/b8441a820a491ddfc024b0b0cf0393375b75ea13866d9c66727e54c2fc80/typing_extensions-4.16.0-py3-none-any.whl",
+          "kind": "wheel"
+        }
+      ],
+      "target_artifacts": {
+        "windows-amd64": "typing_extensions-4.16.0-py3-none-any.whl",
+        "linux-x86_64": "typing_extensions-4.16.0-py3-none-any.whl",
+        "linux-aarch64": "typing_extensions-4.16.0-py3-none-any.whl"
+      }
+    },
+    {
+      "name": "typing-inspection",
+      "version": "0.4.4",
+      "requires_active": [
+        "typing-extensions>=4.15.0"
+      ],
+      "requires_python": ">=3.10",
+      "runtime": true,
+      "dev": false,
+      "build": false,
+      "direct_runtime": false,
+      "direct_dev": false,
+      "artifacts": [
+        {
+          "filename": "typing_inspection-0.4.4-py3-none-any.whl",
+          "sha256": "65b8397ba37ccbce054456aaccddfc91e6e3083c92824df348d96ca832f3f147",
+          "url": "https://files.pythonhosted.org/packages/67/81/4add07e5172b7ac40d8ed5ff580409a7801a4fe26d529bdd915401dabfbe/typing_inspection-0.4.4-py3-none-any.whl",
+          "kind": "wheel"
+        }
+      ],
+      "target_artifacts": {
+        "windows-amd64": "typing_inspection-0.4.4-py3-none-any.whl",
+        "linux-x86_64": "typing_inspection-0.4.4-py3-none-any.whl",
+        "linux-aarch64": "typing_inspection-0.4.4-py3-none-any.whl"
+      }
+    },
+    {
+      "name": "urllib3",
+      "version": "2.7.0",
+      "requires_active": [],
+      "requires_python": ">=3.10",
+      "runtime": true,
+      "dev": false,
+      "build": false,
+      "direct_runtime": false,
+      "direct_dev": false,
+      "artifacts": [
+        {
+          "filename": "urllib3-2.7.0-py3-none-any.whl",
+          "sha256": "9fb4c81ebbb1ce9531cce37674bbc6f1360472bc18ca9a553ede278ef7276897",
+          "url": "https://files.pythonhosted.org/packages/7f/3e/5db95bcf282c52709639744ca2a8b149baccf648e39c8cc87553df9eae0c/urllib3-2.7.0-py3-none-any.whl",
+          "kind": "wheel"
+        }
+      ],
+      "target_artifacts": {
+        "windows-amd64": "urllib3-2.7.0-py3-none-any.whl",
+        "linux-x86_64": "urllib3-2.7.0-py3-none-any.whl",
+        "linux-aarch64": "urllib3-2.7.0-py3-none-any.whl"
+      }
+    },
+    {
+      "name": "uvicorn",
+      "version": "0.52.4",
+      "requires_active": [
+        "click>=7.0",
+        "h11>=0.8"
+      ],
+      "requires_python": ">=3.10",
+      "runtime": true,
+      "dev": false,
+      "build": false,
+      "direct_runtime": true,
+      "direct_dev": false,
+      "artifacts": [
+        {
+          "filename": "uvicorn-0.52.4-py3-none-any.whl",
+          "sha256": "f86e41a149d7d05a9969337e3946a9c171c06a5d42680896daaba624aeac8da1",
+          "url": "https://files.pythonhosted.org/packages/f1/79/4a20b54ab0491485ccd8c077db2d39187c7f12b3e15485d38a7be37c81b4/uvicorn-0.52.4-py3-none-any.whl",
+          "kind": "wheel"
+        }
+      ],
+      "target_artifacts": {
+        "windows-amd64": "uvicorn-0.52.4-py3-none-any.whl",
+        "linux-x86_64": "uvicorn-0.52.4-py3-none-any.whl",
+        "linux-aarch64": "uvicorn-0.52.4-py3-none-any.whl"
+      }
+    },
+    {
+      "name": "websocket-client",
+      "version": "1.9.2",
+      "requires_active": [],
+      "requires_python": ">=3.10",
+      "runtime": true,
+      "dev": false,
+      "build": false,
+      "direct_runtime": false,
+      "direct_dev": false,
+      "artifacts": [
+        {
+          "filename": "websocket_client-1.9.2-py3-none-any.whl",
+          "sha256": "e1a673830a9c7bfa47b1cd3d5e4178f4c9651d80a4eab02c9c23a1c3ec6250ce",
+          "url": "https://files.pythonhosted.org/packages/d5/d2/cc4dc1271e464942db7ee278baae2daa99ee77cb2af744025c04da585a3e/websocket_client-1.9.2-py3-none-any.whl",
+          "kind": "wheel"
+        }
+      ],
+      "target_artifacts": {
+        "windows-amd64": "websocket_client-1.9.2-py3-none-any.whl",
+        "linux-x86_64": "websocket_client-1.9.2-py3-none-any.whl",
+        "linux-aarch64": "websocket_client-1.9.2-py3-none-any.whl"
+      }
+    },
+    {
+      "name": "wheel",
+      "version": "0.48.0",
+      "requires_active": [
+        "packaging >= 24.0"
+      ],
+      "requires_python": ">=3.9",
+      "runtime": false,
+      "dev": false,
+      "build": true,
+      "direct_runtime": false,
+      "direct_dev": false,
+      "artifacts": [
+        {
+          "filename": "wheel-0.48.0-py3-none-any.whl",
+          "sha256": "3217dcc807155e45db462d7ef2431f5ddda0d7273b700d05a67b271ceb1287ab",
+          "url": "https://files.pythonhosted.org/packages/2e/29/69cfbb602cd91690c55d38ba9fe53e6a7e76a6fa647bf38f19c138d25449/wheel-0.48.0-py3-none-any.whl",
+          "kind": "wheel"
+        }
+      ],
+      "target_artifacts": {
+        "windows-amd64": "wheel-0.48.0-py3-none-any.whl",
+        "linux-x86_64": "wheel-0.48.0-py3-none-any.whl",
+        "linux-aarch64": "wheel-0.48.0-py3-none-any.whl"
+      }
+    }
+  ],
+  "python_release": {
+    "url": "https://www.python.org/downloads/release/python-31214/",
+    "release_date": "2026-08-12",
+    "distribution": "source-only"
+  },
+  "artifact_verification": "PyPI release JSON SHA-256 and compatible wheel tags; fresh install verification recorded in DEPENDENCIES.md",
+  "optional_browser_audit": {
+    "playwright_version": "1.62.1",
+    "node_required": ">=20",
+    "baseline_includes_browser": false
+  }
+}

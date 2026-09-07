@@ -1,0 +1,3 @@
+# Import the existing application byte-for-byte. Phase 0 does not normalize
+# historical line endings; this also keeps the protected-source hashes stable.
+* -text

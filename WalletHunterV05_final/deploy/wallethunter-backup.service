@@ -1,0 +1,7 @@
+[Unit]
+Description=Wallet Hunter encrypted state backup
+
+[Service]
+Type=oneshot
+User=ubuntu
+ExecStart=/home/ubuntu/WalletHunterV07/WalletHunterV05_final/scripts/backup_state.sh

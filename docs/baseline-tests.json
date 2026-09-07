@@ -1,0 +1,908 @@
+{
+  "schema_version": 1,
+  "phase": "0",
+  "application_changes": false,
+  "classifications": {
+    "A": "environment/setup",
+    "B": "reproducibility",
+    "C": "existing application defect",
+    "D": "flaky/nondeterministic",
+    "E": "unknown"
+  },
+  "platform": "Windows-11-10.0.26200-SP0",
+  "os_network_sandbox": "not_attested",
+  "dependency_inventory": "docs/dependency-inventory.json",
+  "full_project_status": "PARTIAL",
+  "scoped_status": "PASS",
+  "auxiliary_browser": {
+    "status": "NOT_RUN",
+    "inventory": "docs/browser-baseline.json",
+    "reason": "Existing browser scripts require a separately isolated, reproducibly pinned browser runner."
+  },
+  "reproducibility_runs": [
+    {"run": 1, "python_tests": 657, "python_passed": 656, "python_skipped": 1, "javascript_tests": 96, "javascript_passed": 96, "existing_duration_seconds": 108.484},
+    {"run": 2, "python_tests": 657, "python_passed": 656, "python_skipped": 1, "javascript_tests": 96, "javascript_passed": 96, "existing_duration_seconds": 103.015}
+  ],
+  "setup_findings": [
+    {"classification": "B", "status": "FIXED_IN_HARNESS_ONLY", "reason": "Node reporter fixed to TAP instead of relying on its default reporter."},
+    {"classification": "B", "status": "FIXED_IN_HARNESS_ONLY", "reason": "Preserved Linux venv executable symlink rather than resolving it to system Python; Linux execution remains NOT_RUN locally."},
+    {"classification": "A", "status": "EXPECTED_SKIP", "reason": "One existing POSIX archive permissions test skips on Windows; not reported as a pass."},
+    {"classification": "A", "status": "GUARD_BLOCKED", "reason": "The single existing-suite socket.bind denial is urllib3 import-time _has_ipv6 capability probing, not an outbound exchange request or order."}
+  ],
+  "isolation_note": "Language I/O guards, clean environment and disposable allowlisted copy; not a hostile native-code sandbox.",
+  "existing": {
+    "python": {
+      "tests": 657,
+      "passed": 656,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 1,
+      "expected_failures": 0,
+      "unexpected_successes": 0,
+      "duration_seconds": 100.734,
+      "success": true,
+      "failures": [],
+      "skips": [
+        {
+          "test": "test_archive_and_sensitive_members_have_owner_only_permissions (test_backup_runtime.BackupRuntimeTests.test_archive_and_sensitive_members_have_owner_only_permissions)",
+          "reason": "POSIX archive permissions are verified on Linux"
+        }
+      ],
+      "denied_operations": {
+        "network": 1,
+        "process": 0,
+        "filesystem": 0
+      },
+      "denied_events": [
+        {
+          "kind": "network",
+          "event": "socket.bind",
+          "test": null,
+          "stack": [
+            {
+              "file": "sitecustomize.py",
+              "line": 70,
+              "function": "audit"
+            },
+            {
+              "file": "connection.py",
+              "line": 127,
+              "function": "_has_ipv6"
+            },
+            {
+              "file": "connection.py",
+              "line": 137,
+              "function": "<module>"
+            },
+            {
+              "file": "<frozen importlib._bootstrap>",
+              "line": 488,
+              "function": "_call_with_frames_removed"
+            },
+            {
+              "file": "<frozen importlib._bootstrap_external>",
+              "line": 999,
+              "function": "exec_module"
+            },
+            {
+              "file": "<frozen importlib._bootstrap>",
+              "line": 935,
+              "function": "_load_unlocked"
+            },
+            {
+              "file": "<frozen importlib._bootstrap>",
+              "line": 1331,
+              "function": "_find_and_load_unlocked"
+            }
+          ]
+        }
+      ],
+      "output": "................................................................................................................................................................................................................................................................................................................................................................................................s................................................................................................................................................................................................................................................................................\n----------------------------------------------------------------------\nRan 657 tests in 98.587s\n\nOK (skipped=1)\n",
+      "process": {
+        "exit_code": 0,
+        "duration_seconds": 101.5,
+        "stdout": "{\"suite\": \"python\", \"tests\": 657, \"passed\": 656, \"failed\": 0, \"errors\": 0, \"skipped\": 1, \"duration_seconds\": 100.734}\n",
+        "stderr": "C:\\Users\\brodv\\Documents\\ChatGPT\\WalletHunter\\.phase0\\venv\\Lib\\site-packages\\fastapi\\testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.\n  from starlette.testclient import TestClient as TestClient  # noqa\n"
+      }
+    },
+    "javascript": {
+      "ui_ai_learning_test.cjs": {
+        "exit_code": 0,
+        "duration_seconds": 0.39,
+        "stdout": "TAP version 13\n# Subtest: learning card explains real model fitting separately from rule trader and trading readiness\nok 1 - learning card explains real model fitting separately from rule trader and trading readiness\n  ---\n  duration_ms: 34.8827\n  type: 'test'\n  ...\n# Subtest: all new blocks and available/error labels are English when selected\nok 2 - all new blocks and available/error labels are English when selected\n  ---\n  duration_ms: 2.8678\n  type: 'test'\n  ...\n# Subtest: empty untrained or malformed data does not invent zero samples metrics or profits\nok 3 - empty untrained or malformed data does not invent zero samples metrics or profits\n  ---\n  duration_ms: 1.3167\n  type: 'test'\n  ...\n# Subtest: historical and forward metrics are explicitly separate and compared against baseline\nok 4 - historical and forward metrics are explicitly separate and compared against baseline\n  ---\n  duration_ms: 1.5313\n  type: 'test'\n  ...\n# Subtest: no observed outcomes means no score even when misleading zero metrics are supplied\nok 5 - no observed outcomes means no score even when misleading zero metrics are supplied\n  ---\n  duration_ms: 1.6719\n  type: 'test'\n  ...\n# Subtest: untrusted metadata and unexpected private fields never become markup or visible secrets\nok 6 - untrusted metadata and unexpected private fields never become markup or visible secrets\n  ---\n  duration_ms: 1.3265\n  type: 'test'\n  ...\n# Subtest: collector unavailable or stale status takes precedence over a trained model while preserving history\nok 7 - collector unavailable or stale status takes precedence over a trained model while preserving history\n  ---\n  duration_ms: 5.7758\n  type: 'test'\n  ...\n# Subtest: privacy does not change shared public learning metrics or expose account information\nok 8 - privacy does not change shared public learning metrics or expose account information\n  ---\n  duration_ms: 2.3443\n  type: 'test'\n  ...\n# Subtest: renderer has no request actions and is inserted between modes and research\nok 9 - renderer has no request actions and is inserted between modes and research\n  ---\n  duration_ms: 66.2327\n  type: 'test'\n  ...\n1..9\n# tests 9\n# suites 0\n# pass 9\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n# duration_ms 137.1047\n",
+        "stderr": "",
+        "tests": 9,
+        "pass": 9,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0,
+        "success": true
+      },
+      "ui_ai_modes_test.cjs": {
+        "exit_code": 0,
+        "duration_seconds": 0.422,
+        "stdout": "TAP version 13\n# Subtest: both modes are separate, virtual trader and gated rescue are explicit in Russian\nok 1 - both modes are separate, virtual trader and gated rescue are explicit in Russian\n  ---\n  duration_ms: 41.1551\n  type: 'test'\n  ...\n# Subtest: new panels are entirely English when selected, with backend reasons mapped\nok 2 - new panels are entirely English when selected, with backend reasons mapped\n  ---\n  duration_ms: 4.3433\n  type: 'test'\n  ...\n# Subtest: eye privacy removes all own virtual amounts, but public prices and ROE remain\nok 3 - eye privacy removes all own virtual amounts, but public prices and ROE remain\n  ---\n  duration_ms: 4.1457\n  type: 'test'\n  ...\n# Subtest: untrusted labels are escaped, unknown statuses and reasons do not leak raw payloads\nok 4 - untrusted labels are escaped, unknown statuses and reasons do not leak raw payloads\n  ---\n  duration_ms: 3.1793\n  type: 'test'\n  ...\n# Subtest: missing or malformed mode state never shows enabled actionable switches\nok 5 - missing or malformed mode state never shows enabled actionable switches\n  ---\n  duration_ms: 1.9937\n  type: 'test'\n  ...\n# Subtest: independent toggle sends only mode preference, then reloads authoritative state\nok 6 - independent toggle sends only mode preference, then reloads authoritative state\n  ---\n  duration_ms: 9.2167\n  type: 'test'\n  ...\n# Subtest: duplicate clicks while request is pending do not send duplicate mutations\nok 7 - duplicate clicks while request is pending do not send duplicate mutations\n  ---\n  duration_ms: 6.1778\n  type: 'test'\n  ...\n# Subtest: uncertain mutation is not retried or displayed as applied, error is localized\nok 8 - uncertain mutation is not retried or displayed as applied, error is localized\n  ---\n  duration_ms: 7.5705\n  type: 'test'\n  ...\n# Subtest: mounted panel updates on language and privacy events without touching other renderers\nok 9 - mounted panel updates on language and privacy events without touching other renderers\n  ---\n  duration_ms: 5.1634\n  type: 'test'\n  ...\n# Subtest: detached prior account panel is not repainted by global preference events\nok 10 - detached prior account panel is not repainted by global preference events\n  ---\n  duration_ms: 3.3492\n  type: 'test'\n  ...\n# Subtest: paper loss limits and budget waiting statuses translate in both languages\nok 11 - paper loss limits and budget waiting statuses translate in both languages\n  ---\n  duration_ms: 5.935\n  type: 'test'\n  ...\n# Subtest: controls have mobile touch targets and no real trading endpoint is present\nok 12 - controls have mobile touch targets and no real trading endpoint is present\n  ---\n  duration_ms: 23.7531\n  type: 'test'\n  ...\n# Subtest: invalid trader prerequisites block enabling but never prevent switching off\nok 13 - invalid trader prerequisites block enabling but never prevent switching off\n  ---\n  duration_ms: 17.6019\n  type: 'test'\n  ...\n# Subtest: universe is restricted to declared BTC ETH and cost assumptions are explicit\nok 14 - universe is restricted to declared BTC ETH and cost assumptions are explicit\n  ---\n  duration_ms: 4.7308\n  type: 'test'\n  ...\n# Subtest: fresh unavailable or partial observer status overrides stale active paper state safely\nok 15 - fresh unavailable or partial observer status overrides stale active paper state safely\n  ---\n  duration_ms: 4.326\n  type: 'test'\n  ...\n# Subtest: mode POST aborts after 15 seconds without retry and waits for a fresh GET before another mutation\nok 16 - mode POST aborts after 15 seconds without retry and waits for a fresh GET before another mutation\n  ---\n  duration_ms: 4.9786\n  type: 'test'\n  ...\n1..16\n# tests 16\n# suites 0\n# pass 16\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n# duration_ms 166.8951\n",
+        "stderr": "",
+        "tests": 16,
+        "pass": 16,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0,
+        "success": true
+      },
+      "ui_ai_position_actions_test.cjs": {
+        "exit_code": 0,
+        "duration_seconds": 0.407,
+        "stdout": "TAP version 13\n# Subtest: deep-loss reduction shows eight factors exact frozen action and before-after financial consequences\nok 1 - deep-loss reduction shows eight factors exact frozen action and before-after financial consequences\n  ---\n  duration_ms: 28.0353\n  type: 'test'\n  ...\n# Subtest: new position card is fully English and never promotes fake calibrated probabilities\nok 2 - new position card is fully English and never promotes fake calibrated probabilities\n  ---\n  duration_ms: 2.8584\n  type: 'test'\n  ...\n# Subtest: AVERAGE shows additional risk and source reserve but unsupported margin and leverage variants have no action buttons\nok 3 - AVERAGE shows additional risk and source reserve but unsupported margin and leverage variants have no action buttons\n  ---\n  duration_ms: 2.2732\n  type: 'test'\n  ...\n# Subtest: prepare is read-only and no decision is sent just by rendering refreshing or changing language\nok 4 - prepare is read-only and no decision is sent just by rendering refreshing or changing language\n  ---\n  duration_ms: 1.8896\n  type: 'test'\n  ...\n# Subtest: confirmation sends only exact proposal ID and strict boolean and blocks stale alternative for the same position\nok 5 - confirmation sends only exact proposal ID and strict boolean and blocks stale alternative for the same position\n  ---\n  duration_ms: 9.295\n  type: 'test'\n  ...\n# Subtest: No persists decline through authoritative reload without any confirmation request\nok 6 - No persists decline through authoritative reload without any confirmation request\n  ---\n  duration_ms: 4.2012\n  type: 'test'\n  ...\n# Subtest: privacy hides quantity margin PnL and source money, preserves percentages, and blocks confirm not decline\nok 7 - privacy hides quantity margin PnL and source money, preserves percentages, and blocks confirm not decline\n  ---\n  duration_ms: 3.9826\n  type: 'test'\n  ...\n# Subtest: expired incomplete protected small or inconsistent scenarios cannot expose a working Confirm\nok 8 - expired incomplete protected small or inconsistent scenarios cannot expose a working Confirm\n  ---\n  duration_ms: 19.793\n  type: 'test'\n  ...\n# Subtest: extra budget and addition count violations block averaging\nok 9 - extra budget and addition count violations block averaging\n  ---\n  duration_ms: 10.7145\n  type: 'test'\n  ...\n# Subtest: rescue starts at ROE minus40 inclusive and never at minus39.99 in either language\nok 10 - rescue starts at ROE minus40 inclusive and never at minus39.99 in either language\n  ---\n  duration_ms: 17.1158\n  type: 'test'\n  ...\n# Subtest: all displayed source budget and market fields must be verified before confirmation\nok 11 - all displayed source budget and market fields must be verified before confirmation\n  ---\n  duration_ms: 43.6025\n  type: 'test'\n  ...\n# Subtest: rescue quarter limits stay separate from independent AI policy and reduction remains available when its share is overallocated\nok 12 - rescue quarter limits stay separate from independent AI policy and reduction remains available when its share is overallocated\n  ---\n  duration_ms: 7.6233\n  type: 'test'\n  ...\n# Subtest: derived quantity float tails are compact but frozen execution strings remain exact\nok 13 - derived quantity float tails are compact but frozen execution strings remain exact\n  ---\n  duration_ms: 2.1231\n  type: 'test'\n  ...\n# Subtest: resume appears only for a strict releasable verified hold and never for unresolved or malformed data\nok 14 - resume appears only for a strict releasable verified hold and never for unresolved or malformed data\n  ---\n  duration_ms: 5.4836\n  type: 'test'\n  ...\n# Subtest: manual resume requires the separate synchronization warning and sends only the market once\nok 15 - manual resume requires the separate synchronization warning and sends only the market once\n  ---\n  duration_ms: 1.3764\n  type: 'test'\n  ...\n# Subtest: resume timeout aborts after fifteen seconds and rereads but never repeats the POST\nok 16 - resume timeout aborts after fifteen seconds and rereads but never repeats the POST\n  ---\n  duration_ms: 1.3268\n  type: 'test'\n  ...\n# Subtest: resume re-renders in English and respects privacy without hidden network requests\nok 17 - resume re-renders in English and respects privacy without hidden network requests\n  ---\n  duration_ms: 0.9429\n  type: 'test'\n  ...\n# Subtest: authoritative removal hides a released hold while disabled assistance cannot prepare new proposals\nok 18 - authoritative removal hides a released hold while disabled assistance cannot prepare new proposals\n  ---\n  duration_ms: 1.0102\n  type: 'test'\n  ...\n# Subtest: timeout aborts once and rereads status without retrying either action or stale alternative\nok 19 - timeout aborts once and rereads status without retrying either action or stale alternative\n  ---\n  duration_ms: 8.7854\n  type: 'test'\n  ...\n# Subtest: information-only unavailable scenarios cannot create hidden financial actions\nok 20 - information-only unavailable scenarios cannot create hidden financial actions\n  ---\n  duration_ms: 0.9612\n  type: 'test'\n  ...\n# Subtest: untrusted identifiers raw errors factors and probabilities remain inert and do not disclose private data\nok 21 - untrusted identifiers raw errors factors and probabilities remain inert and do not disclose private data\n  ---\n  duration_ms: 2.435\n  type: 'test'\n  ...\n1..21\n# tests 21\n# suites 0\n# pass 21\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n# duration_ms 193.8935\n",
+        "stderr": "",
+        "tests": 21,
+        "pass": 21,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0,
+        "success": true
+      },
+      "ui_ai_review_test.cjs": {
+        "exit_code": 0,
+        "duration_seconds": 0.437,
+        "stdout": "TAP version 13\n# Subtest: combined review and modes render bind toggle authorized POST and reload without losing reviews or privacy\nok 1 - combined review and modes render bind toggle authorized POST and reload without losing reviews or privacy\n  ---\n  duration_ms: 63.1782\n  type: 'test'\n  ...\n# Subtest: combined mode timeout aborts fetch and late success cannot retry or override a manual refresh\nok 2 - combined mode timeout aborts fetch and late success cannot retry or override a manual refresh\n  ---\n  duration_ms: 10.6252\n  type: 'test'\n  ...\n# Subtest: fully bilingual render lists all eight factors without inventing probability or exposing own money\nok 3 - fully bilingual render lists all eight factors without inventing probability or exposing own money\n  ---\n  duration_ms: 6.3078\n  type: 'test'\n  ...\n# Subtest: untrusted markets, statuses, errors and sparse factors cannot inject markup or crash all cards\nok 4 - untrusted markets, statuses, errors and sparse factors cannot inject markup or crash all cards\n  ---\n  duration_ms: 4.5077\n  type: 'test'\n  ...\n# Subtest: a stale response cannot overwrite a newer request\nok 5 - a stale response cannot overwrite a newer request\n  ---\n  duration_ms: 3.2235\n  type: 'test'\n  ...\n# Subtest: a completed request cannot navigate back after leaving AI\nok 6 - a completed request cannot navigate back after leaving AI\n  ---\n  duration_ms: 4.2947\n  type: 'test'\n  ...\n# Subtest: authentication error is localised, never prints server detail and offers refresh\nok 7 - authentication error is localised, never prints server detail and offers refresh\n  ---\n  duration_ms: 2.0442\n  type: 'test'\n  ...\n# Subtest: read-only gate never exposes a trade confirmation even for a forged executable proposal\nok 8 - read-only gate never exposes a trade confirmation even for a forged executable proposal\n  ---\n  duration_ms: 3.0016\n  type: 'test'\n  ...\n# Subtest: resume copying requires an explicit confirmation and does not retry a conflict\nok 9 - resume copying requires an explicit confirmation and does not retry a conflict\n  ---\n  duration_ms: 3.3546\n  type: 'test'\n  ...\n# Subtest: missing review array is rendered as unknown history, not proof of no risk\nok 10 - missing review array is rendered as unknown history, not proof of no risk\n  ---\n  duration_ms: 2.1806\n  type: 'test'\n  ...\n# Subtest: loader queues an early click, loads once and uses the module, not a legacy fallback\nok 11 - loader queues an early click, loads once and uses the module, not a legacy fallback\n  ---\n  duration_ms: 62.0267\n  type: 'test'\n  ...\n# Subtest: failed script load can be retried and loader error follows language selection\nok 12 - failed script load can be retried and loader error follows language selection\n  ---\n  duration_ms: 4.0549\n  type: 'test'\n  ...\n# Subtest: late script completion after navigation away does not fetch or steal the page\nok 13 - late script completion after navigation away does not fetch or steal the page\n  ---\n  duration_ms: 2.8626\n  type: 'test'\n  ...\n# Subtest: loading the scripts twice does not duplicate navigation handlers\nok 14 - loading the scripts twice does not duplicate navigation handlers\n  ---\n  duration_ms: 3.7946\n  type: 'test'\n  ...\n# Subtest: selected AI occupies only slot three; after deleting a copy wallet another can be added\nok 15 - selected AI occupies only slot three; after deleting a copy wallet another can be added\n  ---\n  duration_ms: 6.5349\n  type: 'test'\n  ...\n# Subtest: two wallets plus an AI reservation disable adding a fourth occupant\nok 16 - two wallets plus an AI reservation disable adding a fourth occupant\n  ---\n  duration_ms: 1.3024\n  type: 'test'\n  ...\n# Subtest: three copied wallets do not display an AI replacement button\nok 17 - three copied wallets do not display an AI replacement button\n  ---\n  duration_ms: 4.0424\n  type: 'test'\n  ...\n# Subtest: a stale dashboard cannot incorrectly mark a freshly freed slot as full\nok 18 - a stale dashboard cannot incorrectly mark a freshly freed slot as full\n  ---\n  duration_ms: 2.3643\n  type: 'test'\n  ...\n# Subtest: research policy and status counts are bilingual, shared by source and never a trading readiness signal\nok 19 - research policy and status counts are bilingual, shared by source and never a trading readiness signal\n  ---\n  duration_ms: 2.5546\n  type: 'test'\n  ...\n# Subtest: missing or malformed research counts do not appear as an invented zero\nok 20 - missing or malformed research counts do not appear as an invented zero\n  ---\n  duration_ms: 2.2337\n  type: 'test'\n  ...\n# Subtest: candidate alternatives reveal no private money and create no order buttons\nok 21 - candidate alternatives reveal no private money and create no order buttons\n  ---\n  duration_ms: 6.6261\n  type: 'test'\n  ...\n1..21\n# tests 21\n# suites 0\n# pass 21\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n# duration_ms 225.2173\n",
+        "stderr": "",
+        "tests": 21,
+        "pass": 21,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0,
+        "success": true
+      },
+      "ui_ai_user_orders_test.cjs": {
+        "exit_code": 0,
+        "duration_seconds": 0.297,
+        "stdout": "TAP version 13\n# Subtest: frozen exact quantity price margin fees network and cross risk are visible before one-click confirmation\nok 1 - frozen exact quantity price margin fees network and cross risk are visible before one-click confirmation\n  ---\n  duration_ms: 27.406\n  type: 'test'\n  ...\n# Subtest: complete order screen and known blocked reasons are English when selected\nok 2 - complete order screen and known blocked reasons are English when selected\n  ---\n  duration_ms: 5.9458\n  type: 'test'\n  ...\n# Subtest: preparation sends only the read-only prepare request and never a decision\nok 3 - preparation sends only the read-only prepare request and never a decision\n  ---\n  duration_ms: 1.9314\n  type: 'test'\n  ...\n# Subtest: one confirm sends only proposal ID and strict true; stale pending reload cannot allow another send\nok 4 - one confirm sends only proposal ID and strict true; stale pending reload cannot allow another send\n  ---\n  duration_ms: 3.1289\n  type: 'test'\n  ...\n# Subtest: No sends strict false and durable declined history replaces the proposal\nok 5 - No sends strict false and durable declined history replaces the proposal\n  ---\n  duration_ms: 2.4958\n  type: 'test'\n  ...\n# Subtest: privacy masks own quantity and financial amounts and disables confirmation but permits decline\nok 6 - privacy masks own quantity and financial amounts and disables confirmation but permits decline\n  ---\n  duration_ms: 1.9441\n  type: 'test'\n  ...\n# Subtest: expiry disables confirmation without waiting for another API response\nok 7 - expiry disables confirmation without waiting for another API response\n  ---\n  duration_ms: 2.0561\n  type: 'test'\n  ...\n# Subtest: malformed unsupported below-minimum or changed frozen terms cannot be confirmed\nok 8 - malformed unsupported below-minimum or changed frozen terms cannot be confirmed\n  ---\n  duration_ms: 15.6314\n  type: 'test'\n  ...\n# Subtest: timeout aborts after fifteen seconds then only rereads status, never retries the order\nok 9 - timeout aborts after fifteen seconds then only rereads status, never retries the order\n  ---\n  duration_ms: 2.9919\n  type: 'test'\n  ...\n# Subtest: minimum and occupied market explanations do not suggest automatic upsizing or another entry\nok 10 - minimum and occupied market explanations do not suggest automatic upsizing or another entry\n  ---\n  duration_ms: 1.0664\n  type: 'test'\n  ...\n# Subtest: untrusted identifiers and fields are escaped or rejected, private raw server errors are omitted\nok 11 - untrusted identifiers and fields are escaped or rejected, private raw server errors are omitted\n  ---\n  duration_ms: 1.8485\n  type: 'test'\n  ...\n# Subtest: language and privacy rerenders preserve frozen proposal and do not issue requests\nok 12 - language and privacy rerenders preserve frozen proposal and do not issue requests\n  ---\n  duration_ms: 2.3108\n  type: 'test'\n  ...\n1..12\n# tests 12\n# suites 0\n# pass 12\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n# duration_ms 85.7302\n",
+        "stderr": "",
+        "tests": 12,
+        "pass": 12,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0,
+        "success": true
+      },
+      "ui_report_test.cjs": {
+        "exit_code": 0,
+        "duration_seconds": 0.328,
+        "stdout": "TAP version 13\n# Subtest: Unavailable capital is unknown, not a fabricated zero balance\nok 1 - Unavailable capital is unknown, not a fabricated zero balance\n  ---\n  duration_ms: 22.7198\n  type: 'test'\n  ...\n# Subtest: Capital-mode warning is bilingual and never inserts an untrusted error\nok 2 - Capital-mode warning is bilingual and never inserts an untrusted error\n  ---\n  duration_ms: 1.0969\n  type: 'test'\n  ...\n# Subtest: Capital API errors are useful in both languages\nok 3 - Capital API errors are useful in both languages\n  ---\n  duration_ms: 3.0242\n  type: 'test'\n  ...\n# Subtest: Russian report describes realised history, costs, and limitations\nok 4 - Russian report describes realised history, costs, and limitations\n  ---\n  duration_ms: 1.5819\n  type: 'test'\n  ...\n# Subtest: English report is English and makes no copy-profit admission claim\nok 5 - English report is English and makes no copy-profit admission claim\n  ---\n  duration_ms: 1.2515\n  type: 'test'\n  ...\n# Subtest: Existing analysis re-renders on language switch without another API call\nok 6 - Existing analysis re-renders on language switch without another API call\n  ---\n  duration_ms: 1.6842\n  type: 'test'\n  ...\n# Subtest: Language change before any report is harmless\nok 7 - Language change before any report is harmless\n  ---\n  duration_ms: 1.0882\n  type: 'test'\n  ...\n# Subtest: Unbounded PF renders infinity symbol, not a spurious finite ratio\nok 8 - Unbounded PF renders infinity symbol, not a spurious finite ratio\n  ---\n  duration_ms: 1.7545\n  type: 'test'\n  ...\n# Subtest: Every analysed position is explicitly external, never array-index own=true\nok 9 - Every analysed position is explicitly external, never array-index own=true\n  ---\n  duration_ms: 3.4931\n  type: 'test'\n  ...\n# Subtest: Privacy masks own position money but leaves external amounts and ROE visible\nok 10 - Privacy masks own position money but leaves external amounts and ROE visible\n  ---\n  duration_ms: 3.4831\n  type: 'test'\n  ...\n# Subtest: Untrusted wallet and PF strings are escaped; untrusted recommendation ignored\nok 11 - Untrusted wallet and PF strings are escaped; untrusted recommendation ignored\n  ---\n  duration_ms: 1.9175\n  type: 'test'\n  ...\n# Subtest: Position coin and dex remain inert in text and chart button code\nok 12 - Position coin and dex remain inert in text and chart button code\n  ---\n  duration_ms: 3.2131\n  type: 'test'\n  ...\n# Subtest: Events use selected-language labels and hide raw error payloads\nok 13 - Events use selected-language labels and hide raw error payloads\n  ---\n  duration_ms: 11.7911\n  type: 'test'\n  ...\n# Subtest: Unknown event action is neutral; malicious coin cannot create HTML\nok 14 - Unknown event action is neutral; malicious coin cannot create HTML\n  ---\n  duration_ms: 1.6173\n  type: 'test'\n  ...\n# Subtest: Incomplete history API response has a useful localized error\nok 15 - Incomplete history API response has a useful localized error\n  ---\n  duration_ms: 1.5443\n  type: 'test'\n  ...\n# Subtest: Structured or malformed API errors are not displayed as raw objects\nok 16 - Structured or malformed API errors are not displayed as raw objects\n  ---\n  duration_ms: 2.4599\n  type: 'test'\n  ...\n# Subtest: API success preserves Telegram authorization and method/body exactly\nok 17 - API success preserves Telegram authorization and method/body exactly\n  ---\n  duration_ms: 1.0452\n  type: 'test'\n  ...\n1..17\n# tests 17\n# suites 0\n# pass 17\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n# duration_ms 82.157\n",
+        "stderr": "",
+        "tests": 17,
+        "pass": 17,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0,
+        "success": true
+      }
+    }
+  },
+  "guards": {
+    "python": {
+      "tests": 9,
+      "passed": 9,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "expected_failures": 0,
+      "unexpected_successes": 0,
+      "duration_seconds": 0.204,
+      "success": true,
+      "failures": [],
+      "skips": [],
+      "denied_operations": {
+        "network": 6,
+        "process": 2,
+        "filesystem": 2
+      },
+      "denied_events": [
+        {
+          "kind": "network",
+          "event": "socket.bind",
+          "test": "test_sandbox_guards.SandboxGuards.test_accidental_public_sdk_constructor_cannot_connect",
+          "stack": [
+            {
+              "file": "sitecustomize.py",
+              "line": 70,
+              "function": "audit"
+            },
+            {
+              "file": "connection.py",
+              "line": 127,
+              "function": "_has_ipv6"
+            },
+            {
+              "file": "connection.py",
+              "line": 137,
+              "function": "<module>"
+            },
+            {
+              "file": "<frozen importlib._bootstrap>",
+              "line": 488,
+              "function": "_call_with_frames_removed"
+            },
+            {
+              "file": "<frozen importlib._bootstrap_external>",
+              "line": 999,
+              "function": "exec_module"
+            },
+            {
+              "file": "<frozen importlib._bootstrap>",
+              "line": 935,
+              "function": "_load_unlocked"
+            },
+            {
+              "file": "<frozen importlib._bootstrap>",
+              "line": 1331,
+              "function": "_find_and_load_unlocked"
+            }
+          ]
+        },
+        {
+          "kind": "network",
+          "event": "socket.getaddrinfo",
+          "test": "test_sandbox_guards.SandboxGuards.test_accidental_public_sdk_constructor_cannot_connect",
+          "stack": [
+            {
+              "file": "sitecustomize.py",
+              "line": 70,
+              "function": "audit"
+            },
+            {
+              "file": "socket.py",
+              "line": 978,
+              "function": "getaddrinfo"
+            },
+            {
+              "file": "connection.py",
+              "line": 60,
+              "function": "create_connection"
+            },
+            {
+              "file": "connection.py",
+              "line": 204,
+              "function": "_new_conn"
+            },
+            {
+              "file": "connection.py",
+              "line": 759,
+              "function": "connect"
+            },
+            {
+              "file": "connectionpool.py",
+              "line": 1106,
+              "function": "_validate_conn"
+            },
+            {
+              "file": "connectionpool.py",
+              "line": 464,
+              "function": "_make_request"
+            }
+          ]
+        },
+        {
+          "kind": "network",
+          "event": "socket.getaddrinfo",
+          "test": "test_sandbox_guards.SandboxGuards.test_direct_network_and_dns_are_blocked",
+          "stack": [
+            {
+              "file": "sitecustomize.py",
+              "line": 70,
+              "function": "audit"
+            },
+            {
+              "file": "socket.py",
+              "line": 978,
+              "function": "getaddrinfo"
+            },
+            {
+              "file": "test_sandbox_guards.py",
+              "line": 54,
+              "function": "test_direct_network_and_dns_are_blocked"
+            },
+            {
+              "file": "case.py",
+              "line": 589,
+              "function": "_callTestMethod"
+            },
+            {
+              "file": "case.py",
+              "line": 634,
+              "function": "run"
+            },
+            {
+              "file": "case.py",
+              "line": 690,
+              "function": "__call__"
+            },
+            {
+              "file": "suite.py",
+              "line": 122,
+              "function": "run"
+            }
+          ]
+        },
+        {
+          "kind": "network",
+          "event": "socket.connect",
+          "test": "test_sandbox_guards.SandboxGuards.test_direct_network_and_dns_are_blocked",
+          "stack": [
+            {
+              "file": "sitecustomize.py",
+              "line": 70,
+              "function": "audit"
+            },
+            {
+              "file": "test_sandbox_guards.py",
+              "line": 57,
+              "function": "test_direct_network_and_dns_are_blocked"
+            },
+            {
+              "file": "case.py",
+              "line": 589,
+              "function": "_callTestMethod"
+            },
+            {
+              "file": "case.py",
+              "line": 634,
+              "function": "run"
+            },
+            {
+              "file": "case.py",
+              "line": 690,
+              "function": "__call__"
+            },
+            {
+              "file": "suite.py",
+              "line": 122,
+              "function": "run"
+            },
+            {
+              "file": "suite.py",
+              "line": 84,
+              "function": "__call__"
+            }
+          ]
+        },
+        {
+          "kind": "filesystem",
+          "event": null,
+          "test": "test_sandbox_guards.SandboxGuards.test_original_application_files_cannot_be_opened",
+          "stack": [
+            {
+              "file": "sitecustomize.py",
+              "line": 60,
+              "function": "check_path"
+            },
+            {
+              "file": "sitecustomize.py",
+              "line": 78,
+              "function": "audit"
+            },
+            {
+              "file": "pathlib.py",
+              "line": 1013,
+              "function": "open"
+            },
+            {
+              "file": "pathlib.py",
+              "line": 1027,
+              "function": "read_text"
+            },
+            {
+              "file": "test_sandbox_guards.py",
+              "line": 39,
+              "function": "test_original_application_files_cannot_be_opened"
+            },
+            {
+              "file": "case.py",
+              "line": 589,
+              "function": "_callTestMethod"
+            },
+            {
+              "file": "case.py",
+              "line": 634,
+              "function": "run"
+            }
+          ]
+        },
+        {
+          "kind": "filesystem",
+          "event": null,
+          "test": "test_sandbox_guards.SandboxGuards.test_original_sqlite_uri_cannot_bypass_filesystem_guard",
+          "stack": [
+            {
+              "file": "sitecustomize.py",
+              "line": 60,
+              "function": "check_path"
+            },
+            {
+              "file": "sitecustomize.py",
+              "line": 89,
+              "function": "audit"
+            },
+            {
+              "file": "test_sandbox_guards.py",
+              "line": 44,
+              "function": "test_original_sqlite_uri_cannot_bypass_filesystem_guard"
+            },
+            {
+              "file": "case.py",
+              "line": 589,
+              "function": "_callTestMethod"
+            },
+            {
+              "file": "case.py",
+              "line": 634,
+              "function": "run"
+            },
+            {
+              "file": "case.py",
+              "line": 690,
+              "function": "__call__"
+            },
+            {
+              "file": "suite.py",
+              "line": 122,
+              "function": "run"
+            }
+          ]
+        },
+        {
+          "kind": "network",
+          "event": "socket.getaddrinfo",
+          "test": "test_sandbox_guards.SandboxGuards.test_requests_to_both_exchange_origins_cannot_leave_process",
+          "stack": [
+            {
+              "file": "sitecustomize.py",
+              "line": 70,
+              "function": "audit"
+            },
+            {
+              "file": "socket.py",
+              "line": 978,
+              "function": "getaddrinfo"
+            },
+            {
+              "file": "connection.py",
+              "line": 60,
+              "function": "create_connection"
+            },
+            {
+              "file": "connection.py",
+              "line": 204,
+              "function": "_new_conn"
+            },
+            {
+              "file": "connection.py",
+              "line": 759,
+              "function": "connect"
+            },
+            {
+              "file": "connectionpool.py",
+              "line": 1106,
+              "function": "_validate_conn"
+            },
+            {
+              "file": "connectionpool.py",
+              "line": 464,
+              "function": "_make_request"
+            }
+          ]
+        },
+        {
+          "kind": "network",
+          "event": "socket.getaddrinfo",
+          "test": "test_sandbox_guards.SandboxGuards.test_requests_to_both_exchange_origins_cannot_leave_process",
+          "stack": [
+            {
+              "file": "sitecustomize.py",
+              "line": 70,
+              "function": "audit"
+            },
+            {
+              "file": "socket.py",
+              "line": 978,
+              "function": "getaddrinfo"
+            },
+            {
+              "file": "connection.py",
+              "line": 60,
+              "function": "create_connection"
+            },
+            {
+              "file": "connection.py",
+              "line": 204,
+              "function": "_new_conn"
+            },
+            {
+              "file": "connection.py",
+              "line": 759,
+              "function": "connect"
+            },
+            {
+              "file": "connectionpool.py",
+              "line": 1106,
+              "function": "_validate_conn"
+            },
+            {
+              "file": "connectionpool.py",
+              "line": 464,
+              "function": "_make_request"
+            }
+          ]
+        },
+        {
+          "kind": "process",
+          "event": "subprocess.Popen",
+          "test": "test_sandbox_guards.SandboxGuards.test_subprocess_and_shell_are_blocked",
+          "stack": [
+            {
+              "file": "sitecustomize.py",
+              "line": 74,
+              "function": "audit"
+            },
+            {
+              "file": "subprocess.py",
+              "line": 1534,
+              "function": "_execute_child"
+            },
+            {
+              "file": "subprocess.py",
+              "line": 1026,
+              "function": "__init__"
+            },
+            {
+              "file": "subprocess.py",
+              "line": 548,
+              "function": "run"
+            },
+            {
+              "file": "test_sandbox_guards.py",
+              "line": 48,
+              "function": "test_subprocess_and_shell_are_blocked"
+            },
+            {
+              "file": "case.py",
+              "line": 589,
+              "function": "_callTestMethod"
+            },
+            {
+              "file": "case.py",
+              "line": 634,
+              "function": "run"
+            }
+          ]
+        },
+        {
+          "kind": "process",
+          "event": "os.system",
+          "test": "test_sandbox_guards.SandboxGuards.test_subprocess_and_shell_are_blocked",
+          "stack": [
+            {
+              "file": "sitecustomize.py",
+              "line": 74,
+              "function": "audit"
+            },
+            {
+              "file": "test_sandbox_guards.py",
+              "line": 50,
+              "function": "test_subprocess_and_shell_are_blocked"
+            },
+            {
+              "file": "case.py",
+              "line": 589,
+              "function": "_callTestMethod"
+            },
+            {
+              "file": "case.py",
+              "line": 634,
+              "function": "run"
+            },
+            {
+              "file": "case.py",
+              "line": 690,
+              "function": "__call__"
+            },
+            {
+              "file": "suite.py",
+              "line": 122,
+              "function": "run"
+            },
+            {
+              "file": "suite.py",
+              "line": 84,
+              "function": "__call__"
+            }
+          ]
+        }
+      ],
+      "output": ".........\n----------------------------------------------------------------------\nRan 9 tests in 0.142s\n\nOK\n",
+      "process": {
+        "exit_code": 0,
+        "duration_seconds": 0.5,
+        "stdout": "{\"suite\": \"guards\", \"tests\": 9, \"passed\": 9, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"duration_seconds\": 0.204}\n",
+        "stderr": ""
+      }
+    },
+    "javascript": {
+      "exit_code": 0,
+      "duration_seconds": 0.188,
+      "stdout": "TAP version 13\n# Subtest: network guard is installed and only dummy environment is present\nok 1 - network guard is installed and only dummy environment is present\n  ---\n  duration_ms: 0.8255\n  type: 'test'\n  ...\n# Subtest: TCP DNS HTTP and HTTPS are rejected synchronously before transport\nok 2 - TCP DNS HTTP and HTTPS are rejected synchronously before transport\n  ---\n  duration_ms: 1.3363\n  type: 'test'\n  ...\n# Subtest: fetch is blocked for either exchange origin\nok 3 - fetch is blocked for either exchange origin\n  ---\n  duration_ms: 0.2789\n  type: 'test'\n  ...\n# Subtest: subprocess and workers cannot escape\nok 4 - subprocess and workers cannot escape\n  ---\n  duration_ms: 0.1945\n  type: 'test'\n  ...\n# Subtest: unexpected fixture file mutation is blocked\nok 5 - unexpected fixture file mutation is blocked\n  ---\n  duration_ms: 0.1467\n  type: 'test'\n  ...\n1..5\n# tests 5\n# suites 0\n# pass 5\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n# duration_ms 11.831\n",
+      "stderr": "",
+      "tests": 5,
+      "pass": 5,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "todo": 0,
+      "success": true
+    }
+  },
+  "copied_files": [
+    "core/__init__.py",
+    "core/ai_assistant.py",
+    "core/ai_candidates.py",
+    "core/ai_entry_observer.py",
+    "core/ai_entry_policy.py",
+    "core/ai_learning.py",
+    "core/ai_learning_worker.py",
+    "core/ai_modes.py",
+    "core/ai_outcomes.py",
+    "core/ai_paper_trader.py",
+    "core/ai_policy.py",
+    "core/ai_position_actions.py",
+    "core/ai_position_observer.py",
+    "core/ai_probability.py",
+    "core/ai_rescue_policy.py",
+    "core/ai_research.py",
+    "core/ai_review.py",
+    "core/ai_review_text.py",
+    "core/ai_user_orders.py",
+    "core/analysis_metrics.py",
+    "core/capital_snapshot.py",
+    "core/execution_journal.py",
+    "core/fill_history.py",
+    "core/follower_simulator.py",
+    "core/hyperliquid.py",
+    "core/legacy_metrics.py",
+    "core/manual_positions.py",
+    "core/order_precision.py",
+    "core/position_history.py",
+    "core/profile_mutation.py",
+    "core/settings.py",
+    "core/state_snapshot.py",
+    "core/storage.py",
+    "core/trade_analyzer.py",
+    "core/trading_engine.py",
+    "integrations/__init__.py",
+    "integrations/hyperliquid.py",
+    "desktop/__init__.py",
+    "desktop/main.py",
+    "webapp/server.py",
+    "webapp/static/ai-learning.js",
+    "webapp/static/ai-modes.js",
+    "webapp/static/ai-position-actions.js",
+    "webapp/static/ai-review.js",
+    "webapp/static/ai-slot.js",
+    "webapp/static/ai-user-orders.js",
+    "webapp/static/ai.css",
+    "webapp/static/ai.js",
+    "webapp/static/app.js",
+    "webapp/static/audio.js",
+    "webapp/static/chart.css",
+    "webapp/static/chart.js",
+    "webapp/static/danger.css",
+    "webapp/static/enhance.js",
+    "webapp/static/i18n.js",
+    "webapp/static/index.html",
+    "webapp/static/manual-trade.js",
+    "webapp/static/matrix.js",
+    "webapp/static/stats.js",
+    "webapp/static/style.css",
+    "tests/test_ai_candidates.py",
+    "tests/test_ai_entry_observer.py",
+    "tests/test_ai_learning.py",
+    "tests/test_ai_learning_integration.py",
+    "tests/test_ai_learning_worker.py",
+    "tests/test_ai_modes.py",
+    "tests/test_ai_outcomes.py",
+    "tests/test_ai_paper_trader.py",
+    "tests/test_ai_policy.py",
+    "tests/test_ai_position_actions.py",
+    "tests/test_ai_probability.py",
+    "tests/test_ai_research.py",
+    "tests/test_ai_research_live_adapter.py",
+    "tests/test_ai_review.py",
+    "tests/test_ai_user_ioc.py",
+    "tests/test_ai_user_orders.py",
+    "tests/test_analysis_persistence.py",
+    "tests/test_api_ai_modes.py",
+    "tests/test_api_ai_user_orders.py",
+    "tests/test_api_capital.py",
+    "tests/test_api_position_actions.py",
+    "tests/test_api_races.py",
+    "tests/test_api_safety.py",
+    "tests/test_backup_runtime.py",
+    "tests/test_capital_snapshot.py",
+    "tests/test_confirmation_scheduler.py",
+    "tests/test_engine_ai_user_holds.py",
+    "tests/test_engine_modes.py",
+    "tests/test_engine_recovery.py",
+    "tests/test_engine_safety.py",
+    "tests/test_execution_journal.py",
+    "tests/test_external_close.py",
+    "tests/test_fill_clients.py",
+    "tests/test_fill_history.py",
+    "tests/test_legacy_metrics.py",
+    "tests/test_manual_positions.py",
+    "tests/test_order_precision.py",
+    "tests/test_position_action_sdk.py",
+    "tests/test_position_history.py",
+    "tests/test_position_observer.py",
+    "tests/test_profile_mutation.py",
+    "tests/test_recovery_import.py",
+    "tests/test_storage_recovery.py",
+    "tests/test_storage_safety.py",
+    "tests/test_trade_analyzer.py",
+    "tests/test_virtual_copy_engine.py",
+    "tests/ui_ai_learning_test.cjs",
+    "tests/ui_ai_modes_test.cjs",
+    "tests/ui_ai_position_actions_test.cjs",
+    "tests/ui_ai_review_test.cjs",
+    "tests/ui_ai_user_orders_test.cjs",
+    "tests/ui_report_test.cjs",
+    "scripts/backup_runtime.py",
+    "scripts/enable_ai_modes.py",
+    "scripts/recover_ownership.py"
+  ],
+  "source_hashes": {
+    "core/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "core/ai_assistant.py": "ad0044217862644df658960a5ad95e858723fb961639b637ec1c7b5cf2e41285",
+    "core/ai_candidates.py": "366be3cb5d137d1d075a8baa00e99502283d6b6a694c69709054106fd8a596c7",
+    "core/ai_entry_observer.py": "86e2ca539f7b85ea68db7cb829b877ad72b7559b46861066cde626f5c19bc360",
+    "core/ai_entry_policy.py": "ef6285271333368df7ea9e4ab0c725115be551c07307af8f8ee5ce639dddd0d3",
+    "core/ai_learning.py": "664db98e7cb0dc2281941f899d928a9f0d3712c9d248b4cba8165d375e9c3a8f",
+    "core/ai_learning_worker.py": "3f421e355c5d9eb2acbfe3fb423ef4dc37b5e753965b7a9983dddf1230d780ff",
+    "core/ai_modes.py": "8dc2a7091dcaed517e456604e43265f4480bcb83b4aef63bf90310a48a4e88b0",
+    "core/ai_outcomes.py": "102c4acbe35b19ac29e51bfe3c628f2bbebeceb7d0cdf4d7995ebd17028199dc",
+    "core/ai_paper_trader.py": "78905fff3baa707ba998290581fca1c3b4c04bd3aaebe04499669996744f0537",
+    "core/ai_policy.py": "db638ef15aa2ede2c35ed9da86a3f559720015d1bad28465bdd6019a2acf8d9b",
+    "core/ai_position_actions.py": "1d0f1f69cd2a12a639482466785bafd829a879ca4c500ec7f8dbf15d6d024061",
+    "core/ai_position_observer.py": "b7d0034f6cc7529ec0eb3234674c6a1416282bef7d35fd17591d45183bf06b41",
+    "core/ai_probability.py": "78ff8b8be33a9eea19fac6401148d7307b7f4cd8e8e38e018bf88baf83348446",
+    "core/ai_rescue_policy.py": "ec90f946ade557b60572734bd02cb2ddd74c824c222945e96b9ee3e0e821ad1f",
+    "core/ai_research.py": "9028ec469af5e6f40043caa1e350adc43499c65a4e71fdb98263f3a225c683cc",
+    "core/ai_review.py": "2a3e5e58482193f78efb56abc8682a7b4df0a3c1f681de4b4ae828f5c2f3a961",
+    "core/ai_review_text.py": "aed09fecc4b2dce683457dc5a8e671b065f31406de2e7a69cc29579dd0d3f621",
+    "core/ai_user_orders.py": "ce7f9fe23d9c11fe1ede1caee710062fe9650016caa7374842f881c8d5929b72",
+    "core/analysis_metrics.py": "f5b0d7aad4ff22d423922629f3926540d3956582df41e28d56e30bc453157237",
+    "core/capital_snapshot.py": "77f63ba632cc5bc0b47e59d694b8a0a582b80aa942307cdc60f53e07612369aa",
+    "core/execution_journal.py": "1b43759a5ef6dcb6f4062626ab6c1f65743954144913d260e8aa9e5b4338bd81",
+    "core/fill_history.py": "771965275f021ff6546003eb0908c23f5c0e2029050a0ce7a3111c162f585d07",
+    "core/follower_simulator.py": "ae397dee493766506574c4061c8e442b036241739fc77aa24070f0924f3238fa",
+    "core/hyperliquid.py": "001e757f6d06e5a4f980947a52ad36754bc79328e2b5fd5af6cacd2f7b902897",
+    "core/legacy_metrics.py": "11a42296f9b3a19e8eb8f20784bb28e1ac4acfc99d3a2241ea3a6cb7474a87ed",
+    "core/manual_positions.py": "d0e49c8fd8fcc4bc1a0c9f06025f1b77f7fcb9dcaa334bc8d35cb655114b1dc4",
+    "core/order_precision.py": "34198b02264a1031feb73a7e44aed08a6e38f97d23019ac1f7f86839ec3caae9",
+    "core/position_history.py": "3d6f78e2d989484b1848ca1a5ad9a2e06ae9ec174051219776ac722f1848ddce",
+    "core/profile_mutation.py": "d52d2dc242aa502a6e78517b89c470ddd6e672f62125c272121eefe51baaf0e9",
+    "core/settings.py": "903663b82406da940225d947e6601911349deb00924ab8209b18246fb107c80c",
+    "core/state_snapshot.py": "64cd4166c198cfc1f084e49a5976b0568bc8f2ac85bc5faa07e25d3020338c67",
+    "core/storage.py": "306617222e1f8d0dea9ac3978099f7114eddcdccafa5fb06eed75f8c1ea1b8d8",
+    "core/trade_analyzer.py": "80814911da9d74ae8f3eaf464ecdb109155b4f62ee341c125c77d3c6c816c6fd",
+    "core/trading_engine.py": "e824aaf36bf932dee43e447b64a33729fae7e1183510fe2041008cfdda482d21",
+    "integrations/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "integrations/hyperliquid.py": "22354379627d504b44bae2317a43a15fa3e2d777e2b9ffbd4d60ae6869b9d485",
+    "desktop/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "desktop/main.py": "61e53677927252a0cd1704da52743e1f53e9961643998865a2b0dba00910cc2f",
+    "webapp/server.py": "388e03c9c2a2acd3b02e41f2ae558012338a8e0645239792bce69f62e508a7af",
+    "webapp/static/ai-learning.js": "d6877d7520504ec2bcded02d85403e1e6fd61fba309de71504d336482a4ad7e5",
+    "webapp/static/ai-modes.js": "894278aff8bee43e8f991e471df19d3e5fb9d10cfa3cb918fa0a544166de7de5",
+    "webapp/static/ai-position-actions.js": "4bf8564f61be43ab9152d27f0838bbc6208aa438836267c8a49842b9625ca0b9",
+    "webapp/static/ai-review.js": "1e887890b21b0a29a8452663b3d1f429902a804593f9913d1def61eef993e089",
+    "webapp/static/ai-slot.js": "7544d201d74eca777c5b2dfb89234d3fc6419a20ebd5239da803baa9e49a31ba",
+    "webapp/static/ai-user-orders.js": "bf338343e8d8d00742a03fef1f35ebba1aa00bc329bb94412f74d2975c17d439",
+    "webapp/static/ai.css": "cf5c1a2d9ccbdc626b3ce3a04cba303b030fbaa3a6b62bfe8294254db1f53589",
+    "webapp/static/ai.js": "470b9b287fedd331866bdc220c732035aed9f25cdc2bcb2e1d8a192fe9dc6c07",
+    "webapp/static/app.js": "ab1a946a96288acd2c7e9f092d4c5087c4abdc9276f91f0226816b99e00c6456",
+    "webapp/static/audio.js": "4212ef12cdc446e74fb4329a2ca24e4429ccabc8dd0d0aef94a90477ff75a621",
+    "webapp/static/chart.css": "76c2cb4ecc6504733748878a1238a2cadb1235a4f6c8c2e1dfc11581ab69f28d",
+    "webapp/static/chart.js": "a28ae286f8a18c92c3e1b82cdcefd89813cfdc96096e55fb58d6d2fda41c68fd",
+    "webapp/static/danger.css": "22bfd6cbc9002897f6ad07cd9657fb2f4087c202b6d602bd7f864e2e90e5b115",
+    "webapp/static/enhance.js": "7c873adb201d35d63cd69e20679f2b19f2947d7b9c02025037ae8cba26b4a651",
+    "webapp/static/i18n.js": "860e5646a1e662574af78a0809990a7ad3d2da7993802337cd7331c8e05012d3",
+    "webapp/static/index.html": "397c886dbb1aa6228fc71dffd537bd98a9330492c2e4b9c7b344d6794eec3f09",
+    "webapp/static/manual-trade.js": "551e65dd14168803da9b7f716cc294a187a98411e357a82b4e4a9f9d056d923e",
+    "webapp/static/matrix.js": "a75cfb500bba84d4614d348c51d6d28878619778cbd1ab0677fb886edd7f5c31",
+    "webapp/static/stats.js": "d4aee0b35ec4e2b7606a1cddd7f5f0c2a874ebcad4e70d7ad0c7b7876ed7f39a",
+    "webapp/static/style.css": "d95af0b252e29b0cd39f76d37bd66363c4de6762e67316488cae88b280b9e057",
+    "tests/test_ai_candidates.py": "1f11593b7da7eaf789e12fc66cf1287a0c9f04cef0d74d0eb4ce5b7e41e9a7de",
+    "tests/test_ai_entry_observer.py": "8bf1bd64a7782f8e7ce691b0ff63da86e4480568e6736416e5542918c7b12260",
+    "tests/test_ai_learning.py": "6ebb43df2b0abfdbb11a554eff7e97063185ce0a7e77ef6c438ef005ed62f3e4",
+    "tests/test_ai_learning_integration.py": "4c03d746da872e3a41d6191dd8cf23bb3183081dc2d4ba40e49efd69049e00f4",
+    "tests/test_ai_learning_worker.py": "9f61289fbd96665d8465c34209b532cda9d1243ce6047828ceb806c5c7781e4d",
+    "tests/test_ai_modes.py": "9850e6f8a368ad145ede2f7b69ff543547ddbc6c3bef54f7f189e60de0b7b946",
+    "tests/test_ai_outcomes.py": "8280e8863ad5f6424313a1a5df90e57a51e3c49ba1dd8dbd765758f1ebd6413f",
+    "tests/test_ai_paper_trader.py": "6fde6e39a060360d2b4de91a37e28d282c65fca6250f94f938d744f15a259a78",
+    "tests/test_ai_policy.py": "88e4da52cf22aec888b7df1a68fbd982f2b91ceaf60324a7a3c88fcf4a81d224",
+    "tests/test_ai_position_actions.py": "8a62ecf114cbfc8d7ba9c4ce1b176e510d404c74447f1b6747e63adb13822be0",
+    "tests/test_ai_probability.py": "9b57d105bfbd327e06ce08ed0f76c453e4730a408e81631236d3c6735505c0bc",
+    "tests/test_ai_research.py": "1d4f72e4d3ff81b74f4cb6fbcb141a5f764e40572ab000147cbe3bee5c76b115",
+    "tests/test_ai_research_live_adapter.py": "e6cfcf7518ef7b40a93c79dbf73f26226b8700bcf971e33a06bc8dcdc99f765a",
+    "tests/test_ai_review.py": "c9ab663d93016d71ba12097fb30a6c3ea5bb59ff94395cc6dbdff94a2f947eb2",
+    "tests/test_ai_user_ioc.py": "5f2c36b558fa854713c2276f3b53941823ba9297b2dab72e646884da4240041c",
+    "tests/test_ai_user_orders.py": "3c0abe310a16bc3cf8d87936d3b485812e9a4ba457adfe9eb552100717800fc9",
+    "tests/test_analysis_persistence.py": "df36997dc379bfc09d9366173a143465e8d47f840b536f461d8ba9cbda6a603c",
+    "tests/test_api_ai_modes.py": "da098932f7546874661d42124f2d87fbe9ce8d4e4ef6c8eafa34386a0c3f497c",
+    "tests/test_api_ai_user_orders.py": "6896cc5db3aca28535bb9b7c86e923028016c201444dbe6ba97fe66a73806931",
+    "tests/test_api_capital.py": "8b939f8e5b826b552cfcc7c336ba752683ab552e8304c3b3fef236f4135ecdc4",
+    "tests/test_api_position_actions.py": "c2cb1412a9c752d8a3a46ad63d2b37b2efbae534646d5b913b4e031876c2615b",
+    "tests/test_api_races.py": "cb32877d6a75ec1f2c5e12759a03cb30914c86b95a1f250b0d3ab29e4a530cc3",
+    "tests/test_api_safety.py": "6586d668c9f5330b43d31259ed0e84842eaa7dc16601e7e1ffbc92279a971019",
+    "tests/test_backup_runtime.py": "475960d789aa2538cd918ad8782f526dd9c9bafb6c268d75d594608bfa36ef6d",
+    "tests/test_capital_snapshot.py": "3fce34cdefb12f27f2f87427ad492f6a2e88be296fd097d1765f2a7703b065b5",
+    "tests/test_confirmation_scheduler.py": "86208ac159a3ab398055519110a367569d147f68fcfeb90343cbfa1083e70638",
+    "tests/test_engine_ai_user_holds.py": "678fb9c0ee2aa10776dfe91f85ada1d9e4dd428be2e7f3c3ea3edf62f7158312",
+    "tests/test_engine_modes.py": "4bad4fd9ca1e3577e73a3c30c702dda67ac2dbd8654fefda8200c6ff582c3119",
+    "tests/test_engine_recovery.py": "6ab70e303193fd210fae8f22ca895965f333b1524163c6487411b749c4d898aa",
+    "tests/test_engine_safety.py": "b6ac6f26de77898f91f400977dc9390d843852fb5bf278a79369fe2ae8dc6d97",
+    "tests/test_execution_journal.py": "e3bbddac1b961a507beb161cc0a8e5a54c49771bfd8d4f0fce66ce74e498026c",
+    "tests/test_external_close.py": "14e3bc9cf37869c359ecf514aaf356d74ff09efc808ce3debddb917df193ea86",
+    "tests/test_fill_clients.py": "50ac026de58371dcf8dbc0c8c7ccdfb37016af96c9756bc583689271fcbde764",
+    "tests/test_fill_history.py": "cda95e2765530713d35606d66ed37bac4d5fe92e9eb3165ed1b217c9ba786fd2",
+    "tests/test_legacy_metrics.py": "062caa31d0d41a26011d33375e619854e0f54503c910441a926d250a1735d5d1",
+    "tests/test_manual_positions.py": "c97509a752919d1b2b204dec936d4be53c98771c9284891e7686bccb14eb8c84",
+    "tests/test_order_precision.py": "7636f3bbf598a6b2cc27695421c221266a815ce31884d161c3ba444099f2953d",
+    "tests/test_position_action_sdk.py": "1f7ec1437457448f452bbabfc2d3536197939597884addda0e7411e7689b06f3",
+    "tests/test_position_history.py": "3209a4ca2dc1db0403b16773ce45e33cbe0d874b5ce7403852320551aeed5434",
+    "tests/test_position_observer.py": "760a06caff53560ff677a08cc0e1a1c0f05cbfe33dc32c524c87dd2191385a30",
+    "tests/test_profile_mutation.py": "70d69879ad07a23f5888472c258b31f9bae12a9931c976c5260e7071a0a70a4e",
+    "tests/test_recovery_import.py": "924e7b30836357eaea0f190e5222048bfe4395f95b942152ca0e101407fd2ce7",
+    "tests/test_storage_recovery.py": "dc6d6a11332dcaf527c0c0a933757598516c20debe0a7b6efc38f93e3c3b1936",
+    "tests/test_storage_safety.py": "83d86227218042c0991a5517389af93fdf31db4841a0aefe841f8be5b4e120e2",
+    "tests/test_trade_analyzer.py": "4c412907b76813f5b3b0e902c9dad3d50305de6d98cf511cb263a3a2b0bc82b3",
+    "tests/test_virtual_copy_engine.py": "a6edcf071b6a56e33a7089419f19d0ac0c5f21ccc0817b51288737bf85e478ef",
+    "tests/ui_ai_learning_test.cjs": "0ddb8b2319a0e6ddef244c84c1c687d1109ddd092d4d90c063df79f761e7c0cb",
+    "tests/ui_ai_modes_test.cjs": "cfdd87035a6bcf05e21612f77ab85dcd8d89cda6163729a83c66b25a1877c034",
+    "tests/ui_ai_position_actions_test.cjs": "1bb3a42cd02ee9ffa130908fc7838f11d1ca6b52b7598a161343356601e19c10",
+    "tests/ui_ai_review_test.cjs": "185963f51c0b253377a76cbaf0eefb240856d47780e324c02b1d45d7e2e21969",
+    "tests/ui_ai_user_orders_test.cjs": "dc4a9bdc49fdd99291418d547316a6317d5a66a2024fd5270ef79eebfeaafc93",
+    "tests/ui_report_test.cjs": "2f9934e4070f05e0ed65856f0458a69dfe6afc76580dd5d3525999efa2ec45f1",
+    "scripts/backup_runtime.py": "9ff3c1cbbfb174f4b2ff54d3958e435c81753b2a64c222ce3ea39aa4189c3694",
+    "scripts/enable_ai_modes.py": "38fb16b8614a86ebdf13a90e563ef9edfa16573a1e2b0bd89a0bd2809106100d",
+    "scripts/recover_ownership.py": "e965b72617a6a23b249a3298c3c677ac44515642136548ae9963dc2e55b700fe"
+  },
+  "discovery": {
+    "python_modules": 46,
+    "javascript_files": 6
+  },
+  "python_version": "Python 3.12.14",
+  "node_version": "v24.19.0",
+  "source_unchanged": true,
+  "success": true,
+  "totals": {
+    "existing": {
+      "tests": 753,
+      "passed": 752,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 1,
+      "duration_seconds": 103.015
+    },
+    "guards": {
+      "tests": 14,
+      "passed": 14,
+      "duration_seconds": 0.392
+    }
+  }
+}

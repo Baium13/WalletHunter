@@ -51,6 +51,10 @@ class AnalysisPersistenceTests(unittest.TestCase):
             storage = Storage(root, master_key)
             _, profile = storage.profile(1)
             profile["runtime"]["managed"] = ["BTC|"]
+            profile["leaders"] = ["configured", "unanalysed"]
+            profile["copy_enabled"] = False
+            profile["leader_enabled"] = {"configured": False}
+            profile["leader_models"] = {"configured": {"eligible": False}}
             storage.update_profile(1, profile)
             _, profile = storage.profile(1)
 
@@ -65,13 +69,35 @@ class AnalysisPersistenceTests(unittest.TestCase):
             exec(compile(ast.Module(body=[function], type_ignores=[]), str(source), "exec"), scope)
             asyncio.run(scope["analyse"](Event(), "wallet", 1, profile))
             saved = Storage(root, master_key).profile(1)[1]
-            self.assertEqual(saved["leader_models"]["wallet"]["train_pf"], "Infinity")
-            self.assertEqual(saved["leader_models"]["wallet"]["test_pf"], "Infinity")
+            self.assertEqual(saved["wallet_research"]["wallet"]["train_pf"], "Infinity")
+            self.assertEqual(saved["wallet_research"]["wallet"]["test_pf"], "Infinity")
+            self.assertEqual(saved["leader_models"], {"configured": {"eligible": False}})
+            self.assertFalse(saved["copy_enabled"])
+            self.assertEqual(saved["leaders"], ["configured", "unanalysed"])
+            self.assertEqual(saved["leader_enabled"], {"configured": False})
             self.assertEqual(saved["runtime"]["managed"], ["BTC|"])
             json.dumps(saved, allow_nan=False)
             self.assertIn("СТРЕСС-ТЕСТ ИЗДЕРЖЕК", messages[-1])
             self.assertNotIn("Допущен", messages[-1])
             self.assertNotIn("Ошибка анализа", messages[-1])
+            # Neither a configured nor an unrelated research target changes
+            # the plan, including when some configured sources lack research.
+            from tests.test_engine_safety import EngineSafetyTests, position, snapshot
+            from core.trading_engine import CopyEngine
+            settings = SimpleNamespace(max_leverage=40, max_position_pct=100., max_total_exposure_usd=100000.)
+            engine = CopyEngine(None, storage, settings)
+            snapshots = [snapshot(w, [position()]) for w in ("configured", "unanalysed")]
+            for policy in ({}, {"configured": {"eligible": False}}):
+                saved.update(copy_enabled=True, leader_models=policy)
+                storage.update_profile(1, saved)
+                expected = engine._plan(snapshots, 300., saved)
+                for wallet in ("configured", "unrelated"):
+                    current = storage.profile(1)[1]
+                    asyncio.run(scope["analyse"](Event(), wallet, 1, current))
+                    saved = Storage(root, master_key).profile(1)[1]
+                    self.assertTrue(saved["copy_enabled"])
+                    self.assertEqual(saved["leader_models"], policy)
+                    self.assertEqual(engine._plan(snapshots, 300., saved), expected)
 
     def test_legacy_dashboard_always_shows_fixed_thirds_and_selected_ai(self):
         source = Path(__file__).parents[1] / "desktop" / "main.py"

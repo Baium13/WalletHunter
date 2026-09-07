@@ -593,7 +593,10 @@ async def analyse(event, wallet, uid, p, edit=True):
         fills = await asyncio.to_thread(reader.fills_90d, wallet)
         bal, positions = await asyncio.gather(asyncio.to_thread(reader.balance, wallet), asyncio.to_thread(reader.positions, wallet, True, True))
         r = analyzer.report(fills, bal); sim = simulator.simulate(fills); pf = "∞" if r.profit_factor == float("inf") else f"{r.profit_factor:.2f}"
-        models = p.setdefault("leader_models", {})
+        # Research must never write the legacy admission/configuration snapshot.
+        # Existing leader_models remain unchanged; only explicit configuration
+        # may replace that policy. Web analysis is also authority-read-only.
+        models = p.setdefault("wallet_research", {})
         models[wallet] = {"score": sim.score, "eligible": sim.eligible, "net_pnl": sim.net_pnl,
                           "cost_usd": sim.cost_usd, "train_pf": persisted_profit_factor(sim.train_pf),
                           "test_pf": persisted_profit_factor(sim.test_pf),

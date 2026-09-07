@@ -98,3 +98,37 @@ class ManualLeaderEventBook:
             return False
         self._seen.add(key)
         return True
+
+
+def execute_manual_leader(*, engine, account, client, operation, event_id, action,
+                          leader_margin, leader_capital, allocatable_capital,
+                          current_margin, spec, before_position=None,
+                          fee_reserve_pct=0.0):
+    """Route a proportional Manual Leader action through the proven COPY gateway.
+
+    The leader quantity is never submitted: only the calculated follower delta
+    enters the canonical OrderIntent. Provenance is tagged by the source wallet.
+    """
+    policy = ManualLeaderConfig(scope=__import__('core.foundation.contracts', fromlist=['Scope']).Scope(
+        tenant=str(account['_tenant']), account=account['address'].lower(), network=client.network),
+        leader=str(spec['leader']).lower(), alias=str(spec.get('alias') or spec['leader']),
+        allocation_pct=float(spec['allocation_pct']), enabled=True,
+        created_ms=int(spec.get('created_ms', 0)), updated_ms=int(spec.get('updated_ms', 0)))
+    planner = ManualLeaderCopy(policy)
+    plan = planner.plan_event(event_id, action, leader_margin=leader_margin,
+        leader_capital=leader_capital, allocatable_capital=allocatable_capital,
+        current_margin=current_margin, fee_reserve_pct=fee_reserve_pct,
+        max_margin=spec.get('max_margin'))
+    if plan['status'] != 'READY':
+        return plan
+    delta = abs(plan['delta_margin'])
+    leverage = int(spec['leverage'])
+    price = float(client.mid(spec['coin'], spec.get('dex') or ''))
+    if not math.isfinite(price) or price <= 0: raise ValueError('Price unavailable')
+    # execute_copy consumes follower size and enforces precision/risk/provenance.
+    size = delta * leverage / price
+    return __import__('core.foundation.copy_execution', fromlist=['execute_copy']).execute_copy(
+        engine, account, client, operation, action, size,
+        action in {'OPEN','ADD'}, {**spec, 'sources':[{'wallet':policy.leader,
+            'signed_notional':delta*leverage, 'margin':delta}], 'leverage':leverage},
+        before_position, configure=bool(spec.get('configure_leverage', False)))

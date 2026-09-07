@@ -533,6 +533,22 @@ class Block1TransitionTests(unittest.TestCase):
             with self.subTest(fault=fault), self.assertRaises(ValueError):
                 protected.reviewed_copy_interface(previous, changed, protected.COPY_INTERFACE_PARENT)
 
+    def test_copy_cutover_transition_preserves_policy_and_history_tests(self):
+        previous = {name: '0'*64 for name in protected.CUTOVER_PATHS-protected.CUTOVER_NEW}
+        document = {'phase':'copy-cutover','parent_manifest_sha256':protected.CUTOVER_PARENT,
+            'files':{name:{'previous_sha256':previous.get(name),'reviewed_sha256':'1'*64} for name in protected.CUTOVER_PATHS}}
+        self.assertEqual(protected.reviewed_cutover(previous, document, protected.CUTOVER_PARENT), document['files'])
+        self.assertNotIn(protected.P12_NEW_PATH, protected.CUTOVER_PATHS)
+        self.assertNotIn(protected.P11_REGRESSION_PATH, protected.CUTOVER_PATHS)
+        for fault in ('extra', 'parent', 'previous', 'digest'):
+            changed = json.loads(json.dumps(document))
+            name = next(iter(previous))
+            if fault == 'extra': changed['files'][protected.P12_NEW_PATH] = changed['files'][name]
+            elif fault == 'parent': changed['parent_manifest_sha256'] = 'f'*64
+            elif fault == 'previous': changed['files'][name]['previous_sha256'] = None
+            else: changed['files'][name]['reviewed_sha256'] = 'invalid'
+            with self.assertRaises(ValueError): protected.reviewed_cutover(previous, changed, protected.CUTOVER_PARENT)
+
     def test_readthrough_cannot_override_prior_core_or_strategy(self):
         import copy
         previous = {name: "0"*64 for name in protected.BLOCK1_PATHS}

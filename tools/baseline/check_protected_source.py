@@ -21,6 +21,14 @@ BLOCK1_FILE = "docs/protected-source-block1.json"
 BLOCK1_PARENT = "201bd595c0d349149e228dbc261bbb8f713ea5a1a2e0b8018667a029b2db185e"
 READTHROUGH_FILE = "docs/protected-source-block1-readthrough.json"
 COPY_INTERFACE_FILE = "docs/protected-source-copy-interface.json"
+CUTOVER_FILE = 'docs/protected-source-copy-cutover.json'
+CUTOVER_PARENT = '61462cdc2660a634250496d0f8a983eab58ee34ff6da03b7fca85189d2d5027f'
+CUTOVER_PATHS = {'WalletHunterV05_final/' + p for p in (
+    'core/execution_journal.py', 'core/trading_engine.py', 'core/foundation/contracts.py',
+    'core/foundation/data.py', 'core/foundation/execution.py', 'core/foundation/ledger.py',
+    'core/foundation/risk.py', 'core/foundation/live_reconciliation.py', 'core/foundation/copy_execution.py',
+    'tests/test_copy_cutover.py', 'tests/test_engine_safety.py', 'tests/test_source_allocation.py')}
+CUTOVER_NEW = {'WalletHunterV05_final/core/foundation/copy_execution.py', 'WalletHunterV05_final/tests/test_copy_cutover.py'}
 COPY_INTERFACE_PARENT = "7417735956038133a279847eec531ce2cf9d79c65003957a9797006ba280a014"
 COPY_INTERFACE_PATHS = {"WalletHunterV05_final/" + name for name in (
     "core/foundation/contracts.py", "core/trading_engine.py", "integrations/hyperliquid.py",
@@ -47,6 +55,23 @@ def reviewed_copy_interface(previous, document, parent_digest):
                 or not re.fullmatch(r"[a-f0-9]{64}", row["reviewed_sha256"])
                 or row["reviewed_sha256"] == row["previous_sha256"]):
             raise ValueError("invalid_copy_interface_hash_transition")
+    return rows
+
+
+def reviewed_cutover(previous, document, parent_digest):
+    if (not isinstance(document, dict) or set(document) != {'phase', 'parent_manifest_sha256', 'files'}
+            or document['phase'] != 'copy-cutover' or parent_digest != CUTOVER_PARENT
+            or document['parent_manifest_sha256'] != parent_digest): raise ValueError('invalid_cutover_parent')
+    rows = document['files']
+    if not isinstance(rows, dict) or set(rows) != CUTOVER_PATHS: raise ValueError('invalid_cutover_paths')
+    for name, row in rows.items():
+        if not isinstance(row, dict) or set(row) != {'previous_sha256', 'reviewed_sha256'}:
+            raise ValueError('invalid_cutover_schema')
+        if name in CUTOVER_NEW:
+            if name in previous or row['previous_sha256'] is not None: raise ValueError('invalid_new_cutover_path')
+        elif name not in previous or row['previous_sha256'] != previous[name]: raise ValueError('invalid_cutover_previous')
+        if not isinstance(row['reviewed_sha256'], str) or not re.fullmatch(r'[a-f0-9]{64}', row['reviewed_sha256']):
+            raise ValueError('invalid_cutover_digest')
     return rows
 
 
@@ -233,6 +258,17 @@ def check(root):
             return report
         effective.update({name: row["reviewed_sha256"] for name, row in rows.items()})
         report["transition_chain"].append({"phase": "copy-interface", "files": rows})
+    cutover = root / CUTOVER_FILE
+    if cutover.exists() or cutover.is_symlink():
+        try:
+            if cutover.is_symlink() or copy_interface.is_symlink() or not copy_interface.is_file():
+                raise ValueError('invalid_cutover_manifest')
+            rows = reviewed_cutover(effective, json.loads(cutover.read_bytes()), hashlib.sha256(copy_interface.read_bytes()).hexdigest())
+        except (ValueError, OSError) as exc:
+            report.update(status='FAIL', reason=str(exc))
+            return report
+        effective.update({name: row['reviewed_sha256'] for name, row in rows.items()})
+        report['transition_chain'].append({'phase':'copy-cutover', 'files':rows})
     report["changed"] = [name for name, digest in effective.items()
                          if (root / name).is_symlink() or not (root / name).is_file()
                          or hashlib.sha256((root / name).read_bytes()).hexdigest() != digest]

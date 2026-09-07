@@ -1,0 +1,54 @@
+{
+  "phase": "copy-cutover",
+  "parent_manifest_sha256": "61462cdc2660a634250496d0f8a983eab58ee34ff6da03b7fca85189d2d5027f",
+  "files": {
+    "WalletHunterV05_final/core/execution_journal.py": {
+      "previous_sha256": "8edc85c8c3c73fd157e6888f04242102fbd8f86ee8f6afa745e8df082129c9c8",
+      "reviewed_sha256": "2f51d63d8c476176a42d73740b7db3a21487e5025b3e6bbf0023454701ab9936"
+    },
+    "WalletHunterV05_final/core/foundation/contracts.py": {
+      "previous_sha256": "86c47bddc5bb615a6ed0f61ecb0c55ef7a9994a279e00c1b367d0142b3d32b89",
+      "reviewed_sha256": "b9c36db6feb1edb042d360e892c9dcd408783ceb9ca6940fea254af80acf2977"
+    },
+    "WalletHunterV05_final/core/foundation/copy_execution.py": {
+      "previous_sha256": null,
+      "reviewed_sha256": "4d802333c3784237b003d07c11680f7640b60eb218a89718427ae4aa112b72fd"
+    },
+    "WalletHunterV05_final/core/foundation/data.py": {
+      "previous_sha256": "f37d2441fe67252586a117e0d4aed4e782811084bbf1672cb525812f8b87f963",
+      "reviewed_sha256": "d49a8f8a71d9934c67611fc9aea8add5358901a26b556e4c29e75d4ef59f3c93"
+    },
+    "WalletHunterV05_final/core/foundation/execution.py": {
+      "previous_sha256": "64f987c1a2e3bcdab8fb9ac1b4c8add737c3673084a288efb0f3bc8154678b5b",
+      "reviewed_sha256": "89830cd8fee0a0306b2b8db2c648bc91f38fca576d52984c1bf880cc31760631"
+    },
+    "WalletHunterV05_final/core/foundation/ledger.py": {
+      "previous_sha256": "dcf0832f1628bbe12fb673eb847a46abc27137100d94f62031fbb39e6b192f0a",
+      "reviewed_sha256": "70cf62dcc7496cc5ce56ceabbe17d08bff93f3fe4e80e6b30ae52de9514308bd"
+    },
+    "WalletHunterV05_final/core/foundation/live_reconciliation.py": {
+      "previous_sha256": "93278ff1eb6569b750c8d93c51773ba53a63a70e7b1e314d626f47e82008d823",
+      "reviewed_sha256": "42d54c166cc0ddc8aee07cc728aca4214bbc5f40c99a533840ef40fadfa44ce0"
+    },
+    "WalletHunterV05_final/core/foundation/risk.py": {
+      "previous_sha256": "c08cfd5a640da26ae373f842a3c04a6734c00771234d93838a939e39a370dc9b",
+      "reviewed_sha256": "b3b1e9e5fc82019f9aba69c61cebdc00197db3a29c2d9170e5d5bbf1f3e010f0"
+    },
+    "WalletHunterV05_final/core/trading_engine.py": {
+      "previous_sha256": "6003c2d1c281706e76a479f02ccc230cbdd7bb25227756447976980f648ba1cf",
+      "reviewed_sha256": "646016e6a34ef984bb7fd4db767eec6ff4a9c91fd0e3e53bae49955a6e1cf69d"
+    },
+    "WalletHunterV05_final/tests/test_copy_cutover.py": {
+      "previous_sha256": null,
+      "reviewed_sha256": "14a981e5fca3fa33a8e6357dbf31e332b0d4193972898ec0569b660a6b6f7990"
+    },
+    "WalletHunterV05_final/tests/test_engine_safety.py": {
+      "previous_sha256": "a45e4b5a6d3bac466e7d6aee32d8a7c0b5b5d07fff912b7a3dc787e35b7e5e28",
+      "reviewed_sha256": "bdd8ea1ca14d6987850298a0d27cb06f80e94d5b30adaf2e90e300435e7c5dc2"
+    },
+    "WalletHunterV05_final/tests/test_source_allocation.py": {
+      "previous_sha256": "c3d320df5ca7fad2bce0bcdae6c11d77f8de951863b5f380e16f80f4457e1429",
+      "reviewed_sha256": "48b53e2177108a8ba35c36d19ed89db7ac11556060c45daa82b3b6fa49789989"
+    }
+  }
+}

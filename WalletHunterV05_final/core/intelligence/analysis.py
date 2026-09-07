@@ -1,10 +1,58 @@
 """Deterministic descriptive leader research, never copy admission."""
 import math
+import json
+from decimal import Decimal
 from dataclasses import asdict
-from core.trade_analyzer import TradeAnalyzer
+from core.trade_analyzer import TradeAnalyzer, _unique, _float
 from .models import LeaderScore
 
 DAY = 86400000
+
+
+def behavior(fills, report):
+    """Reuse validated/de-duplicated fills; never infer leverage from notional.
+
+    An execution fragment is not a complete position episode. Sizing metrics
+    therefore explicitly describe fills, not percentage of historical equity.
+    """
+    rows,_,_=_unique(fills,False)
+    values=sorted(r['notional'] for r in rows)
+    by_symbol={}
+    long=short=unknown=Decimal(0)
+    for row in rows:
+        by_symbol[row['coin']]=by_symbol.get(row['coin'],Decimal(0))+row['notional']
+        raw=json.loads(row['canonical'])
+        before=raw['startPosition']
+        if before is not None and raw['side'] in {'A','B'}:
+            before=Decimal(before)
+            size=Decimal(raw['sz']); px=Decimal(raw['px'])
+            delta=size if raw['side']=='B' else -size
+            # Reversal fills contain both a closing leg and a new opening leg.
+            closing=min(abs(before),size) if before*delta<0 else Decimal(0)
+            opening=size-closing
+            long += ((closing if before>0 else 0)+(opening if delta>0 else 0))*px
+            short += ((closing if before<0 else 0)+(opening if delta<0 else 0))*px
+        elif raw['dir'] in {'Open Long','Close Long'}: long+=row['notional']
+        elif raw['dir'] in {'Open Short','Close Short'}: short+=row['notional']
+        else: unknown+=row['notional']
+    total=sum(values,Decimal(0)); count=len(values)
+    median=values[count//2] if count%2 else (values[count//2-1]+values[count//2])/2
+    return {
+        'evidence_type':'VALIDATED_REALIZED_FILL_CASHFLOWS',
+        'trade_count_unit':'CLOSING_FILLS_NOT_POSITION_EPISODES',
+        'drawdown_proxy':{'value_usdc':report.max_drawdown,'kind':'CUMULATIVE_FILL_CASHFLOW_PEAK_TO_TROUGH',
+                          'includes_execution_fees':True,'includes_funding':False,'account_equity_drawdown_pct':None},
+        'payoff_ratio':_float(Decimal(str(report.avg_win))/abs(Decimal(str(report.avg_loss))),'payoff_ratio') if report.losses and report.avg_loss else None,
+        'leverage_behavior':{'value':None,'reason':'LEVERAGE_NOT_PRESENT_IN_FILL_HISTORY'},
+        'position_sizing_behavior':{'unit':'FILL_NOTIONAL_USDC','count':count,
+            'mean':_float(total/count,'mean_fill_notional'),'median':_float(median,'median_fill_notional'),
+            'minimum':_float(values[0],'minimum_fill_notional'),'maximum':_float(values[-1],'maximum_fill_notional'),
+            'historical_equity_fraction':None,'whole_position_size':None},
+        'symbol_notional_share':{k:_float(v/total,'symbol_share') for k,v in sorted(by_symbol.items())},
+        'long_short_bias':{'unit':'TRADED_NOTIONAL_BY_POSITION_DIRECTION',
+            'long':_float(long/total,'long_share'),'short':_float(short/total,'short_share'),
+            'unknown':_float(unknown/total,'unknown_share')},
+    }
 
 
 def reports(fills, now):
@@ -20,6 +68,7 @@ def reports(fills, now):
         # Infinity is a mathematical PF with no losing cashflow, not a JSON number.
         row['profit_factor_unbounded'] = math.isinf(report.profit_factor)
         row['profit_factor'] = report.profit_factor if math.isfinite(report.profit_factor) else None
+        row['deep_analysis']=behavior(window,report)
         result[str(days)] = row
     return result
 

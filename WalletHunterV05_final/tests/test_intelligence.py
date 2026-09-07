@@ -33,6 +33,29 @@ class PublicFixture:
 
 
 class IntelligenceTests(unittest.TestCase):
+    def test_deep_metrics_are_explicit_and_deduplicated(self):
+        rows=history()
+        first=reports(rows,NOW)['30']
+        second=reports(rows+[rows[-1]],NOW)['30']
+        self.assertEqual(first['deep_analysis'],second['deep_analysis'])
+        deep=first['deep_analysis']
+        self.assertEqual(deep['drawdown_proxy']['value_usdc'],first['max_drawdown'])
+        self.assertIsNone(deep['drawdown_proxy']['account_equity_drawdown_pct'])
+        self.assertIsNone(deep['leverage_behavior']['value'])
+        self.assertAlmostEqual(sum(deep['symbol_notional_share'].values()),1)
+        self.assertAlmostEqual(sum(deep['long_short_bias'][k] for k in ('long','short','unknown')),1)
+        self.assertGreater(deep['payoff_ratio'],0)
+    def test_reversal_bias_splits_close_and_open_notional(self):
+        row=fill(9000,direction='Long > Short',side='A',start='1',size='3',pnl='1',time=NOW)
+        bias=reports([row],NOW)['30']['deep_analysis']['long_short_bias']
+        self.assertAlmostEqual(bias['long'],1/3)
+        self.assertAlmostEqual(bias['short'],2/3)
+    def test_missing_windows_not_zero_or_fabricated_leverage(self):
+        self.assertEqual(reports([],NOW),{'30':None,'90':None,'180':None})
+        row=fill(time=NOW)
+        row['leverage']=100
+        deep=reports([row],NOW)['30']['deep_analysis']
+        self.assertIsNone(deep['leverage_behavior']['value'])
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory(); self.addCleanup(self.temp.cleanup)
         self.path=Path(self.temp.name)/'intelligence.sqlite3'

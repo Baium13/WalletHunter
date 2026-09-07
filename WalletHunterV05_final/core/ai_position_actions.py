@@ -493,7 +493,7 @@ class AiPositionActions:
             "filled_size": amount, "average_price": average, "oid": str(fill["oid"]), "position_before": before,
             "position_after": after, "copy_on_hold": True, "origin": "user_confirmed_position_intervention"}
 
-    def decide(self, uid, proposal_id, confirm, profile, public_client, signing_factory, persist_runtime, now_ms):
+    def decide(self, uid, proposal_id, confirm, profile, public_client, signing_factory, persist_runtime, now_ms, canonical_context=None):
         now = _time(now_ms); started = self.monotonic()
         if not isinstance(confirm, bool):
             raise ValueError("confirm_must_be_boolean")
@@ -554,12 +554,26 @@ class AiPositionActions:
             self._finish(proposal_id, "SUBMITTING", {"reason": "intent_persisted"}, now, operation)
             runtime.setdefault("ai_position_action_holds", {})[key] = {"proposal_id": proposal_id, "status": "SUBMITTING", "operation_id": operation}
             persist_runtime()
-            signer = signing_factory()
-            if str(getattr(signer, "address", "")).lower() != row["account"] or _network(signer) != payload["network"] or now+max(0,int((self.monotonic()-started)*1000)) >= row["expires_ms"]:
+            if now+max(0,int((self.monotonic()-started)*1000)) >= row["expires_ms"]:
                 raise ValueError("signer_mismatch_or_expiry")
-            from core.confirmed_execution_adapter import confirmed_ai_position
-            response = confirmed_ai_position(signer, {**payload, 'expected_position': _identity(payload['position_before'])}, row['expires_ms'])
-            status, result = self._verify(public_client, payload, response, lambda: now+max(0,int((self.monotonic()-started)*1000)))
+            from core.confirmed_execution_adapter import confirmed_ai_position, execute_confirmed_ai
+            if canonical_context is not None:
+                response = execute_confirmed_ai(canonical_context, coin=payload['coin'], dex=payload.get('dex',''),
+                    side='BUY' if payload['is_buy'] else 'SELL', size=payload['size'], price=payload['limit_price'],
+                    action='CLOSE' if payload.get('reduce_only') and payload['action']=='CLOSE' else 'REDUCE', source=payload.get('source_wallet','ai'))
+                status = getattr(response, 'status', 'UNKNOWN')
+                result = {'canonical': True, 'status': status, 'order_ids': list(getattr(response, 'order_ids', ())),
+                    'filled_size': sum(getattr(fill, 'size', 0) for fill in getattr(response, 'fills', ())),
+                    'average_price': (sum(fill.size*fill.price for fill in getattr(response, 'fills', ())) /
+                        max(sum(fill.size for fill in getattr(response, 'fills', ())), 1e-12)) if getattr(response, 'fills', ()) else None}
+            else:
+                signer = signing_factory()
+                if str(getattr(signer, "address", "")).lower() != row["account"] or _network(signer) != payload["network"]:
+                    raise ValueError("signer_mismatch")
+                if now+max(0,int((self.monotonic()-started)*1000)) >= row["expires_ms"]:
+                    raise ValueError("proposal_expired_before_submission")
+                response = confirmed_ai_position(signer, {**payload, 'expected_position': _identity(payload['position_before'])}, row['expires_ms'])
+                status, result = self._verify(public_client, payload, response, lambda: now+max(0,int((self.monotonic()-started)*1000)))
         except Exception:
             status, result = "UNKNOWN", {"reason": "intervention_unconfirmed_no_retry", "copy_on_hold": True}
         completed = now+max(0,int((self.monotonic()-started)*1000))

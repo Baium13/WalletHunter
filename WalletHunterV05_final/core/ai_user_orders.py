@@ -576,7 +576,7 @@ class AiUserOrders:
         except (TypeError, ValueError):
             return "UNKNOWN", {"reason": "fill_position_mismatch"}
 
-    def decide(self, uid, proposal_id, confirm, profile, public_client, signing_factory, persist_runtime, now_ms):
+    def decide(self, uid, proposal_id, confirm, profile, public_client, signing_factory, persist_runtime, now_ms, canonical_context=None):
         now = _time(now_ms)
         started = self.monotonic()
         if not isinstance(confirm, bool):
@@ -628,14 +628,26 @@ class AiUserOrders:
             runtime.setdefault("ai_user_order_positions", {})[key] = {"proposal_id": proposal_id, "status": "SUBMITTING",
                 "coin": payload["coin"], "direction": payload["direction"], "origin": "user_confirmed_ai_form", "operation_id": operation}
             persist_runtime()  # MUST succeed before constructing a signing client.
-            signing_client = signing_factory()
-            if str(getattr(signing_client, "address", "")).lower() != address or _network(signing_client) != payload["network"]:
-                raise ValueError("signing_account_or_network_mismatch")
             if now + max(0, int((self.monotonic()-started)*1000)) >= proposal["expires_ms"]:
                 raise ValueError("proposal_expired_before_submission")
-            from core.confirmed_execution_adapter import confirmed_ai_order
-            response = confirmed_ai_order(signing_client, payload, proposal["expires_ms"])
-            status, result = self._verify(public_client, payload, response)
+            from core.confirmed_execution_adapter import confirmed_ai_order, execute_confirmed_ai
+            if canonical_context is not None:
+                response = execute_confirmed_ai(canonical_context, coin=payload['coin'], dex=payload.get('dex',''),
+                    side='BUY' if payload['direction']=='LONG' else 'SELL', size=payload['size'],
+                    price=payload['limit_price'], action='OPEN', source='ai')
+                status = getattr(response, 'status', 'UNKNOWN')
+                result = {'canonical': True, 'status': status, 'order_ids': list(getattr(response, 'order_ids', ())),
+                    'filled_size': sum(getattr(fill, 'size', 0) for fill in getattr(response, 'fills', ())),
+                    'average_price': (sum(fill.size*fill.price for fill in getattr(response, 'fills', ())) /
+                        max(sum(fill.size for fill in getattr(response, 'fills', ())), 1e-12)) if getattr(response, 'fills', ()) else None}
+            else:
+                signing_client = signing_factory()
+                if str(getattr(signing_client, "address", "")).lower() != address or _network(signing_client) != payload["network"]:
+                    raise ValueError("signing_account_or_network_mismatch")
+                if now + max(0, int((self.monotonic()-started)*1000)) >= proposal["expires_ms"]:
+                    raise ValueError("proposal_expired_before_submission")
+                response = confirmed_ai_order(signing_client, payload, proposal["expires_ms"])
+                status, result = self._verify(public_client, payload, response)
         except Exception:
             status, result = "UNKNOWN", {"reason": "submission_or_verification_unconfirmed_no_retry"}
         # SQL result first: JSON persistence cannot erase evidence of a fill.

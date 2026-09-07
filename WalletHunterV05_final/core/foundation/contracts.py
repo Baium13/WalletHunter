@@ -202,7 +202,7 @@ class OrderIntent(Contract):
                 raise ValueError("Copy extensions require intent version 2")
         elif self.version == 3:
             if (self.authorization != 'USER_CONFIRMED' or self.execution_mode != 'LIVE'
-                    or self.action != 'OPEN' or self.order_type != 'IOC'
+                    or self.order_type not in ('IOC','LEVERAGE')
                     or self.source_contributions or self.parent_intent_id is not None):
                 raise ValueError('Version 3 requires explicitly confirmed live entry')
         else:

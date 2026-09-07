@@ -119,6 +119,32 @@ class ExchangeBoundary:
 
 
 class EngineSafetyTests(unittest.TestCase):
+    def test_delayed_execution_proof_keeps_unknown_and_does_not_retry(self):
+        def unavailable(*args): raise ValueError("Synthetic delayed order visibility")
+        self.client.verify_copy_execution = unavailable
+        self.run_cycle()
+        self.assertIn("BTC|", self.engine.journal.pending(ACCOUNT))
+        self.assertNotIn("BTC|", self.engine.journal.owned(ACCOUNT))
+        count = len(self.trades())
+        self.run_cycle()
+        self.assertEqual(len(self.trades()), count)
+
+    def test_copy_proof_requires_order_fill_and_position_agreement(self):
+        from integrations.hyperliquid import HyperliquidAccount
+        client = HyperliquidAccount.__new__(HyperliquidAccount)
+        client.address, client.base = ACCOUNT, "https://api.hyperliquid-testnet.xyz"
+        client._sdk_coin = lambda coin, dex="": coin
+        fill = {"coin": "BTC", "oid": 7, "tid": 8, "sz": "1", "side": "B"}
+        client.info = SimpleNamespace(
+            query_order_by_oid=lambda *args: {"status": "order", "order": {"status": "filled", "order": {"oid": 7, "coin": "BTC", "side": "B"}}},
+            user_fills_by_time=lambda *args: [dict(fill)])
+        response = {"status": "ok", "response": {"data": {"statuses": [{"filled": {"oid": 7, "totalSz": "1"}}]}}}
+        proof = client.verify_copy_execution(response, "BTC", "", None, position(), 1000)
+        self.assertEqual(proof["trade_ids"], [8])
+        for rows in ([], [dict(fill, oid=9)], [fill, fill], [dict(fill, sz="NaN")], [dict(fill, side="A")]):
+            client.info.user_fills_by_time = lambda *args, rows=rows: rows
+            with self.assertRaises(ValueError): client.verify_copy_execution(response, "BTC", "", None, position(), 1000)
+
     def test_unknown_funding_and_nonfinite_spread_never_authorize_entry(self):
         for context in ({}, {"funding_bps_hour": None}, {"funding_bps_hour": float("nan")},
                         {"funding_bps_hour": float("inf")}, {"funding_bps_hour": 0, "observed_monotonic": -1000}):

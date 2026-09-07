@@ -331,6 +331,57 @@ class HyperliquidAccount:
             try: out += self._positions(self.info.user_state(self.address,dex="xyz"),"STOCKS","xyz")
             except Exception as e: raise RuntimeError("Cannot read xyz positions") from e
         return out
+
+    def verify_copy_execution(self, response, coin, dex, before, after, started_ms):
+        """Read-only proof for one acknowledged copy order. Never retries.
+
+        Missing/delayed fills, acknowledgement loss and concurrent same-market
+        fills are UNKNOWN, even if an aggregate snapshot looks plausible.
+        """
+        from core.capital_snapshot import finite_amount
+        market = self._sdk_coin(coin, dex)
+        try:
+            statuses = response["response"]["data"]["statuses"]
+            if response["status"] != "ok" or not isinstance(statuses, list) or len(statuses) != 1:
+                raise ValueError("Invalid acknowledgement")
+            fill = statuses[0]["filled"]
+            oid = fill["oid"]
+            if isinstance(oid, bool) or not isinstance(oid, int) or oid < 0:
+                raise ValueError("Missing order identity")
+            quantity = finite_amount(fill["totalSz"], "acknowledged size")
+            if quantity <= 0: raise ValueError("Empty fill acknowledgement")
+            proof = self.info.query_order_by_oid(self.address, oid)
+            wrapper, order = proof["order"], proof["order"]["order"]
+            if (proof["status"] != "order" or wrapper["status"] not in ("filled", "canceled", "iocCancel")
+                    or order["oid"] != oid or self._sdk_coin(order["coin"], dex) != market):
+                raise ValueError("Order identity is unconfirmed")
+            rows = self.info.user_fills_by_time(self.address, started_ms)
+            if not isinstance(rows, list) or len(rows) >= 2000:
+                raise ValueError("Incomplete execution history")
+            matching = []
+            for row in rows:
+                if not isinstance(row, dict) or not isinstance(row.get("coin"), str):
+                    raise ValueError("Malformed execution history")
+                if self._sdk_coin(row["coin"], dex) != market: continue
+                if row.get("oid") != oid:
+                    raise ValueError("Concurrent external fill requires reconciliation")
+                matching.append(row)
+            if not matching or len({row.get("tid") for row in matching}) != len(matching) or any(row.get("tid") is None for row in matching):
+                raise ValueError("Missing or duplicate fill identity")
+            quantities = [finite_amount(row.get("sz"), "fill size") for row in matching]
+            if any(value <= 0 for value in quantities): raise ValueError("Invalid fill size")
+            signed = lambda p: 0. if p is None else finite_amount(p["size"], "position size") * (1 if p["side"] == "LONG" else -1)
+            change = signed(after) - signed(before)
+            side = "B" if change > 0 else "A"
+            if (any(row.get("side") != side for row in matching) or order.get("side") != side
+                    or not math.isclose(math.fsum(quantities), quantity, rel_tol=1e-8, abs_tol=1e-12)
+                    or not math.isclose(abs(change), quantity, rel_tol=1e-8, abs_tol=1e-12)):
+                raise ValueError("Fill and position delta disagree")
+            return {"oid": oid, "trade_ids": [row["tid"] for row in matching],
+                    "filled_size": quantity, "side": side, "network": self.base,
+                    "verified_ms": int(time.time() * 1000)}
+        except Exception as exc:
+            raise ValueError("Copy execution proof unavailable; reconciliation required") from exc
     @staticmethod
     def _positions(state,typ,dex):
         from core.hyperliquid import HyperliquidReader

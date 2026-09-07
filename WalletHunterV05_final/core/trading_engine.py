@@ -725,7 +725,11 @@ class CopyEngine:
                              "side": result.side, "position": position,
                              "source_targets": sources or [],
                              "attribution": "strategy_targets_not_individual_exchange_fills"}
-            self.journal.finish(operation, asdict(result), ownership)
+            outcome = asdict(result)
+            if getattr(result, "execution_evidence", None):
+                outcome["execution_evidence"] = result.execution_evidence
+                if ownership is not None: ownership["execution_evidence"] = result.execution_evidence
+            self.journal.finish(operation, outcome, ownership)
         return result
 
     async def _margin_preflight(self, client, dex, current_size, current_leverage, target_size, target_leverage, price, reserved_margin=0.):
@@ -904,6 +908,7 @@ class CopyEngine:
                 if error:
                     raise RuntimeError(f"Leverage rejected: {error}")
             delta = desired_signed - current_signed
+            submitted_ms = int(time.time() * 1000)
             if delta > tolerance:
                 if current_signed < -tolerance:
                     response = await asyncio.to_thread(client.market_reduce, coin, True, delta, dex, self.settings.max_slippage_pct) if live else {"status": "paper"}
@@ -948,6 +953,9 @@ class CopyEngine:
                 rows = await asyncio.to_thread(client.positions, True, True)
                 actual = next((p for p in rows if self._key(p["coin"], p.get("dex")) == key), None)
                 if actual: actual = dict(actual, snapshot_started_ms=snapshot_started_ms)
+                proof = getattr(client, "verify_copy_execution", None)
+                execution_evidence = await asyncio.to_thread(proof, response, coin, dex,
+                    None if reverse else existing, actual, submitted_ms) if callable(proof) else None
                 size = float(actual.get("size", 0)) if actual else 0.0
                 actual_signed = size * (1 if actual and actual.get("side") == "LONG" else -1)
                 warning = ""
@@ -961,6 +969,7 @@ class CopyEngine:
             result = Result(True, action, account["name"], coin, actual["side"] if live and actual else spec["side"], spec["target_notional"], size,
                           float(actual.get("leverage", spec["leverage"])) if live and actual else spec["leverage"], spec["market_type"], dex or None, price, warning, not live,
                           capital_pct=spec["capital_pct"], target_margin=spec["target_margin"])
+            if live: result.execution_evidence = execution_evidence
             return self._finish_operation(operation, result, actual if live else None, spec.get("sources"))
         except Exception as exc:
             result = Result(False, "ERROR", account["name"], coin, spec["side"], spec["target_notional"], abs(current_signed),
@@ -974,6 +983,7 @@ class CopyEngine:
         try:
             if live and journalled and self.journal:
                 operation = self.journal.prepare(account["address"], market_key(position), {"action": "CLOSE", "before": position})
+            submitted_ms = int(time.time() * 1000)
             response = await asyncio.to_thread(client.market_close, position["coin"], position.get("dex") or "") if live else {"status": "paper"}
             if live:
                 error = client.order_error(response)
@@ -985,6 +995,9 @@ class CopyEngine:
                                   and abs(float(p.get("size", 0))) > 0), None)
                 if remaining:
                     raise RuntimeError("Close is not complete: exchange still reports an open position; ownership retained")
+                proof = getattr(client, "verify_copy_execution", None)
+                execution_evidence = await asyncio.to_thread(proof, response, position["coin"], position.get("dex") or "",
+                    position, None, submitted_ms) if callable(proof) else None
                 if runtime is not None and persist:
                     from core.manual_positions import ManualPositions
                     await asyncio.to_thread(ManualPositions(client, runtime, persist).delete_stop_loss,
@@ -993,6 +1006,7 @@ class CopyEngine:
             result = Result(True, "FULL_CLOSE", account["name"], position["coin"], position.get("side", ""),
                           leverage=float(position.get("leverage", 1)), market_type=position.get("market_type", ""),
                           dex=position.get("dex"), paper=not live)
+            if live: result.execution_evidence = execution_evidence
             return self._finish_operation(operation, result)
         except Exception as exc:
             result = Result(False, "ERROR", account["name"], position.get("coin", ""), error=str(exc), paper=not live)

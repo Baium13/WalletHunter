@@ -1,6 +1,6 @@
 """Immutable wire contracts. No free-form event dictionaries or credentials."""
 from typing import Annotated, Literal
-from pydantic import BaseModel, ConfigDict, Field, model_validator, field_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator, field_validator, model_serializer
 
 Amount = Annotated[float, Field(strict=True, ge=0, allow_inf_nan=False)]
 Positive = Annotated[float, Field(strict=True, gt=0, allow_inf_nan=False)]
@@ -140,16 +140,30 @@ class AnalysisResult(Contract):
     conclusion: Literal["NO_OPINION", "RESEARCH_ONLY"]
 
 
+class SourceContribution(Contract):
+    """Strategy target weights, NOT claims of individual source exchange fills."""
+    source: Name
+    target_notional: Positive
+    target_margin: Positive
+
+    @model_validator(mode="after")
+    def bounded_margin(self):
+        if self.target_margin > self.target_notional:
+            raise ValueError("Contribution margin exceeds notional")
+        return self
+
+
 class OrderIntent(Contract):
+    version: Literal[1, 2] = 1
     intent_id: Name
     scope: Scope
     instrument: InstrumentId
     source: Name
-    action: Literal["OPEN", "ADD", "REDUCE", "CLOSE"]
+    action: Literal["OPEN", "ADD", "REDUCE", "CLOSE", "LEVERAGE_UPDATE"]
     side: Literal["BUY", "SELL"]
     size: Positive
     limit_price: Positive
-    order_type: Literal["IOC"] = "IOC"
+    order_type: Literal["IOC", "LEVERAGE"] = "IOC"
     leverage: Annotated[int, Field(strict=True, ge=1)]
     slippage_pct: Annotated[float, Field(strict=True, gt=0, le=10, allow_inf_nan=False)]
     authorization: Literal["USER_CONFIRMED", "COPY_POLICY", "PAPER_TEST"]
@@ -157,11 +171,43 @@ class OrderIntent(Contract):
     correlation_id: Name
     created_ms: Millis
     expires_ms: Millis
+    source_contributions: tuple[SourceContribution, ...] = ()
+    parent_intent_id: Name | None = None
+    configure_leverage: bool = False
+
+    @field_validator("version", mode="before")
+    @classmethod
+    def exact_version(cls, value):
+        if type(value) is not int or value not in (1, 2):
+            raise ValueError("Unsupported intent schema version")
+        return value
+
+    @model_serializer(mode="wrap")
+    def serialize_version(self, handler):
+        data = handler(self)
+        if self.version == 1:
+            # Existing persisted intent hashes/client IDs must not change merely
+            # because optional v2 fields were added to the Python model.
+            for key in ("source_contributions", "parent_intent_id", "configure_leverage"):
+                data.pop(key, None)
+        return data
 
     @model_validator(mode="after")
     def coherent(self):
         if self.instrument.network != self.scope.network or self.expires_ms <= self.created_ms:
             raise ValueError("Invalid intent identity/lifetime")
+        if self.version == 1:
+            if self.source_contributions or self.parent_intent_id is not None or self.configure_leverage or self.action == "LEVERAGE_UPDATE" or self.order_type != "IOC":
+                raise ValueError("Copy extensions require intent version 2")
+        else:
+            if self.authorization != "COPY_POLICY" or not self.source_contributions or self.parent_intent_id is None:
+                raise ValueError("Version 2 requires copy authority, parent and explicit sources")
+            if len(self.source_contributions) > 3 or len({c.source for c in self.source_contributions}) != len(self.source_contributions):
+                raise ValueError("Invalid or duplicate copy sources")
+            if self.parent_intent_id == self.intent_id:
+                raise ValueError("Parent and executable child identities must differ")
+            if (self.action == "LEVERAGE_UPDATE") != (self.order_type == "LEVERAGE"):
+                raise ValueError("Leverage operation must not represent a market fill")
         return self
 
 

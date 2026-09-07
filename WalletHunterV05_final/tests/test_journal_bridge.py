@@ -5,10 +5,118 @@ from pathlib import Path
 import sqlite3
 import tempfile
 import unittest
+import time
+from types import SimpleNamespace
 
 from core.foundation.journal_bridge import JournalEvidence, SynchronizedLedger, read_journal
 from core.foundation.ledger import Reservation
 from test_foundation import scope, portfolio, position, intent
+
+
+class CopyIntentContractTests(unittest.TestCase):
+    def copy_intent(self, **changes):
+        from core.foundation.contracts import SourceContribution
+        return intent(**dict(dict(version=2, authorization="COPY_POLICY", execution_mode="LIVE",
+            parent_intent_id="operation-1", source_contributions=(
+                SourceContribution(source="a", target_notional=60., target_margin=30.),
+                SourceContribution(source="b", target_notional=40., target_margin=20.))), **changes))
+
+    def test_version_one_wire_identity_is_unchanged(self):
+        from core.foundation.contracts import OrderIntent
+        from core.foundation.store import encoded, digest
+        row = intent()
+        wire = json.loads(encoded(row))
+        self.assertEqual(set(wire), {"version", "intent_id", "scope", "instrument", "source", "action", "side", "size",
+            "limit_price", "order_type", "leverage", "slippage_pct", "authorization", "execution_mode", "correlation_id", "created_ms", "expires_ms"})
+        self.assertEqual(digest(row), digest(OrderIntent.model_validate(wire)))
+
+    def test_multi_source_roundtrip_and_immutability(self):
+        from core.foundation.contracts import OrderIntent
+        from pydantic import ValidationError
+        row = self.copy_intent()
+        self.assertEqual(OrderIntent.model_validate_json(row.model_dump_json()), row)
+        with self.assertRaises(ValidationError): row.source_contributions[0].target_margin = 99.
+
+    def test_reversal_children_share_parent_not_executable_identity(self):
+        closing = self.copy_intent(intent_id="operation-1-close", action="CLOSE", side="SELL")
+        opening = self.copy_intent(intent_id="operation-1-open", action="OPEN", side="SELL")
+        self.assertEqual(closing.parent_intent_id, opening.parent_intent_id)
+        self.assertNotEqual(closing.intent_id, opening.intent_id)
+
+    def test_leverage_is_explicit_non_fill_operation(self):
+        from pydantic import ValidationError
+        self.assertEqual(self.copy_intent(action="LEVERAGE_UPDATE", order_type="LEVERAGE").order_type, "LEVERAGE")
+        with self.assertRaises(ValidationError): self.copy_intent(action="LEVERAGE_UPDATE")
+        with self.assertRaises(ValidationError): self.copy_intent(order_type="LEVERAGE")
+
+    def test_invalid_contributions_and_version_cannot_authorize(self):
+        from core.foundation.contracts import SourceContribution
+        from pydantic import ValidationError
+        for value in (float("nan"), float("inf"), -1., 0., True):
+            with self.assertRaises(ValidationError): SourceContribution(source="a", target_notional=100., target_margin=value)
+        contribution = SourceContribution(source="a", target_notional=100., target_margin=50.)
+        for changes in (dict(source_contributions=()), dict(source_contributions=(contribution, contribution)),
+                dict(version=1), dict(version=True), dict(authorization="PAPER_TEST"), dict(parent_intent_id="intent-1")):
+            with self.assertRaises(ValidationError): self.copy_intent(**changes)
+
+
+class CopyIocSdkTests(unittest.TestCase):
+    def setUp(self):
+        from integrations.hyperliquid import HyperliquidAccount
+        self.calls = []
+        self.client = HyperliquidAccount.__new__(HyperliquidAccount)
+        self.client.network = "TESTNET"
+        self.client.info = SimpleNamespace(meta=lambda dex="": {"universe": [
+            {"name": "xyz:NVDA" if dex else "BTC", "szDecimals": 2, "maxLeverage": 40}]})
+        self.client.exchange = SimpleNamespace(expires_after=None,
+            set_expires_after=lambda value: self.calls.append(("deadline", value)),
+            order=self.order)
+        self.deadline = int(time.time()*1000)+60000
+
+    def order(self, coin, buy, size, price, order_type, *, reduce_only, cloid):
+        self.calls.append(("order", coin, buy, size, price, order_type, reduce_only, cloid.to_raw()))
+        return {"status": "ok"}
+
+    def submit(self, **changes):
+        args = dict(coin="BTC", is_buy=True, size=1., limit_price=100., reduce_only=False,
+            cloid="0x"+"ab"*16, expires_ms=self.deadline)
+        return self.client.submit_copy_ioc(**dict(args, **changes))
+
+    def test_exact_approved_price_size_and_cloid_not_repriced(self):
+        self.submit()
+        row = next(c for c in self.calls if c[0] == "order")
+        self.assertEqual(row[1:], ("BTC", True, 1., 100., {"limit": {"tif": "Ioc"}}, False, "0x"+"ab"*16))
+        self.assertEqual(self.calls[-1], ("deadline", None))
+
+    def test_xyz_reduce_and_close_quantity_use_reduce_only(self):
+        self.submit(coin="xyz:NVDA", dex="xyz", is_buy=False, size=2., reduce_only=True)
+        self.assertEqual(next(c for c in self.calls if c[0] == "order")[1:5], ("xyz:NVDA", False, 2., 100.))
+        self.assertTrue(next(c for c in self.calls if c[0] == "order")[-2])
+
+    def test_invalid_network_never_calls_sdk(self):
+        for value in (None, "invalid", "PAPER"):
+            self.client.network = value
+            with self.assertRaises(ValueError): self.submit()
+        self.assertEqual(self.calls, [])
+
+    def test_invalid_precision_or_cloid_never_submits(self):
+        for change in (dict(size=1.001), dict(limit_price=100.12345), dict(cloid="invalid"), dict(size=float("nan"))):
+            with self.assertRaises(ValueError): self.submit(**change)
+        self.assertFalse(any(c[0] == "order" for c in self.calls))
+
+    def test_expired_intent_never_submits(self):
+        with self.assertRaises(TimeoutError): self.submit(expires_ms=1)
+        self.assertEqual(self.calls, [])
+
+    def test_possible_acceptance_timeout_is_not_retried_or_exposed(self):
+        def ambiguous(*args, **kwargs):
+            self.calls.append(("attempt",))
+            raise TimeoutError("synthetic transport details")
+        self.client.exchange.order = ambiguous
+        with self.assertRaisesRegex(RuntimeError, "outcome unknown") as error: self.submit()
+        self.assertNotIn("transport details", str(error.exception))
+        self.assertEqual(self.calls.count(("attempt",)), 1)
+        self.assertEqual(self.calls[-1], ("deadline", None))
 
 
 def owned():

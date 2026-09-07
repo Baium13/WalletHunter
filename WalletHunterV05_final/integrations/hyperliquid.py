@@ -349,6 +349,42 @@ class HyperliquidAccount:
             return self.exchange.order(coin, is_buy, size, limit_price, {"limit": {"tif": "Ioc"}},
                                        reduce_only=reduce_only, cloid=client_id)
 
+    def submit_copy_ioc(self, coin, is_buy, size, limit_price, reduce_only, cloid, dex="", *, expires_ms):
+        """Exact-price copy primitive for the canonical gateway; never reprices.
+
+        Uses the installed SDK's order(..., cloid=...) directly, rather than its
+        market helper (which calculates another slippage price). Risk approval,
+        source reservation, leverage prerequisites and ownership proof belong to
+        the gateway. This method does not grant copy authority or retry outcomes.
+        """
+        from core.settings import validated_network
+        validated_network(getattr(self, "network", None))
+        coin = self._position_coin(coin, dex)
+        if type(is_buy) is not bool or type(reduce_only) is not bool:
+            raise ValueError("Explicit copy side and reduce-only flag required")
+        size = self._position_number(size, "copy size")
+        limit_price = self._position_number(limit_price, "copy limit")
+        if not math.isfinite(size * limit_price):
+            raise ValueError("Invalid copy notional")
+        client_id = self._user_cloid(cloid)
+        with self._position_expiry(expires_ms) as require_unexpired:
+            assets = [row for row in self.meta(dex)["universe"]
+                      if isinstance(row, dict) and row.get("name") == coin]
+            if len(assets) != 1:
+                raise ValueError("Missing or ambiguous copy market metadata")
+            asset = assets[0]
+            digits = asset.get("szDecimals")
+            if type(digits) is not int or not 0 <= digits <= 6 or asset.get("isDelisted"):
+                raise ValueError("Invalid or delisted copy market")
+            if normalize_perp_size(size, digits) != size or normalize_perp_price(limit_price, digits) != limit_price:
+                raise ValueError("Copy size and limit must already be normalized")
+            require_unexpired()
+            try:
+                return self.exchange.order(coin, is_buy, size, limit_price, {"limit": {"tif": "Ioc"}},
+                                           reduce_only=reduce_only, cloid=client_id)
+            except Exception:
+                raise RuntimeError("Copy IOC outcome unknown; reconcile before any retry") from None
+
     def positions(self,crypto=True,stocks=True):
         out=[]
         if crypto:

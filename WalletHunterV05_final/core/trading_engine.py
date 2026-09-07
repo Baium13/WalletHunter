@@ -7,6 +7,7 @@ from dataclasses import asdict
 from core.execution_journal import ExecutionJournal
 from core.source_allocation import SourceAllocationBook
 from core.capital_snapshot import finite_amount
+from core.settings import validated_network
 from core.ai_user_orders import AiUserOrders
 from core.ai_position_actions import AiPositionActions
 from core.ai_review import account_guard, market_key
@@ -215,8 +216,8 @@ class CopyEngine:
                 return []
 
     async def _sync_locked(self, user_id, profile, client, snapshots, notify):
-        network = getattr(client, "network", None)
-        if network and getattr(self.reader, "network", network) != network:
+        network = validated_network(getattr(client, "network", None))
+        if validated_network(getattr(self.reader, "network", None)) != network:
             raise ValueError("Reader/signing network mismatch; reconciliation required")
         account = profile["account"]
         live = self.settings.auto_trading and client.exchange is not None

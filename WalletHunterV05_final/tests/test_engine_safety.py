@@ -121,6 +121,16 @@ class ExchangeBoundary:
 
 
 class EngineSafetyTests(unittest.TestCase):
+    def test_missing_or_invalid_network_rejects_before_exchange_mutation(self):
+        for value in (None, "", "PAPER", "invalid"):
+            self.client.network = value
+            with self.subTest(network=value), self.assertRaises(ValueError): self.run_cycle()
+            self.assertEqual(self.client.calls, [])
+        self.client.network = "TESTNET"
+        self.engine.reader.network = None
+        with self.assertRaises(ValueError): self.run_cycle()
+        self.assertEqual(self.client.calls, [])
+
     def test_emergency_does_not_close_network_ambiguous_managed_position(self):
         self.client.network = self.engine.reader.network = "MAINNET"
         self.run_cycle()

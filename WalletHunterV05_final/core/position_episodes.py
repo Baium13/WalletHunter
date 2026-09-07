@@ -31,6 +31,8 @@ class EpisodeService:
                 CREATE TRIGGER IF NOT EXISTS prediction_retained BEFORE DELETE ON autonomous_predictions BEGIN SELECT RAISE(ABORT,'immutable prediction'); END;
                 CREATE TABLE IF NOT EXISTS position_episodes(id TEXT PRIMARY KEY,scope TEXT NOT NULL,body TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS episode_actions(id TEXT PRIMARY KEY,episode TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS autonomous_outcomes(id TEXT PRIMARY KEY,scope TEXT NOT NULL,mode TEXT NOT NULL,body TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS calibration_records(id TEXT PRIMARY KEY,scope TEXT NOT NULL,body TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS episode_transitions(seq INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT UNIQUE NOT NULL,
                     episode TEXT NOT NULL,state TEXT NOT NULL,evidence TEXT NOT NULL);
                 CREATE TRIGGER IF NOT EXISTS episode_history_immutable BEFORE UPDATE ON episode_transitions BEGIN SELECT RAISE(ABORT,'immutable history'); END;
@@ -95,4 +97,14 @@ class EpisodeService:
                     'CONFIGURED':'OPEN','FILLED':{'OPEN':'OPEN','ADD':'INCREASED','REDUCE':'REDUCED','CLOSE':'CLOSED'}.get(intent['action'],'RECONCILIATION_REQUIRED')}[status]
                 self.transition_in(db,episode,decision_id,state,{'receipt':json.loads(execution['receipt'])})
             final=db.execute('SELECT body FROM position_episodes WHERE id=?',(episode.episode_id,)).fetchone()
-            return PositionEpisode.model_validate_json(final[0])
+            episode=PositionEpisode.model_validate_json(final[0])
+            if episode.state=='CLOSED':
+                oid=episode.episode_id+'-outcome'
+                outcome={'episode_id':episode.episode_id,'mode':episode.mode,'state':'CLOSED',
+                    'decision_id':episode.episode_id,'recorded_ms':episode.created_ms,'evidence':'PAPER_OR_SHADOW'}
+                db.execute('INSERT OR IGNORE INTO autonomous_outcomes VALUES(?,?,?,?)',
+                    (oid,scope_key(scope),episode.mode,json.dumps(outcome,sort_keys=True,allow_nan=False)))
+                db.execute('INSERT OR IGNORE INTO calibration_records VALUES(?,?,?)',
+                    (oid,scope_key(scope),json.dumps({'outcome_id':oid,'version':'calibration-v1',
+                        'leader':episode.leader,'decision':episode.episode_id,'sample_count':1},sort_keys=True)))
+            return episode

@@ -13,6 +13,14 @@ from datetime import datetime, time as clock_time
 from dataclasses import dataclass
 
 
+@dataclass(frozen=True)
+class _OwnershipHistoryProof:
+    # Request-start monotonic time, stored only after successful validation.
+    # Cache access and slow responses must not extend the evidence lifetime.
+    fetched_at: float
+    no_later_fills: bool
+
+
 @dataclass
 class Result:
     ok: bool
@@ -371,16 +379,25 @@ class CopyEngine:
                 continue
             try:
                 since = int(record["verified_at_ms"])
-                proof_key = (account["address"].lower(), encoded, since)
-                cached_proof = self.ownership_checks.get(proof_key, 0)
-                history = [] if time.time()-cached_proof < 60 else await asyncio.to_thread(self.reader._info, {
-                    "type": "userFillsByTime", "user": account["address"],
-                    "startTime": since, "aggregateByTime": False})
-                if not isinstance(history, list) or len(history) >= 2000:
-                    raise ValueError("Incomplete recovery history")
-                if any(self._key(f["coin"], f.get("dex")) == key for f in history):
-                    raise ValueError("Later fills require explicit ownership reconciliation")
-                self.ownership_checks[proof_key] = time.time()
+                proof_key = (str(user_id), account["address"].lower(),
+                             getattr(self.reader, "base_url", None), getattr(client, "base", None),
+                             encoded, since)
+                checked_at = time.monotonic()
+                cached_proof = self.ownership_checks.get(proof_key)
+                if (cached_proof is None or not cached_proof.no_later_fills or
+                        not 0 <= checked_at - cached_proof.fetched_at < 60):
+                    history = await asyncio.to_thread(self.reader._info, {
+                        "type": "userFillsByTime", "user": account["address"],
+                        "startTime": since, "aggregateByTime": False})
+                    if not isinstance(history, list) or len(history) >= 2000:
+                        raise ValueError("Incomplete recovery history")
+                    if any(self._key(f["coin"], f.get("dex")) == key for f in history):
+                        raise ValueError("Later fills require explicit ownership reconciliation")
+                    if not 0 <= time.monotonic() - checked_at < 60:
+                        raise ValueError("Recovery history expired during refresh")
+                    # Failed refreshes leave any prior proof stale; the caller
+                    # keeps its reconciliation HOLD. Hits never renew this time.
+                    self.ownership_checks[proof_key] = _OwnershipHistoryProof(checked_at, True)
                 if key not in managed:
                     managed.add(key)
                     runtime["managed"] = sorted(self._runtime_key(k) for k in managed)

@@ -49,7 +49,7 @@ def copy_app(source, target):
     return [p.as_posix() for p in files]
 
 
-def safe_environment(sandbox, source, app, manifest, python):
+def safe_environment(sandbox, source, app, manifest, python, phase="0"):
     # No inherited API keys, proxy settings, cloud/SSH credentials or Python hooks.
     env = {k: os.environ[k] for k in ("SystemRoot","WINDIR","COMSPEC","SYSTEMDRIVE") if k in os.environ}
     env.update({"PATH":str(Path(os.path.abspath(python)).parent), "HOME":str(sandbox/"home"),
@@ -62,18 +62,43 @@ def safe_environment(sandbox, source, app, manifest, python):
         "TELEGRAM_BOT_TOKEN":"000000000:baseline-fake-token", "TELEGRAM_OWNER_ID":"1",
         "MASTER_KEY":"MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA=", "LANG":"C.UTF-8",
         "WALLETHUNTER_BASELINE_CHILD":"1", "WALLETHUNTER_BASELINE_SANDBOX":str(sandbox),
+        "WALLETHUNTER_BASELINE_PHASE":phase,
         "WALLETHUNTER_BASELINE_SOURCE":str(source), "WALLETHUNTER_BASELINE_APP":str(app),
         "WALLETHUNTER_BASELINE_MANIFEST":str(manifest)})
     return env
 
 
-def child_run(kind, result_path):
+def selected_modules(location, names):
+    """Resolve only direct copied test module names; no paths or dotted imports."""
+    modules = []
+    for name in names:
+        if not re.fullmatch(r"test_[A-Za-z0-9_]+", name):
+            raise ValueError("Selected Python tests must be direct test_module names")
+        path = location / (name + ".py")
+        if path.is_symlink() or not path.is_file() or path.resolve().parent != location.resolve():
+            raise ValueError("Selected Python test does not exist as a regular direct module: " + name)
+        if name in modules:
+            raise ValueError("Duplicate selected Python module: " + name)
+        modules.append(name)
+    return modules
+
+
+def python_test_suite(location, modules=()):
+    if not modules:
+        return unittest.TestLoader().discover(str(location), pattern="test_*.py")
+    suite = unittest.TestSuite()
+    for name in selected_modules(location, modules):
+        suite.addTests(unittest.TestLoader().discover(str(location), pattern=name + ".py", top_level_dir=str(location)))
+    return suite
+
+
+def child_run(kind, result_path, modules=()):
     import sitecustomize
     if not sitecustomize.ACTIVE: raise RuntimeError("Baseline guard was not installed")
     app = Path(os.environ["WALLETHUNTER_BASELINE_APP"])
     location = app/"tests" if kind == "python" else app.parent/"tests_baseline"
     started = time.monotonic()
-    suite = unittest.defaultTestLoader.discover(str(location), pattern="test_*.py")
+    suite = python_test_suite(location, modules if kind == "python" else ())
     capture = io.StringIO()
     class TracedResult(unittest.TextTestResult):
         def startTest(self, test):
@@ -116,25 +141,52 @@ def node_result(execution):
     return {**execution,**metrics,"success":execution["exit_code"]==0 and metrics["fail"]==0}
 
 
-def main():
+def argument_parser():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source",type=Path,default=REPOSITORY/APP_NAME)
     parser.add_argument("--python",default=sys.executable)
     parser.add_argument("--node",default="node")
-    parser.add_argument("--report",type=Path,default=REPOSITORY/"docs"/"baseline-tests.json")
+    parser.add_argument("--report",type=Path)
+    parser.add_argument("--phase",choices=("0", "1.1"),default="0")
+    parser.add_argument("--python-module",action="append",default=[])
     parser.add_argument("--guards-only",action="store_true")
     parser.add_argument("--child",choices=("python","guards"))
     parser.add_argument("--child-report")
+    return parser
+
+
+def validate_options(args, source):
+    if args.phase == "0" and args.python_module:
+        raise ValueError("Selected modules require --phase 1.1; Phase 0 remains a full baseline")
+    if args.guards_only and args.python_module:
+        raise ValueError("--guards-only cannot be combined with Python test selection")
+    if args.phase == "1.1":
+        if args.report is None:
+            raise ValueError("Phase 1.1 requires an explicit --report path")
+        historical = {REPOSITORY / "docs" / "baseline-tests.json", REPOSITORY / "docs" / "baseline-guards.json"}
+        if args.report.resolve() in {path.resolve() for path in historical}:
+            raise ValueError("Phase 1.1 cannot overwrite historical Phase 0 reports")
+    return selected_modules(source / "tests", args.python_module)
+
+
+def main():
+    parser=argument_parser()
     args=parser.parse_args()
-    if args.child: return child_run(args.child,args.child_report)
+    if args.child: return child_run(args.child,args.child_report,args.python_module)
     source=args.source.resolve()
+    try:
+        modules=validate_options(args,source)
+    except ValueError as exc:
+        parser.error(str(exc))
+    if args.report is None:
+        args.report=REPOSITORY/"docs"/"baseline-tests.json"
     # A Linux venv executable is normally a symlink: resolving its target would
     # silently select system Python and discard the locked environment.
     python=os.path.abspath(args.python) if Path(args.python).exists() else shutil.which(args.python)
     node=str(Path(args.node).resolve()) if Path(args.node).exists() else shutil.which(args.node)
     if not python or not node: parser.error("Python and Node executables must be installed before isolated testing")
     root=REPOSITORY
-    report={"schema_version":1,"phase":"0","application_changes":False,"classifications":CLASSIFICATIONS,
+    report={"schema_version":1,"phase":args.phase,"application_changes":args.phase != "0","classifications":CLASSIFICATIONS,
             "platform":platform.platform(),"os_network_sandbox":os.environ.get("BASELINE_OS_NETWORK_SANDBOX","not_attested"),
             "dependency_inventory":"docs/dependency-inventory.json",
             "full_project_status":"PARTIAL",
@@ -142,6 +194,11 @@ def main():
                 "reason":"Existing browser scripts require a separately isolated, reproducibly pinned browser runner."},
             "isolation_note":"Language I/O guards, clean environment and disposable allowlisted copy; not a hostile native-code sandbox.",
             "existing":{},"guards":{}}
+    if args.phase != "0":
+        report.update(evidence_label="P1.1 authorized ownership-history cache validation",
+            historical_phase0_baseline=False,
+            test_scope="GUARDS_ONLY" if args.guards_only else ("SELECTED_PYTHON_AND_ALL_JAVASCRIPT" if modules else "ALL_COPIED_PYTHON_AND_JAVASCRIPT"),
+            selected_python_modules=modules)
     # mkdtemp outside source: no app path, credential or runtime file is reused.
     with tempfile.TemporaryDirectory(prefix="wallethunter-baseline-") as folder:
         sandbox=Path(folder).resolve(); app=sandbox/APP_NAME
@@ -151,15 +208,21 @@ def main():
         for name in ("sitecustomize.py","node_network_guard.cjs","run_tests.py"):
             shutil.copyfile(root/"tools"/"baseline"/name,sandbox/"guards"/name)
         shutil.copytree(root/"tests_baseline",sandbox/"tests_baseline",ignore=shutil.ignore_patterns("__pycache__","*.pyc"))
-        env=safe_environment(sandbox,source,app,manifest,python)
+        env=safe_environment(sandbox,source,app,manifest,python,args.phase)
         report["copied_files"]=files
         report["source_hashes"]={name:hashlib.sha256((source/name).read_bytes()).hexdigest() for name in files}
         report["discovery"]={"python_modules":len(list((app/"tests").glob("test_*.py"))),"javascript_files":len(list((app/"tests").glob("*.cjs")))}
+        if args.phase != "0":
+            report["discovery"]["selected_python_modules"] = len(modules) if modules else report["discovery"]["python_modules"]
         report["python_version"]=execute([python,"--version"],app,env)["stdout"].strip()
         report["node_version"]=execute([node,"--version"],app,env)["stdout"].strip()
         def python_suite(kind):
             result_file=sandbox/(kind+"-result.json")
-            execution=execute([python,"-B",str(sandbox/"guards"/"run_tests.py"),"--child",kind,"--child-report",str(result_file)],app,env)
+            command=[python,"-B",str(sandbox/"guards"/"run_tests.py"),"--child",kind,"--child-report",str(result_file)]
+            if kind == "python":
+                for name in modules:
+                    command.extend(("--python-module",name))
+            execution=execute(command,app,env)
             result=json.loads(result_file.read_text(encoding="utf-8")) if result_file.exists() else {"success":False,"classification":"A","reason":"child_failed_before_report"}
             result["process"]=execution
             return result

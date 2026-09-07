@@ -1,0 +1,109 @@
+{
+  "schema_version": 1,
+  "phase": "P1.1 Ownership History Cache",
+  "recorded_date": "2026-09-07",
+  "status": "PASS",
+  "base_commit": "182bd1bbed1eeb1c630ff2ea6544c11c52e1323b",
+  "scope": "P1-01 only; applicable local validation, not a production readiness certificate",
+  "application_changes": ["WalletHunterV05_final/core/trading_engine.py"],
+  "application_sha256": "867393b6114c944a77b25fd83bd6595438111e1b4a55f6051f1fc1b57c371f9c",
+  "regression_test_file": "WalletHunterV05_final/tests/test_ownership_history_cache.py",
+  "regression_test_sha256": "059ec37273dd9d72f3d6afa49eb785e70581f862f20c24e2c1ebc7d3b62a135f",
+  "trading_behavior_changed": true,
+  "exact_behavior_change": "Only bounded ownership-history evidence freshness, ephemeral identity isolation and existing reconciliation HOLD when required refresh fails/expires or reveals later fills",
+  "ttl_seconds_before": 60,
+  "ttl_seconds_after": 60,
+  "cache_clock": "Monotonic request start, stored only after successful fetch and validation; cache access never rewrites proof time",
+  "cache_identity": ["telegram_user_id", "normalized_account_address", "reader_base_url", "client_base", "canonical_market", "journal_verified_at_ms"],
+  "production_accessed": false,
+  "production_state_changed": false,
+  "deployment_performed": false,
+  "financial_state_migrated": false,
+  "provenance_fabricated": false,
+  "dependency_changes": false,
+  "network_guard_changes": false,
+  "new_execution_paths": false,
+  "other_trading_policy_changes": false,
+  "tests": {
+    "targeted_new": {
+      "discovered": 18, "passed": 18, "failed": 0, "errors": 0, "skipped": 0,
+      "duration_seconds": 5.782,
+      "raw_local_report": ".phase0/p1.1-ownership-selected.json",
+      "raw_report_sha256": "bc2b22b47592a4b177233a3627c410c8a705263729c3f9e684c501c5411d387d"
+    },
+    "affected_existing": {
+      "discovered": 92, "passed": 92, "failed": 0, "errors": 0, "skipped": 0,
+      "duration_seconds": 21.468,
+      "modules": ["test_engine_recovery", "test_execution_journal", "test_engine_safety", "test_engine_modes", "test_engine_ai_user_holds", "test_recovery_import", "test_manual_positions", "test_virtual_copy_engine", "test_external_close"],
+      "raw_local_report": ".phase0/p1.1-affected.json",
+      "raw_report_sha256": "88aaea2e34378f0ce77c8c06c5bb5f5e9606a8fbc0aefa43f2daf8eb7d89e551"
+    },
+    "full_python": {
+      "discovered": 675, "passed": 674, "failed": 0, "errors": 0, "skipped": 1,
+      "xfailed": 0, "unexpected_successes": 0, "duration_seconds": 108.813,
+      "original_tests": 657, "new_regression_tests": 18,
+      "skip": "test_archive_and_sensitive_members_have_owner_only_permissions: POSIX archive permissions are verified on Linux",
+      "skip_classification": "A: environment/platform"
+    },
+    "javascript": {"suites": 6, "discovered": 96, "passed": 96, "failed": 0, "skipped": 0, "duration_seconds": 1.828},
+    "safety": {
+      "python_isolation": 9, "node_isolation": 5, "repository_and_phase_tool_guards": 35,
+      "discovered": 49, "passed": 49, "failed": 0,
+      "sandbox_duration_seconds": 0.406, "tool_guard_duration_seconds": 0.288
+    },
+    "full_raw_local_report": ".phase0/p1.1-full.json",
+    "full_raw_report_sha256": "4a54f4aaf116aaab82b1913e5dea9b4250bf156d6039cc79da82b4db855f4346",
+    "full_python_and_javascript_duration_seconds": 110.641,
+    "source_unchanged_during_all_runs": true,
+    "raw_reports_tracked": false,
+    "warnings": [
+      "Existing Starlette TestClient HTTPX deprecation; no dependency upgrade",
+      "Expected urllib3 import-time IPv6 socket-bind capability probe denied; not an exchange request"
+    ]
+  },
+  "regression_cases": [
+    "First fetch and immutable explicit evidence without provenance change",
+    "Zero monotonic timestamp and same-time cache hit",
+    "New journal verified_at_ms requires a separate proof",
+    "Cache hit before 60 seconds and real fetch exactly at expiry",
+    "Repeated sub-TTL checks across multiple windows never slide expiry",
+    "Later external fill blocks source exit after refresh",
+    "Failed refresh retains stale timestamp, HOLD, then recovers on later successful read",
+    "Malformed history container never renews evidence",
+    "Truncated history never renews evidence",
+    "Unparseable fill never renews evidence",
+    "Same account rebound to another Telegram user does not inherit proof",
+    "Different account on same user/engine does not inherit proof",
+    "Reader endpoint separation",
+    "Execution-client endpoint separation",
+    "Slow successful fetch ages from request start, not response completion",
+    "Response reaching TTL is held without caching or a same-cycle retry",
+    "XYZ stock alias external fill detection and preserved source provenance",
+    "Negative monotonic age requires a real refresh"
+  ],
+  "source_protection": {
+    "original_manifest_unchanged": true,
+    "original_protected_files": 131,
+    "unrelated_original_files_byte_identical": 130,
+    "explicit_reviewed_transition": "docs/protected-source-p1.1.json",
+    "allowed_application_path_count": 1,
+    "status": "PASS"
+  },
+  "test_tool_changes": [
+    "Strict original-to-reviewed hash transition only for the engine; no wildcard exceptions",
+    "Explicit phase/report and selected copied-test support; historical Phase 0 reports preserved",
+    "Exact Phase 1.1 test-module count 47 with new regression module required",
+    "CI selects Phase 1.1 only after successful source-transition validation",
+    "35 repository/tool regressions, including rejection of unrelated edits and fail-closed CI transition"
+  ],
+  "limitations": [
+    "Not instant external-fill detection during a valid 60-second cache window",
+    "Persistent journal network identity is unchanged; this does not close P1-10",
+    "Historical 20 browser scenarios and actual Linux/hosted CI remain unexecuted due to recorded Phase 0 environment limits",
+    "Local language guards are not an adversarial native-code OS sandbox"
+  ],
+  "finding_closed": "P1-01",
+  "findings_remaining_open": ["P1-02", "P1-03", "P1-04", "P1-05", "P1-06", "P1-07", "P1-08", "P1-09", "P1-10"],
+  "p1_2_started": false,
+  "p1_2_requires_explicit_approval": true
+}

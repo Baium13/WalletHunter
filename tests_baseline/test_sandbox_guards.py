@@ -23,7 +23,11 @@ class SandboxGuards(unittest.TestCase):
     def test_copy_contains_only_allowlisted_files_no_runtime_secrets(self):
         root = Path(os.environ["WALLETHUNTER_BASELINE_APP"])
         files = json.loads(Path(os.environ["WALLETHUNTER_BASELINE_MANIFEST"]).read_text())
-        self.assertEqual(len(list((root/"tests").glob("test_*.py"))), 46)
+        phase = os.environ["WALLETHUNTER_BASELINE_PHASE"]
+        self.assertIn(phase, {"0", "1.1"})
+        self.assertEqual(len(list((root/"tests").glob("test_*.py"))), 47 if phase == "1.1" else 46)
+        if phase == "1.1":
+            self.assertIn("tests/test_ownership_history_cache.py", files)
         self.assertEqual(len(list((root/"tests").glob("*.cjs"))), 6)
         for name in files:
             p = Path(name)

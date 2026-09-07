@@ -9,6 +9,10 @@ Start with [Phase 0 status and safe commands](docs/PHASE0.md).
 See [final local validation and external execution limits](docs/PHASE0_FINAL_VALIDATION.md)
 for the follow-up result; no Phase 1 changes are included.
 
+Current change: [P1.1 ownership-history cache correction](docs/P1_1_OWNERSHIP_CACHE.md).
+Use its explicit Phase 1.1 test commands on this revision; Phase 0 reports remain
+historical evidence. P1-02 through P1-10 are still open. Nothing was deployed.
+
 - [Exact dependencies and installation](docs/DEPENDENCIES.md)
 - [Environment contract and actual defaults](docs/ENVIRONMENT.md)
 - [Existing entrypoints and modules](docs/ENTRYPOINTS.md)

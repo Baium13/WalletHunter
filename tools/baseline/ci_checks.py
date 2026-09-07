@@ -10,6 +10,12 @@ import sys
 ROOT = Path(__file__).resolve().parents[2]
 
 
+def phase_arguments(root):
+    # main() first verifies this exact, narrowly scoped hash transition. Never
+    # change the historical runner default or infer phase from test counts.
+    return ["--phase", "1.1"] if (root / "docs/protected-source-p1.1.json").is_file() else []
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--python", default=sys.executable)
@@ -41,7 +47,7 @@ def main():
         elif path.suffix in {".js", ".cjs"}:
             run(args.node, "--check", str(path))
     run(args.python, "-B", "tools/baseline/run_tests.py", "--python", args.python,
-        "--node", args.node, "--report", ".phase0/ci-tests.json")
+        "--node", args.node, "--report", ".phase0/ci-tests.json", *phase_arguments(ROOT))
 
 
 if __name__ == "__main__":

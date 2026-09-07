@@ -1,0 +1,208 @@
+"""One submission boundary for the new FAKE/PAPER route. LIVE is unavailable.
+
+Intent/reservation/event commit precedes any adapter call. Ambiguous effects
+are never retried; recovery queries evidence and atomically settles the ledger.
+No credential factory or production signer is accepted by this module.
+"""
+import json
+import math
+from typing import Literal
+from .contracts import Contract, Scope, Fill, PortfolioSnapshot, Position, Contribution, ExecutionReceipt, DomainEvent, OrderIntent
+from .ledger import Ledger, Reservation
+from .store import Store, encoded, digest, scope_key
+
+
+class ExchangeReport(Contract):
+    intent_hash: str
+    scope: Scope
+    order_id: str
+    terminal: bool
+    fills: tuple[Fill, ...]
+    after: PortfolioSnapshot
+
+
+def reconcile(intent, before, report, now):
+    """Phase 1 proof obligations: order identity + fills + isolated delta.
+
+    A snapshot alone is never ownership. Do not infer rejection from absence.
+    """
+    def unknown():
+        return ExecutionReceipt(intent_id=intent.intent_id, scope=intent.scope, status="UNKNOWN",
+            reconciliation="RECONCILIATION_REQUIRED", received_ms=now, provenance="UNKNOWN")
+    try:
+        report = ExchangeReport.model_validate_json(report.model_dump_json())
+        if (report.scope != intent.scope or report.after.scope != intent.scope or digest(intent) != report.intent_hash
+                or not report.order_id or not report.terminal or before.scope != intent.scope):
+            return unknown()
+        if report.after.completeness != "COMPLETE" or report.after.evidence != "FAKE" or report.after.orders:
+            return unknown()
+        fills = report.fills
+        if len({f.trade_id for f in fills}) != len(fills): return unknown()
+        if any(f.intent_id != intent.intent_id or f.instrument != intent.instrument or f.order_id != report.order_id
+               or f.side != intent.side or not intent.created_ms <= f.exchange_ms < intent.expires_ms
+               or (f.price > intent.limit_price if intent.side == "BUY" else f.price < intent.limit_price) for f in fills):
+            return unknown()
+        before_other = tuple(p for p in before.positions if p.instrument != intent.instrument)
+        after_other = tuple(p for p in report.after.positions if p.instrument != intent.instrument)
+        if before_other != after_other or any(p.instrument == intent.instrument for p in before.positions): return unknown()
+        matches = [p for p in report.after.positions if p.instrument == intent.instrument]
+        filled = math.fsum(f.size for f in fills)
+        if not math.isfinite(filled) or filled > intent.size: return unknown()
+        if report.after.revision != before.revision+1 or report.after.received_ms > now: return unknown()
+        if report.after.exchange_ms is None or report.after.exchange_ms < (before.exchange_ms or 0): return unknown()
+        if report.after.equity != before.equity or report.after.sizing_capital != before.sizing_capital:
+            return unknown()  # Fake-only conservation; no implicit deposits or profit.
+        if not fills:
+            if matches or report.after.available_collateral != before.available_collateral: return unknown()
+            return ExecutionReceipt(intent_id=intent.intent_id, scope=intent.scope, status="REJECTED", order_ids=(report.order_id,),
+                reconciliation="REJECTED", received_ms=now, provenance="FAKE_EXCHANGE")
+        if len(matches) != 1: return unknown()
+        row = matches[0]
+        notional = math.fsum(f.size*f.price for f in fills)
+        if (row.side != ("LONG" if intent.side == "BUY" else "SHORT") or row.leverage != intent.leverage
+            or not math.isclose(row.size, filled, rel_tol=1e-10) or not math.isclose(row.notional, notional, rel_tol=1e-10)
+            or not math.isclose(row.entry_price, notional/filled, rel_tol=1e-10)
+            or row.margin is None or not math.isclose(row.margin, notional/intent.leverage, rel_tol=1e-10)
+            or row.evidence != "VERIFIED" or row.order_ids != (report.order_id,)
+            or row.contributions != (Contribution(source=intent.source, notional=notional),)
+            or report.after.exchange_ms < max(f.exchange_ms for f in fills)
+            or not math.isclose(report.after.available_collateral, before.available_collateral-row.margin, rel_tol=1e-10, abs_tol=1e-10)):
+            return unknown()
+        partial = filled < intent.size
+        return ExecutionReceipt(intent_id=intent.intent_id, scope=intent.scope, status="PARTIAL" if partial else "FILLED",
+            order_ids=(report.order_id,), fills=fills, reconciliation="PARTIAL" if partial else "CONFIRMED",
+            received_ms=now, provenance="FAKE_EXCHANGE")
+    except (ValueError, AttributeError, TypeError, OverflowError):
+        return unknown()
+
+
+class FakeExchange:
+    """Durable fake exchange: independent commit makes acknowledgement loss real."""
+    def __init__(self, path):
+        self.storage = Store(path)
+        self.behavior = "FILLED"
+        self.calls = 0
+        with self.storage.transaction() as db:
+            db.execute("CREATE TABLE IF NOT EXISTS fake_orders(id TEXT PRIMARY KEY,intent TEXT,report TEXT)")
+
+    def submit(self, intent, before, now):
+        if intent.execution_mode not in {"FAKE", "PAPER"}: raise ValueError("Fake exchange only")
+        self.calls += 1
+        if self.behavior == "TIMEOUT_BEFORE": raise TimeoutError("Synthetic timeout")
+        with self.storage.transaction() as db:
+            old = db.execute("SELECT intent,report FROM fake_orders WHERE id=?", (intent.intent_id,)).fetchone()
+            if old:
+                if old["intent"] != encoded(intent): raise ValueError("Fake intent collision")
+                return ExchangeReport.model_validate_json(old["report"])
+            size = intent.size*(.5 if self.behavior == "PARTIAL" else 0. if self.behavior == "REJECTED" else 1.)
+            oid = "fake-"+digest(intent)[:32]
+            fills, positions, margin = (), before.positions, 0.
+            if size:
+                fills = (Fill(intent_id=intent.intent_id, instrument=intent.instrument, order_id=oid, trade_id=oid,
+                    side=intent.side, size=size, price=intent.limit_price, exchange_ms=now),)
+                notional = size*intent.limit_price
+                margin = notional/intent.leverage
+                positions += (Position(instrument=intent.instrument, side="LONG" if intent.side == "BUY" else "SHORT",
+                    size=size+(1 if self.behavior == "EXTERNAL_CHANGE" else 0), entry_price=intent.limit_price,
+                    notional=notional, margin=margin, leverage=intent.leverage, evidence="VERIFIED", order_ids=(oid,),
+                    contributions=(Contribution(source=intent.source, notional=notional),)),)
+            after = PortfolioSnapshot.model_validate(dict(before.model_dump(), positions=positions,
+                available_collateral=before.available_collateral-margin, revision=before.revision+1, received_ms=now, exchange_ms=now))
+            report = ExchangeReport(intent_hash=digest(intent), scope=intent.scope, order_id=oid, terminal=True, fills=fills, after=after)
+            db.execute("INSERT INTO fake_orders VALUES(?,?,?)", (intent.intent_id, encoded(intent), encoded(report)))
+        if self.behavior == "ACK_LOSS": raise TimeoutError("Synthetic acknowledgement loss")
+        return report
+
+    def query(self, intent):
+        with self.storage.transaction() as db:
+            row = db.execute("SELECT intent,report FROM fake_orders WHERE id=?", (intent.intent_id,)).fetchone()
+            if row and row["intent"] == encoded(intent): return ExchangeReport.model_validate_json(row["report"])
+        return None
+
+
+class ExecutionGateway:
+    def __init__(self, store, risk, exchange, clock_ms):
+        if type(exchange) is not FakeExchange: raise ValueError("Live adapter not migrated")
+        self.store, self.risk, self.__exchange, self.clock = store, risk, exchange, clock_ms
+
+    def authorize_fake(self, intent):
+        """Explicit test/operator setup; events and analysis cannot mint grants."""
+        intent = OrderIntent.model_validate_json(intent.model_dump_json())
+        if intent.execution_mode not in {"FAKE", "PAPER"} or intent.authorization != "PAPER_TEST":
+            raise ValueError("Live authorization unavailable")
+        with self.store.transaction() as db:
+            self.store.bind(db, intent.scope)
+            row = db.execute("SELECT intent_hash FROM grants WHERE id=?", (intent.intent_id,)).fetchone()
+            if row and row[0] != digest(intent): raise ValueError("Grant identity collision")
+            db.execute("INSERT OR IGNORE INTO grants VALUES(?,?,?)", (intent.intent_id, scope_key(intent.scope), digest(intent)))
+
+    def _event(self, db, intent, kind, payload, now):
+        return self.store.append_in(db, DomainEvent(event_id=digest(intent)[:32]+"-"+kind,
+            event_type=kind, correlation_id=intent.correlation_id, scope=intent.scope, event_ms=now, received_ms=now, payload=payload))
+
+    def _unknown(self, intent, now, status="UNKNOWN"):
+        return ExecutionReceipt(intent_id=intent.intent_id, scope=intent.scope, status=status,
+            reconciliation="RECONCILIATION_REQUIRED", received_ms=now, provenance="UNKNOWN")
+
+    def execute(self, intent, market):
+        intent = OrderIntent.model_validate_json(intent.model_dump_json())
+        now = self.clock()
+        with self.store.transaction() as db:
+            self.store.bind(db, intent.scope)
+            old = db.execute("SELECT * FROM intents WHERE id=?", (intent.intent_id,)).fetchone()
+            if old:
+                if old["scope"] != scope_key(intent.scope) or old["body"] != encoded(intent): raise ValueError("Immutable intent collision")
+                return ExecutionReceipt.model_validate_json(old["receipt"]) if old["receipt"] else self._unknown(intent, now, "SUBMITTING")
+            before = self.store.portfolio_in(db, intent.scope)
+            pending = db.execute("SELECT reservation FROM intents WHERE scope=? AND status IN ('SUBMITTING','UNKNOWN')", (scope_key(intent.scope),)).fetchall()
+            reservations = [Reservation(**json.loads(r[0])) for r in pending]
+            grant = db.execute("SELECT intent_hash FROM grants WHERE id=? AND scope=?", (intent.intent_id, scope_key(intent.scope))).fetchone()
+            ledger = Ledger(before, self.risk.policy.sources, reservations)
+            decision = self.risk.evaluate(intent, market, ledger, now, authorized=bool(grant and grant[0] == digest(intent)), unresolved=bool(pending))
+            approved = decision.outcome == "APPROVED"
+            receipt = self._unknown(intent, now, "SUBMITTING") if approved else ExecutionReceipt(intent_id=intent.intent_id,
+                scope=intent.scope, status="REJECTED", reconciliation="REJECTED", received_ms=now, provenance="UNKNOWN")
+            notional = intent.size*max(market.price or intent.limit_price, intent.limit_price) if approved else 0.
+            reservation = dict(intent_id=intent.intent_id, source=intent.source, margin=notional/intent.leverage,
+                account_capacity=notional/intent.leverage+notional*self.risk.policy.fee_buffer_pct/100)
+            db.execute("INSERT INTO intents VALUES(?,?,?,?,?,?,?)", (intent.intent_id, scope_key(intent.scope), encoded(intent),
+                receipt.status, encoded(decision), json.dumps(reservation), encoded(receipt)))
+            db.execute("DELETE FROM grants WHERE id=?", (intent.intent_id,))
+            self._event(db, intent, "ORDER_INTENT_CREATED", intent, now)
+            self._event(db, intent, "RISK_APPROVED" if approved else "RISK_REJECTED", decision, now)
+            if approved: self._event(db, intent, "ORDER_SUBMITTED", receipt, now)
+        if not approved: return receipt
+        # Crash from here onward leaves a durable reservation. Never auto-resubmit.
+        try: report = self.__exchange.submit(intent, before, now)
+        except Exception: report = None
+        return self._settle(intent, before, report)
+
+    def _settle(self, intent, before, report):
+        now = self.clock()
+        receipt = reconcile(intent, before, report, now)
+        with self.store.transaction() as db:
+            row = db.execute("SELECT status,receipt FROM intents WHERE id=? AND scope=?", (intent.intent_id, scope_key(intent.scope))).fetchone()
+            if not row: raise ValueError("No durable intent")
+            if row["status"] not in {"SUBMITTING", "UNKNOWN"}:
+                return ExecutionReceipt.model_validate_json(row["receipt"])
+            current = self.store.portfolio_in(db, intent.scope)
+            if current != before: receipt = self._unknown(intent, now)
+            if receipt.status != "UNKNOWN":
+                self.store.publish_portfolio_in(db, report.after, intent.correlation_id)
+            kind = {"FILLED": "ORDER_FILLED", "PARTIAL": "ORDER_PARTIALLY_FILLED", "REJECTED": "RECONCILIATION_REQUIRED", "UNKNOWN": "EXECUTION_UNKNOWN"}[receipt.status]
+            # Repeated UNKNOWN queries must not collide with the original timestamp.
+            if receipt.status != "UNKNOWN" or row["status"] != "UNKNOWN": self._event(db, intent, kind, receipt, now)
+            if receipt.status in {"FILLED", "PARTIAL"}: self._event(db, intent, "POSITION_OPENED", receipt, now)
+            db.execute("UPDATE intents SET status=?,receipt=? WHERE id=?", (receipt.status, encoded(receipt), intent.intent_id))
+        return receipt
+
+    def recover(self, intent):
+        """Query only: missing order data never authorizes submission or release."""
+        with self.store.transaction() as db:
+            row = db.execute("SELECT body,status,receipt FROM intents WHERE id=? AND scope=?", (intent.intent_id, scope_key(intent.scope))).fetchone()
+            if not row or row["body"] != encoded(intent): raise ValueError("Unknown intent identity")
+            if row["status"] not in {"SUBMITTING", "UNKNOWN"}: return ExecutionReceipt.model_validate_json(row["receipt"])
+            before = self.store.portfolio_in(db, intent.scope)
+        try: report = self.__exchange.query(intent)
+        except Exception: report = None
+        return self._settle(intent, before, report)

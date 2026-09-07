@@ -194,3 +194,105 @@ class RiskTests(unittest.TestCase):
                       intent(scope=scope(tenant="other")), intent(source="unallocated"), intent(expires_ms=1500, created_ms=1400)):
             self.assertEqual(self.decide(order=order).outcome, "REJECTED")
         self.assertIn("ACCOUNT_CAPACITY", self.decide(snapshot=portfolio(available_collateral=99.)).reasons)
+
+
+class PipelineTests(unittest.TestCase):
+    setUp = StoreTests.setUp
+
+    def pipeline(self):
+        from core.foundation.execution import FakeExchange, ExecutionGateway
+        from core.foundation.risk import RiskGateway
+        self.store.publish_portfolio(portfolio(), "initial")
+        exchange = FakeExchange(Path(self.tmp.name)/"exchange.sqlite3")
+        gateway = ExecutionGateway(self.store, RiskGateway(policy()), exchange, lambda: 1000)
+        return gateway, exchange
+
+    def test_e2e_fill_reservation_ledger_and_trace(self):
+        from core.foundation.ledger import Ledger
+        gateway, exchange = self.pipeline()
+        order = intent()
+        gateway.authorize_fake(order)
+        receipt = gateway.execute(order, market())
+        self.assertEqual(receipt.status, "FILLED")
+        self.assertEqual(exchange.calls, 1)
+        after = self.store.portfolio(scope())
+        self.assertEqual(Ledger(after, policy().sources).allocation("a").available, 900.)
+        events = [e for _,e in self.store.replay(scope()) if e.correlation_id == order.correlation_id]
+        self.assertEqual([e.event_type for e in events], ["ORDER_INTENT_CREATED", "RISK_APPROVED", "ORDER_SUBMITTED",
+            "PORTFOLIO_SNAPSHOT", "ORDER_FILLED", "POSITION_OPENED"])
+
+    def test_duplicate_and_collision_cannot_resubmit(self):
+        gateway, exchange = self.pipeline()
+        order = intent()
+        gateway.authorize_fake(order)
+        first = gateway.execute(order, market())
+        self.assertEqual(first, gateway.execute(order, market()))
+        self.assertEqual(exchange.calls, 1)
+        with self.assertRaises(ValueError): gateway.execute(intent(size=2.), market())
+        self.assertEqual(exchange.calls, 1)
+
+    def test_partial_fill_commits_only_actual_margin(self):
+        from core.foundation.ledger import Ledger
+        gateway, exchange = self.pipeline()
+        exchange.behavior = "PARTIAL"
+        gateway.authorize_fake(intent())
+        receipt = gateway.execute(intent(), market())
+        self.assertEqual(receipt.status, "PARTIAL")
+        self.assertEqual(Ledger(self.store.portfolio(scope()), policy().sources).allocation("a").committed, 50.)
+
+    def test_ack_loss_recovers_by_query_after_restart_without_resubmission(self):
+        from core.foundation.execution import FakeExchange, ExecutionGateway
+        from core.foundation.risk import RiskGateway
+        from core.foundation.store import Store
+        gateway, exchange = self.pipeline()
+        exchange.behavior = "ACK_LOSS"
+        gateway.authorize_fake(intent())
+        self.assertEqual(gateway.execute(intent(), market()).status, "UNKNOWN")
+        self.assertEqual(gateway.execute(intent(), market()).status, "UNKNOWN")
+        self.assertEqual(exchange.calls, 1)
+        restarted_exchange = FakeExchange(Path(self.tmp.name)/"exchange.sqlite3")
+        restarted = ExecutionGateway(Store(self.path), RiskGateway(policy()), restarted_exchange, lambda: 1001)
+        self.assertEqual(restarted.recover(intent()).status, "FILLED")
+        self.assertEqual(restarted_exchange.calls, 0)
+
+    def test_missing_evidence_remains_reserved_and_blocks_other_intent(self):
+        gateway, exchange = self.pipeline()
+        exchange.behavior = "TIMEOUT_BEFORE"
+        gateway.authorize_fake(intent())
+        self.assertEqual(gateway.execute(intent(), market()).status, "UNKNOWN")
+        self.assertEqual(gateway.recover(intent()).status, "UNKNOWN")
+        second = intent(intent_id="second", source="b")
+        gateway.authorize_fake(second)
+        self.assertEqual(gateway.execute(second, market()).status, "REJECTED")
+        self.assertEqual(exchange.calls, 1)
+
+    def test_external_mutation_cannot_be_adopted(self):
+        gateway, exchange = self.pipeline()
+        exchange.behavior = "EXTERNAL_CHANGE"
+        gateway.authorize_fake(intent())
+        self.assertEqual(gateway.execute(intent(), market()).status, "UNKNOWN")
+        self.assertEqual(self.store.portfolio(scope()).positions, ())
+        self.assertEqual(gateway.recover(intent()).status, "UNKNOWN")
+
+    def test_no_grant_and_live_backend_are_blocked(self):
+        from core.foundation.execution import ExecutionGateway
+        from core.foundation.risk import RiskGateway
+        gateway, exchange = self.pipeline()
+        self.assertEqual(gateway.execute(intent(), market()).status, "REJECTED")
+        self.assertEqual(exchange.calls, 0)
+        with self.assertRaises(ValueError): gateway.authorize_fake(intent(execution_mode="LIVE"))
+        with self.assertRaises(ValueError): ExecutionGateway(self.store, RiskGateway(policy()), object(), lambda: 1000)
+
+    def test_replay_cannot_execute_and_reconstructs_latest_portfolio(self):
+        from core.foundation.store import ReplayReader
+        gateway, exchange = self.pipeline()
+        gateway.authorize_fake(intent())
+        gateway.execute(intent(), market())
+        reader = ReplayReader(self.store, scope())
+        latest = None
+        for _, event in reader.read():
+            if event.event_type == "PORTFOLIO_SNAPSHOT": latest = event.payload
+        self.assertEqual(latest, self.store.portfolio(scope()))
+        self.assertFalse(hasattr(reader, "execute"))
+        self.assertFalse(hasattr(reader, "authorize_fake"))
+        self.assertEqual(exchange.calls, 1)

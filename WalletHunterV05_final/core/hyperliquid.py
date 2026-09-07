@@ -1,7 +1,7 @@
 import time
 import requests
 from core.fill_history import fetch_fills, filter_perp_fills
-from core.capital_snapshot import read_capital_snapshot, strict_spot_usdc
+from core.capital_snapshot import read_capital_snapshot, strict_spot_usdc, finite_amount
 
 
 class HyperliquidReader:
@@ -44,40 +44,47 @@ class HyperliquidReader:
             raise ValueError("Invalid or incomplete position snapshot")
 
         for item in state.get("assetPositions", []):
+            if not isinstance(item, dict):
+                raise ValueError("Malformed position row")
             p = item.get("position", item)
-            s = float(p.get("szi", 0) or 0)
+            if not isinstance(p, dict) or not isinstance(p.get("coin"), str) or not p["coin"]:
+                raise ValueError("Missing position identity")
+            s = finite_amount(p.get("szi"), "position size")
 
-            if abs(s) < 1e-15:
+            if s == 0:
                 continue
 
             lev = p.get("leverage")
             lev = lev.get("value") if isinstance(lev, dict) else lev
 
-            try:
-                lev = float(lev or 1)
-            except Exception:
-                lev = 1.0
+            lev = finite_amount(lev, "position leverage")
+            if lev < 1:
+                raise ValueError("Invalid position leverage")
 
-            position_value = abs(float(p.get("positionValue", 0) or 0))
+            position_value = finite_amount(p.get("positionValue"), "position value")
+            entry = finite_amount(p.get("entryPx"), "entry price")
+            if position_value <= 0 or entry <= 0:
+                raise ValueError("Invalid open position value or entry")
             # marginUsed is the actual collateral reserved by Hyperliquid.
             # Older/API variants may omit it, so use notional / leverage only
             # as a transparent fallback rather than showing the leveraged sum.
-            margin_used = abs(float(p.get("marginUsed", 0) or 0))
-            if margin_used <= 0:
-                margin_used = position_value / lev if lev > 0 else position_value
+            margin_used = finite_amount(p["marginUsed"], "margin used") if "marginUsed" in p else position_value / lev
+            if margin_used < 0:
+                raise ValueError("Negative position margin")
             out.append({
                 "coin": str(p.get("coin") or ""),
                 "size": abs(s),
                 "signed_size": s,
                 "side": "LONG" if s > 0 else "SHORT",
-                "entry_price": float(p.get("entryPx", 0) or 0),
+                "entry_price": entry,
                 "position_value": position_value,
                 "margin_used": margin_used,
-                "unrealized_pnl": float(p.get("unrealizedPnl", 0) or 0),
+                "unrealized_pnl": finite_amount(p.get("unrealizedPnl"), "unrealized PnL"),
                 "leverage": lev,
                 "market_max_leverage": float((leverage_limits or {}).get(str(p.get("coin") or "").split(":")[-1], 1) or 1),
-                "roe": float(p.get("returnOnEquity", 0) or 0) * 100,
-                "liquidation_price": float(p.get("liquidationPx", 0) or 0),
+                "roe": finite_amount(p.get("returnOnEquity"), "ROE") * 100,
+                "liquidation_price": finite_amount(p["liquidationPx"], "liquidation price") if p.get("liquidationPx") is not None else None,
+                "margin_mode": p["leverage"].get("type") if isinstance(p.get("leverage"), dict) else None,
                 "market_type": market_type,
                 "dex": dex or None,
             })
@@ -162,18 +169,23 @@ class HyperliquidReader:
     def market_context(self, coin, dex=""):
         """Current funding and mark data used only as an entry risk filter."""
         result = self._info({"type": "metaAndAssetCtxs", "dex": dex})
-        if not isinstance(result, list) or len(result) < 2:
-            return {}
+        if not isinstance(result, list) or len(result) != 2 or not isinstance(result[0], dict) or not isinstance(result[1], list):
+            raise ValueError("Unavailable market context")
         universe = (result[0] or {}).get("universe", [])
         contexts = result[1] or []
+        if not universe or len(universe) != len(contexts):
+            raise ValueError("Incomplete market context")
         raw = str(coin).split(":")[-1]
         for asset, context in zip(universe, contexts):
             if str(asset.get("name", "")).split(":")[-1] == raw:
-                try: funding = float(context.get("funding", 0) or 0) * 10_000
-                except (TypeError, ValueError): funding = 0.0
-                return {"funding_bps_hour": funding, "mark_price": float(context.get("markPx", 0) or 0),
-                        "open_interest": float(context["openInterest"]) if context.get("openInterest") is not None else None}
-        return {}
+                funding = finite_amount(context.get("funding"), "funding") * 10_000
+                mark = finite_amount(context.get("markPx"), "mark price")
+                interest = finite_amount(context.get("openInterest"), "open interest")
+                if mark <= 0 or interest < 0:
+                    raise ValueError("Invalid market context")
+                return {"funding_bps_hour": finite_amount(funding, "funding bps"), "mark_price": mark,
+                        "open_interest": interest, "observed_monotonic": time.monotonic()}
+        raise ValueError("Market context missing requested instrument")
 
     def mid(self, coin, dex=""):
         m = self.mids(dex)

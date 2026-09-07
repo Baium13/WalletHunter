@@ -119,6 +119,40 @@ class ExchangeBoundary:
 
 
 class EngineSafetyTests(unittest.TestCase):
+    def test_unknown_funding_and_nonfinite_spread_never_authorize_entry(self):
+        for context in ({}, {"funding_bps_hour": None}, {"funding_bps_hour": float("nan")},
+                        {"funding_bps_hour": float("inf")}, {"funding_bps_hour": 0, "observed_monotonic": -1000}):
+            self.engine.market_cache.clear()
+            self.engine.reader.market_context = lambda *args, value=context: value
+            self.run_cycle()
+            self.assertEqual(self.client.calls, [])
+        self.engine.reader.market_context = lambda *args: {"funding_bps_hour": 0}
+        self.engine.market_cache.clear()
+        for value in (float("nan"), float("inf"), -1, None):
+            self.client.spread_bps = lambda *args, value=value: value
+            self.run_cycle()
+            self.assertEqual(self.client.calls, [])
+
+    def test_raw_position_unknown_is_not_flat_for_either_adapter(self):
+        from core.hyperliquid import HyperliquidReader
+        from integrations.hyperliquid import HyperliquidAccount
+        for normalizer in (HyperliquidReader._positions, HyperliquidAccount._positions):
+            self.assertEqual(normalizer({"assetPositions": []}, "CRYPTO", ""), [])
+            self.assertEqual(normalizer({"assetPositions": [{"position": {"coin": "BTC", "szi": "0"}}]}, "CRYPTO", ""), [])
+            for value in (None, "NaN", "Infinity", True, "garbage"):
+                with self.subTest(value=value), self.assertRaises(ValueError):
+                    normalizer({"assetPositions": [{"position": {"coin": "BTC", "szi": value}}]}, "CRYPTO", "")
+
+    def test_market_context_missing_is_error_valid_zero_is_preserved(self):
+        from core.hyperliquid import HyperliquidReader
+        reader = HyperliquidReader.__new__(HyperliquidReader)
+        for raw in ({}, [], [{"universe": [{"name": "BTC"}]}, []],
+                    [{"universe": [{"name": "BTC"}]}, [{"markPx": "100", "openInterest": "0"}]]):
+            reader._info = lambda payload, raw=raw: raw
+            with self.assertRaises(ValueError): reader.market_context("BTC")
+        reader._info = lambda payload: [{"universe": [{"name": "BTC"}]}, [{"funding": "0", "markPx": "100", "openInterest": "0"}]]
+        self.assertEqual(reader.market_context("BTC")["funding_bps_hour"], 0)
+
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)

@@ -128,7 +128,9 @@ class PositionActionSdkTests(unittest.TestCase):
 
     def test_unrelated_core_position_does_not_block_verified_eth_action(self):
         self.client.info.state["assetPositions"].append({"position": {
-            "coin": "SOL", "szi": "1", "entryPx": "100", "leverage": {"type": "cross", "value": 5}}})
+            "coin": "SOL", "szi": "1", "entryPx": "100", "positionValue": "100",
+            "marginUsed": "20", "unrealizedPnl": "0", "returnOnEquity": "0",
+            "leverage": {"type": "cross", "value": 5}}})
         self.submit()
         self.assertEqual(self.calls[-1][0], "order")
 

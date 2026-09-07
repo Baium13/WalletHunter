@@ -180,7 +180,8 @@ async def balance(uid, p):
     try:
         c = account_client(uid, p)
         return await asyncio.to_thread(c.balance) if c else 0.0
-    except Exception: return 0.0
+    except Exception as exc:
+        raise RuntimeError("Account balance unavailable") from exc
 
 
 async def ai_learning_watcher():

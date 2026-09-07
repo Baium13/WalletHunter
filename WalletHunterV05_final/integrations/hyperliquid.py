@@ -333,18 +333,8 @@ class HyperliquidAccount:
         return out
     @staticmethod
     def _positions(state,typ,dex):
-        out=[]
-        if not isinstance(state, dict) or not isinstance(state.get("assetPositions"), list):
-            raise ValueError("Invalid or incomplete follower position snapshot")
-        for x in state.get("assetPositions",[]):
-            p=x.get("position",x); s=float(p.get("szi",0) or 0)
-            if not s: continue
-            margin_mode = (p.get("leverage") or {}).get("type") if isinstance(p.get("leverage"), dict) else None
-            lev=p.get("leverage"); lev=lev.get("value") if isinstance(lev,dict) else lev
-            leverage=float(lev or 1); position_value=abs(float(p.get("positionValue",0) or 0)); margin_used=abs(float(p.get("marginUsed",0) or 0)) or (position_value/leverage if leverage>0 else position_value)
-            out.append({"coin":str(p.get("coin")),"size":abs(s),"side":"LONG" if s>0 else "SHORT","entry_price":float(p.get("entryPx",0) or 0),"position_value":position_value,"margin_used":margin_used,"unrealized_pnl":float(p.get("unrealizedPnl",0) or 0),"leverage":leverage,"roe":float(p.get("returnOnEquity",0) or 0)*100,"liquidation_price":float(p.get("liquidationPx",0) or 0),"market_type":typ,"dex":dex or None})
-            out[-1]["margin_mode"] = margin_mode
-        return out
+        from core.hyperliquid import HyperliquidReader
+        return HyperliquidReader._positions(state, typ, dex)
     def mid(self, coin, dex=""):
         m = self.info.all_mids(dex=dex)
 

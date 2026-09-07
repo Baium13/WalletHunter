@@ -6,6 +6,7 @@ import uuid
 from dataclasses import asdict
 from core.execution_journal import ExecutionJournal
 from core.source_allocation import SourceAllocationBook
+from core.capital_snapshot import finite_amount
 from core.ai_user_orders import AiUserOrders
 from core.ai_position_actions import AiPositionActions
 from core.ai_review import account_guard, market_key
@@ -357,7 +358,11 @@ class CopyEngine:
                     recovery_holds.add(encoded)
                     continue
                 holds = runtime.setdefault("manual_hold_keys", [])
-                if encoded not in holds: holds.append(encoded)
+                if not isinstance(holds, (list, dict)):
+                    raise ValueError("Malformed manual HOLD state; reconciliation required")
+                if encoded not in holds:
+                    if isinstance(holds, dict): holds[encoded] = {"reason": "observed_flat"}
+                    else: holds.append(encoded)
                 runtime.setdefault("manual_actions", {})[encoded] = {
                     "action":"observed_flat", "status":"complete", "flat":True,
                     "reason":"Exchange position disappeared outside a confirmed copy close", "created":time.time()}
@@ -793,7 +798,8 @@ class CopyEngine:
         # these entry filters.
         if not managed and not existing and live:
             try:
-                spread = await asyncio.to_thread(client.spread_bps, coin, dex)
+                spread = finite_amount(await asyncio.to_thread(client.spread_bps, coin, dex), "spread")
+                if spread < 0: raise ValueError("Negative spread")
                 if spread > strategy["max_spread_bps"]:
                     return Result(False, "EXECUTION_BLOCK", account["name"], coin, spec["side"], error=f"Spread {spread:.1f} bps exceeds strategy limit.")
                 cache_key = (coin, dex); cached = self.market_cache.get(cache_key)
@@ -801,7 +807,9 @@ class CopyEngine:
                     context = await asyncio.to_thread(self.reader.market_context, coin, dex)
                     self.market_cache[cache_key] = (time.time(), context)
                 else: context = cached[1]
-                funding = float(context.get("funding_bps_hour", 0) or 0)
+                funding = finite_amount(context.get("funding_bps_hour"), "funding")
+                if "observed_monotonic" in context and not 0 <= time.monotonic() - finite_amount(context["observed_monotonic"], "context time") < 60:
+                    raise ValueError("Stale market context")
                 adverse = funding if spec["side"] == "LONG" else -funding
                 if adverse > strategy["max_adverse_funding_bps"]:
                     return Result(False, "FUNDING_BLOCK", account["name"], coin, spec["side"], error=f"Adverse funding {adverse:.2f} bps/hour exceeds strategy limit.")

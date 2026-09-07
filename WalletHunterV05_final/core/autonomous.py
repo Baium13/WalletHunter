@@ -25,6 +25,10 @@ class AutonomousBackend:
         self.authorization=AuthorizationService(store)
         self.gateway=ExecutionGateway(store,self.risk,exchange,clock)
         with store.transaction() as db:
+            db.execute('CREATE TABLE IF NOT EXISTS autonomous_modes(scope TEXT PRIMARY KEY,mode TEXT NOT NULL)')
+            mode=db.execute('SELECT mode FROM autonomous_modes WHERE scope=?',(scope_key(authorization_policy.scope),)).fetchone()
+            if mode and mode[0]!=authorization_policy.mode: raise ValueError('Separate state required for PAPER/SHADOW/LIVE modes')
+            db.execute('INSERT OR IGNORE INTO autonomous_modes VALUES(?,?)',(scope_key(authorization_policy.scope),authorization_policy.mode))
             db.execute('CREATE TABLE IF NOT EXISTS autonomous_decisions(id TEXT PRIMARY KEY,scope TEXT,event_id TEXT,body TEXT,intent TEXT,UNIQUE(scope,event_id))')
             db.execute('CREATE TABLE IF NOT EXISTS autonomous_cursors(scope TEXT PRIMARY KEY,seq INTEGER NOT NULL)')
 
@@ -81,19 +85,25 @@ class AutonomousBackend:
             'consensus':result.model_dump(mode='json'),'authorization':auth.model_dump(mode='json'),
             'mode':auth.mode,'status':auth.outcome,'correlation_id':event.event_id}
         intent=None
-        if auth.outcome=='AUTHORIZED' and auth.execution_mode=='PAPER':
+        if (auth.outcome=='AUTHORIZED' and auth.execution_mode=='PAPER') or auth.outcome=='HYPOTHETICAL':
             size=ledger.size(limit,leverage,self.risk.policy.size_step,leader.confidence,result.confidence)
             if size>0:
                 intent=OrderIntent(intent_id=auth.decision_id,scope=scope,instrument=event.instrument,source=self.allocation_policy.source,
                     action=event.action,side=event.side,size=size,limit_price=limit,leverage=leverage,slippage_pct=self.risk.policy.max_slippage_pct,
                     authorization='PAPER_POLICY',execution_mode='PAPER',correlation_id=event.event_id,created_ms=auth.created_ms,expires_ms=auth.expires_ms)
             else: body['status']='ZERO_SIZE'
+        if intent is not None and auth.mode=='SHADOW':
+            risk=self.risk.evaluate(intent,market,ledger,now,authorized=self.authorization.verify(auth,now),unresolved=bool(pending))
+            body.update(status='SHADOW_APPROVED' if risk.outcome=='APPROVED' else 'SHADOW_REJECTED',
+                risk=risk.model_dump(mode='json'),hypothetical_intent=intent.model_dump(mode='json'),
+                assumptions={'entry_price':limit,'price_source':'OBSERVED_ASK' if event.side=='BUY' else 'OBSERVED_BID',
+                    'execution':'HYPOTHETICAL_ONLY','fee_buffer_pct':self.risk.policy.fee_buffer_pct,'fill_guaranteed':False})
         with self.store.transaction() as db:
             previous=db.execute('SELECT body FROM autonomous_decisions WHERE id=?',(auth.decision_id,)).fetchone()
             if previous: return json.loads(previous[0])
             db.execute('INSERT INTO autonomous_decisions VALUES(?,?,?,?,?)',(auth.decision_id,scope_key(scope),event.event_id,
                 json.dumps(body,allow_nan=False),encoded(intent) if intent else None))
-        if intent is not None:
+        if intent is not None and auth.mode!='SHADOW':
             self.gateway.authorize_paper(intent,auth)
             receipt=self.gateway.execute(intent,market,autonomous_ledger=ledger)
             body['receipt']=receipt.model_dump(mode='json'); body['status']=receipt.status
@@ -121,7 +131,7 @@ def load_paper_backend(config_path,state_directory,network,clock):
         risk: RiskPolicy
         initial_paper_equity: Positive
     config=Config.model_validate_json(Path(config_path).read_text(encoding='utf-8'))
-    if config.authorization.mode not in ('OBSERVE','PAPER_AUTO') or config.authorization.scope.network!=network:
+    if config.authorization.mode not in ('OBSERVE','PAPER_AUTO','SHADOW') or config.authorization.scope.network!=network:
         raise ValueError('Explicit PAPER configuration required')
     directory=Path(state_directory)
     for name,marker in (('autonomy.sqlite','autonomous_decisions'),('fake.sqlite','fake_orders')):

@@ -82,7 +82,7 @@ class IntelligenceTests(unittest.TestCase):
         self.assertEqual(first,second)
         self.assertFalse(service.verify(first.model_copy(update={'outcome':'AUTHORIZED','execution_mode':'PAPER'}),NOW+1001))
         with self.assertRaises(ValueError): AuthorizationPolicy(scope=policy.scope,mode='LIVE_AUTO')
-    def paper_backend(self):
+    def paper_backend(self,mode='PAPER_AUTO'):
         from core.autonomous import AutonomousBackend
         from core.foundation.store import Store
         from core.foundation.execution import FakeExchange
@@ -99,8 +99,24 @@ class IntelligenceTests(unittest.TestCase):
             max_leverage=5,min_notional=10.,max_notional=10000.,max_symbol_notional=10000.,max_total_notional=10000.,
             max_slippage_pct=.5,max_price_deviation_pct=.5,fee_buffer_pct=.05,size_step=.001,
             max_market_age_ms=30000,max_portfolio_age_ms=30000,max_intent_age_ms=60000)
-        backend=AutonomousBackend(store,exchange,ledger.policy,AuthorizationPolicy(scope=ledger.portfolio.scope,mode='PAPER_AUTO'),risk,lambda:NOW+1000)
+        backend=AutonomousBackend(store,exchange,ledger.policy,AuthorizationPolicy(scope=ledger.portfolio.scope,mode=mode),risk,lambda:NOW+1000)
         return backend,record
+    def test_shadow_uses_same_canonical_risk_without_exchange_fill(self):
+        backend,record=self.paper_backend('SHADOW')
+        result=backend.process(record)
+        self.assertEqual(result['status'],'SHADOW_APPROVED')
+        self.assertEqual(result['risk']['outcome'],'APPROVED')
+        self.assertGreater(result['hypothetical_intent']['size'],0)
+        self.assertNotIn('receipt',result)
+        self.assertEqual(backend.exchange.calls,0)
+        self.assertEqual(backend.store.portfolio(backend.auth_policy.scope).positions,())
+        self.assertEqual(backend.process(record),result)
+    def test_shadow_and_paper_cannot_share_performance_state(self):
+        from core.autonomous import AutonomousBackend
+        backend,_=self.paper_backend('SHADOW')
+        with self.assertRaisesRegex(ValueError,'Separate state'):
+            AutonomousBackend(backend.store,backend.exchange,backend.allocation_policy,
+                backend.auth_policy.model_copy(update={'mode':'PAPER_AUTO'}),backend.risk.policy,backend.clock)
     def test_actual_discovery_to_canonical_paper_open(self):
         backend,record=self.paper_backend()
         result=backend.process(record)

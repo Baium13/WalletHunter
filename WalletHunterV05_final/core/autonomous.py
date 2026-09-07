@@ -26,6 +26,8 @@ class AutonomousBackend:
         self.risk=RiskGateway(risk_policy); self.clock=clock
         self.authorization=AuthorizationService(store)
         self.gateway=ExecutionGateway(store,self.risk,exchange,clock)
+        from core.position_episodes import EpisodeService
+        self.episodes=EpisodeService(store)
         with store.transaction() as db:
             db.execute('CREATE TABLE IF NOT EXISTS autonomous_modes(scope TEXT PRIMARY KEY,mode TEXT NOT NULL)')
             mode=db.execute('SELECT mode FROM autonomous_modes WHERE scope=?',(scope_key(authorization_policy.scope),)).fetchone()
@@ -86,7 +88,9 @@ class AutonomousBackend:
         body={'event':event.model_dump(mode='json'),'agents':[a.model_dump(mode='json') for a in agents],
             'consensus':result.model_dump(mode='json'),'authorization':auth.model_dump(mode='json'),
             'mode':auth.mode,'status':auth.outcome,'correlation_id':event.event_id,
-            'market':market.model_dump(mode='json')}
+            'market':market.model_dump(mode='json'),'leader':leader.model_dump(mode='json'),
+            'allocation':ledger.allocation(self.allocation_policy.source).model_dump(mode='json') if not ledger.errors else None,
+            'allocation_policy':self.allocation_policy.model_dump(mode='json')}
         intent=None
         if (auth.outcome=='AUTHORIZED' and auth.execution_mode=='PAPER') or auth.outcome in {'HYPOTHETICAL','CONFIRMATION_REQUIRED'}:
             size=ledger.size(limit,leverage,self.risk.policy.size_step,leader.confidence,result.confidence)
@@ -109,6 +113,7 @@ class AutonomousBackend:
             if previous: return json.loads(previous[0])
             db.execute('INSERT INTO autonomous_decisions VALUES(?,?,?,?,?)',(auth.decision_id,scope_key(scope),event.event_id,
                 json.dumps(body,allow_nan=False),encoded(intent) if intent else None))
+            self.episodes.prepare_in(db,body,intent)
         if intent is not None and auth.mode=='PAPER_AUTO':
             self.gateway.authorize_paper(intent,auth)
             receipt=self.gateway.execute(intent,market,autonomous_ledger=ledger)
@@ -116,6 +121,11 @@ class AutonomousBackend:
             with self.store.transaction() as db:
                 row=db.execute('SELECT decision FROM intents WHERE id=?',(intent.intent_id,)).fetchone()
                 body['risk']=json.loads(row[0])
+                db.execute('UPDATE autonomous_decisions SET body=? WHERE id=?',(json.dumps(body,allow_nan=False),auth.decision_id))
+        episode=self.episodes.sync(auth.decision_id,scope)
+        if episode:
+            body['episode']=episode.model_dump(mode='json')
+            with self.store.transaction() as db:
                 db.execute('UPDATE autonomous_decisions SET body=? WHERE id=?',(json.dumps(body,allow_nan=False),auth.decision_id))
         return body
 
@@ -140,6 +150,7 @@ class AutonomousBackend:
             # Query-only recovery even when the acknowledgement was lost.
             receipt=self.gateway.recover(OrderIntent.model_validate_json(existing[0]))
             body.update(receipt=receipt.model_dump(mode='json'),status=receipt.status)
+            body['episode']=self.episodes.sync(decision_id,scope).model_dump(mode='json')
             return body
         auth=self.authorization.confirm(decision_id,scope,self.clock(),authenticated_user=authenticated_user)
         before=self.exchange.refresh(revision,proposal.instrument.dex)
@@ -153,6 +164,7 @@ class AutonomousBackend:
             risk=db.execute('SELECT decision FROM intents WHERE id=?',(decision_id,)).fetchone()
             body['risk']=json.loads(risk[0])
             db.execute('UPDATE autonomous_decisions SET body=? WHERE id=?',(json.dumps(body,allow_nan=False),decision_id))
+        body['episode']=self.episodes.sync(decision_id,scope).model_dump(mode='json')
         return body
 
 

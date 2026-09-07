@@ -195,6 +195,40 @@ class IntelligenceTests(unittest.TestCase):
         self.assertEqual(len(backend.store.portfolio(backend.auth_policy.scope).positions),1)
         self.assertEqual(backend.process(record),result)
         self.assertEqual(backend.exchange.calls,1)
+
+    def test_episode_prediction_precedes_order_and_survives_restart(self):
+        from core.position_episodes import EpisodeService
+        from core.foundation.execution import FakeExchange
+        from core.foundation.store import Store
+        import sqlite3
+        backend,record=self.paper_backend()
+        original=FakeExchange.submit
+        def submit(adapter,intent,before,now):
+            with backend.store.transaction() as db:
+                prediction=json.loads(db.execute('SELECT body FROM autonomous_predictions WHERE id=?',(intent.intent_id,)).fetchone()[0])
+                self.assertNotIn('receipt',prediction)
+                self.assertEqual(prediction['authorization']['outcome'],'AUTHORIZED')
+            return original(adapter,intent,before,now)
+        with patch.object(FakeExchange,'submit',submit): result=backend.process(record)
+        key=result['authorization']['decision_id']
+        restarted=EpisodeService(Store(backend.store.path))
+        self.assertEqual(restarted.sync(key,backend.auth_policy.scope).state,'OPEN')
+        with backend.store.transaction() as db:
+            states=[r[0] for r in db.execute('SELECT state FROM episode_transitions WHERE episode=? ORDER BY seq',(key,))]
+        self.assertEqual(states,['PROPOSED','AUTHORIZED','RESERVED','SUBMITTED','OPEN'])
+        restarted.sync(key,backend.auth_policy.scope)
+        with self.assertRaises(sqlite3.IntegrityError):
+            with backend.store.transaction() as db:
+                db.execute("UPDATE autonomous_predictions SET body='{}' WHERE id=?",(key,))
+
+    def test_unknown_episode_is_durable_not_open(self):
+        backend,record=self.paper_backend(); backend.exchange.behavior='ACK_LOSS'
+        result=backend.process(record)
+        self.assertEqual(result['episode']['state'],'UNKNOWN')
+        self.assertEqual(backend.episodes.sync(result['authorization']['decision_id'],backend.auth_policy.scope).state,'UNKNOWN')
+        self.assertEqual(len(backend.store.portfolio(backend.auth_policy.scope).positions),0)
+        self.assertEqual(backend.process(record),result)
+        self.assertEqual(backend.exchange.calls,1)
     def test_worker_drain_consumes_actual_persisted_research_once(self):
         backend,record=self.paper_backend()
         for _ in range(4): backend.drain(self.worker)

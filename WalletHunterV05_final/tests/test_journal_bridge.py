@@ -8,7 +8,7 @@ import unittest
 
 from core.foundation.journal_bridge import JournalEvidence, SynchronizedLedger, read_journal
 from core.foundation.ledger import Reservation
-from test_foundation import scope, portfolio, position
+from test_foundation import scope, portfolio, position, intent
 
 
 def owned():
@@ -120,7 +120,7 @@ class JournalBridgeTests(unittest.TestCase):
             self.assertFalse(path.exists())
 
     def test_truncation_duplicates_and_corrupt_json_fail_closed(self):
-        for bodies in (("{}", "{}"), ("{\"a\":1,\"a\":2}",), ("{\"a\":NaN}",), ("not-json",)):
+        for bodies in (("{}", "{}"), ("{\"a\":1,\"a\":2}",), ("{\"a\":NaN}",), ("{\"a\":1e999}",), ("not-json",)):
             with self.subTest(bodies=bodies), tempfile.TemporaryDirectory() as root:
                 path = Path(root)/"journal.sqlite3"
                 with closing(sqlite3.connect(path)) as db:
@@ -128,3 +128,103 @@ class JournalBridgeTests(unittest.TestCase):
                     db.executemany("INSERT INTO operations VALUES(?,?,?,?)", [(scope().account, "BTC|", "UNKNOWN", body) for body in bodies])
                     db.commit()
                 with self.assertRaises(ValueError): read_journal(path, scope(), limit=1)
+
+
+class LiveReconciliationTests(unittest.TestCase):
+    def setUp(self):
+        from types import SimpleNamespace
+        from core.foundation.live_reconciliation import client_order_id
+        self.intent = intent(execution_mode="LIVE", authorization="USER_CONFIRMED")
+        self.before = portfolio(evidence="EXCHANGE")
+        self.after = portfolio(evidence="EXCHANGE", revision=2, exchange_ms=1002, received_ms=1002,
+            positions=(position(size=1., notional=100., margin=100., evidence="EXTERNAL", contributions=(), order_ids=()),))
+        self.response = dict(status="order", order=dict(status="filled", statusTimestamp=1001,
+            order=dict(oid=12, cloid=client_order_id(self.intent), coin="BTC", side="B", origSz="1", limitPx="100", timestamp=1000, reduceOnly=False)))
+        self.fills = [dict(oid=12, tid=1, coin="BTC", side="B", sz="1", px="100", time=1001)]
+        self.queries = []
+        self.client = SimpleNamespace(network="TESTNET", address=scope().account,
+            query_order_by_cloid=lambda cloid: self.response,
+            info=SimpleNamespace(user_fills_by_time=lambda *args: self.history(*args)))
+
+    def history(self, *args):
+        self.queries.append(args)
+        return self.fills
+
+    def result(self):
+        from core.foundation.live_reconciliation import reconcile_order
+        return reconcile_order(self.intent, self.before, self.after, self.client, now_ms=1002, max_age_ms=100)
+
+    def test_live_compatible_proof_without_signing_or_ack(self):
+        result = self.result()
+        self.assertEqual((result.status, result.provenance, result.order_ids), ("FILLED", "EXCHANGE", ("12",)))
+        self.assertEqual(self.queries, [(scope().account, 1000, 1002)])
+        self.assertEqual(self.after.positions[0].evidence, "EXTERNAL")  # No fabricated adoption.
+
+    def test_partial_fill(self):
+        self.fills[0]["sz"] = ".5"
+        self.response["order"]["status"] = "iocCancel"
+        self.after = self.after.model_copy(update={"positions": (self.after.positions[0].model_copy(update={"size": .5}),)})
+        self.assertEqual(self.result().status, "PARTIAL")
+
+    def test_terminal_unfilled_is_rejected_not_retried(self):
+        self.fills = []
+        self.after = self.after.model_copy(update={"positions": ()})
+        self.response["order"]["status"] = "iocCancel"
+        self.assertEqual(self.result().status, "REJECTED")
+
+    def test_close_and_reduce_use_fill_proof(self):
+        from core.foundation.live_reconciliation import client_order_id
+        for action in ("CLOSE", "REDUCE"):
+            self.intent = intent(execution_mode="LIVE", authorization="USER_CONFIRMED", action=action, side="SELL")
+            self.before = portfolio(evidence="EXCHANGE", positions=(position(size=1., notional=100., margin=100.),))
+            self.after = self.after.model_copy(update={"positions": ()})
+            self.response["order"]["order"].update(cloid=client_order_id(self.intent), side="A", reduceOnly=True)
+            self.fills[0]["side"] = "A"
+            self.assertEqual(self.result().status, "FILLED")
+
+    def test_external_concurrent_fill_requires_hold(self):
+        self.fills.append(dict(self.fills[0], oid=99, tid=2))
+        self.assertEqual(self.result().status, "UNKNOWN")
+
+    def test_aggregate_delta_alone_cannot_prove_fill(self):
+        self.fills = []
+        self.assertEqual(self.result().status, "UNKNOWN")
+
+    def test_duplicate_history_is_not_double_counted(self):
+        self.fills.append(dict(self.fills[0]))
+        self.assertEqual(self.result().status, "UNKNOWN")
+
+    def test_timeouts_and_ack_visibility_delay_remain_unknown(self):
+        def timeout(*_): raise TimeoutError("synthetic request detail must not escape")
+        self.client.query_order_by_cloid = timeout
+        self.assertEqual(self.result().status, "UNKNOWN")
+        self.assertEqual(self.queries, [])
+        self.client.query_order_by_cloid = lambda _: {"status": "unknownOid"}
+        self.assertEqual(self.result().status, "UNKNOWN")
+
+    def test_network_account_and_tenant_mismatch(self):
+        self.client.network = "MAINNET"
+        self.assertEqual(self.result().status, "UNKNOWN")
+        self.client.network = "TESTNET"
+        self.client.address = "0x"+"b"*40
+        self.assertEqual(self.result().status, "UNKNOWN")
+        self.client.address = scope().account
+        self.after = self.after.model_copy(update={"scope": scope(tenant="two")})
+        self.assertEqual(self.result().status, "UNKNOWN")
+
+    def test_stale_or_unknown_account_evidence(self):
+        self.after = self.after.model_copy(update={"exchange_ms": 1})
+        self.assertEqual(self.result().status, "UNKNOWN")
+        self.after = self.after.model_copy(update={"exchange_ms": 1002, "completeness": "UNKNOWN"})
+        self.assertEqual(self.result().status, "UNKNOWN")
+
+    def test_wrong_legacy_client_id_not_adopted(self):
+        self.response["order"]["order"]["cloid"] = "0x"+"0"*32
+        self.assertEqual(self.result().status, "UNKNOWN")
+
+    def test_nonfinite_malformed_and_truncated_fill_evidence(self):
+        for value in ("NaN", "Infinity", "-1", None):
+            self.fills[0]["sz"] = value
+            self.assertEqual(self.result().status, "UNKNOWN")
+        self.fills = [self.fills[0]]*2000
+        self.assertEqual(self.result().status, "UNKNOWN")

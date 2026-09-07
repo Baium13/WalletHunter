@@ -13,6 +13,7 @@ from pathlib import Path
 import sqlite3
 import math
 
+from core.capital_snapshot import finite_amount
 from core.source_allocation import SourceAllocationBook
 from .contracts import Allocation, PortfolioSnapshot, Scope
 from .ledger import Ledger
@@ -33,7 +34,8 @@ def _json_object(value):
             result[key] = item
         return result
     def invalid(_): raise ValueError("Nonfinite journal number")
-    result = json.loads(value, object_pairs_hook=pairs, parse_constant=invalid)
+    result = json.loads(value, object_pairs_hook=pairs, parse_constant=invalid,
+        parse_float=lambda value: finite_amount(value, "journal number"))
     if not isinstance(result, dict): raise ValueError("Journal object required")
     return result
 

@@ -5,7 +5,7 @@
 (() => {
   'use strict';
   const $ = id => document.getElementById(id);
-  const state = { page: 'home', dashboard: null, intelligence: null, health: null, report: null,
+  const state = { page: 'home', dashboard: null, intelligence: null, health: null, manual: null, report: null,
     loading: true, error: null, analyticsMode: 'PAPER', cursor: 0, selectedLeader: null, selectedPosition: null,
     chartRequest: 0, manualAnalysis: null, manualAnalysisSlot: null };
   const navItems = [
@@ -108,9 +108,9 @@
     return `${pageHeader(t('Позиции','Positions'),t('Проверенное состояние счёта и жизненный цикл сделок','Verified account state and trade lifecycle'))}<div class="product-tabs"><button class="product-tab active">${esc(t('ВСЕ','ALL'))}</button><button class="product-tab">MANUAL LEADER</button><button class="product-tab">AUTONOMOUS</button><button class="product-tab">PAPER</button><button class="product-tab">SHADOW</button><button class="product-tab">LIVE</button></div>${detail}${rows.length?`<div class="product-list">${rows.map(positionRow).join('')}</div>`:unavailable(t('Открытых позиций нет или данные недоступны','No open positions or data unavailable'))}`;
   }
   function manualPage() {
-    const d=state.dashboard||{}, wallets=(d.wallets||[]).filter(w=>w.configured), leader=wallets[0], pctSaved=Number(localStorage.getItem('wh_manual_pct')||80), active=Boolean(d.copy_enabled);
+    const d=state.dashboard||{}, wallets=(d.wallets||[]).filter(w=>w.configured), config=state.manual, leader=config?.configured?config:wallets[0], pctSaved=Number(config?.allocation_pct||localStorage.getItem('wh_manual_pct')||80), active=Boolean(config?.enabled);
     const capital=finite(d.balance), allocation=capital===null?null:capital*pctSaved/100;
-    const leaderBody=leader?`<div class="product-kicker">${esc(t('РУЧНОЙ ЛИДЕР','MANUAL LEADER'))}</div><div class="product-value">${esc(t('Слот','Slot'))} ${esc(leader.slot||'N/A')}</div><p class="product-sub">${esc(t('Адрес скрыт в защищённом dashboard payload. Анализ доступен через экран Анализ.','Address is kept out of the dashboard payload. Use Analysis for public research.'))}</p><span class="product-badge ${leader.enabled?'good':'warn'}">● ${esc(leader.enabled?t('АКТИВЕН','ACTIVE'):t('ПАУЗА','PAUSED'))}</span>`:unavailable(t('Лидер не выбран','No leader selected'));
+    const leaderBody=leader?`<div class="product-kicker">${esc(t('РУЧНОЙ ЛИДЕР','MANUAL LEADER'))}</div><div class="product-value">${esc(config?.leader?shortWallet(config.leader):t('Слот','Slot')+' '+(leader.slot||'N/A'))}</div><p class="product-sub">${esc(config?.leader||t('Адрес скрыт в защищённом dashboard payload. Анализ доступен через экран Анализ.','Address is kept out of the dashboard payload. Use Analysis for public research.'))}</p><span class="product-badge ${active?'good':'warn'}">● ${esc(active?t('АКТИВЕН','ACTIVE'):t('ПАУЗА','PAUSED'))}</span>`:unavailable(t('Лидер не выбран','No leader selected'));
     const leaderCard=card(t('Выбранный лидер','Selected leader'),leaderBody+`<label class="product-label"><span>${esc(t('Адрес Hyperliquid лидера','Hyperliquid leader address'))}</span><input class="product-input" id="productManualLeader" placeholder="0x…" autocomplete="off"></label><div class="product-actions"><button class="product-btn primary" data-action="manual-add">${esc(t('Выбрать лидера','Select leader'))}</button></div><p class="product-note">${esc(t('Ручной лидер отделён от автоматического Discovery. Добавление не переносит владение уже открытыми позициями.','Manual Copy is separate from automatic Discovery. Adding never transfers provenance of existing positions.'))}</p>`);
     const allocationCard=card(t('Аллокация Manual Copy','Manual Copy allocation'),`<label class="product-label"><span>${esc(t('Доля капитала','Capital allocation'))}: <b id="manualPctValue">${number(pctSaved,0)}%</b></span><input id="manualPct" class="product-range" type="range" min="1" max="100" step="1" value="${Math.min(100,Math.max(1,pctSaved))}"></label><div class="product-metrics">${metric(t('Капитал счёта','Account capital'),money(capital,true))}${metric(t('Выделено','Allocated'),money(allocation,true))}${metric(t('Резерв / прочая ёмкость','Reserve / other capacity'),capital===null?'N/A':money(Math.max(0,capital-(allocation||0)),true))}${metric(t('Статус','Status'),active?t('АКТИВЕН','ACTIVE'):t('ПАУЗА','PAUSED'))}</div><p class="product-sub">${esc(t('100% означает 100% доступного торгового капитала, а не отказ от операционного резерва. Фактическая маржа и комиссии проходят через Risk Gateway.','100% means 100% of allocatable trading capital, not zero operational reserve. Margin and fees remain subject to the Risk Gateway.'))}<br>${esc(t('Позиции остановленного лидера остаются HOLD и продолжают занимать committed capital.','Stopped leader positions remain HOLD and continue consuming committed capital.'))}</p><div class="product-actions"><button class="product-btn ${active?'danger':'primary'}" data-action="manual-toggle">${esc(active?t('Остановить копирование','Stop copying'):t('Начать копирование','Start copying'))}</button></div>`);
     const a=state.manualAnalysisSlot===leader?.slot?state.manualAnalysis:null;
@@ -186,16 +186,17 @@
   }
   async function refresh() {
     state.loading=true; state.error=null; render();
-    const [dashboard,intel,health]=await Promise.allSettled([read('/api/dashboard'),read(`/api/intelligence?after=${state.cursor}&limit=50`),read('/health')]);
+    const [dashboard,intel,health,manual]=await Promise.allSettled([read('/api/dashboard'),read(`/api/intelligence?after=${state.cursor}&limit=50`),read('/health'),read('/api/manual-copy')]);
     if(dashboard.status==='fulfilled')state.dashboard=dashboard.value;
     if(intel.status==='fulfilled'){state.intelligence=intel.value;state.cursor=Number(intel.value.cursor)||state.cursor;}
     if(health.status==='fulfilled')state.health=health.value;
+    if(manual.status==='fulfilled')state.manual=manual.value;
     try{state.ai=await read('/api/ai');}catch(_){state.ai=null;}
     if(state.page==='analytics')await loadReport();
     state.loading=false; if(dashboard.status==='rejected'&&intel.status==='rejected')state.error=t('Данные backend недоступны','Backend data unavailable'); render();
   }
-  async function manualAdd(){const input=$('productManualLeader'),address=input?.value.trim();if(!address)return alert(t('Введите адрес лидера','Enter a leader address'));try{await read('/api/wallet',{method:'POST',body:JSON.stringify({address})});await refresh();}catch(e){alert(e.message);}}
-  async function manualToggle(){const enabled=Boolean(state.dashboard?.copy_enabled);if(enabled&&!confirm(t('Остановить новые сделки? Открытые позиции останутся HOLD.','Stop new trades? Open positions remain HOLD.')))return;try{await read('/api/copy',{method:'POST',body:JSON.stringify({value:!enabled,confirm_open_positions:enabled})});await refresh();}catch(e){alert(e.message);}}
+  async function manualAdd(){const input=$('productManualLeader'),address=input?.value.trim();if(!address)return alert(t('Введите адрес лидера','Enter a leader address'));try{await read('/api/manual-copy',{method:'PUT',body:JSON.stringify({leader:address,allocation_pct:Number($('manualPct')?.value||80)})});await refresh();}catch(e){alert(e.message);}}
+  async function manualToggle(){const enabled=Boolean(state.manual?.enabled);if(enabled&&!confirm(t('Остановить новые сделки? Открытые позиции останутся HOLD.','Stop new trades? Open positions remain HOLD.')))return;try{await read('/api/manual-copy',{method:'PUT',body:JSON.stringify({action:enabled?'stop':'start'})});await refresh();}catch(e){alert(e.message);}}
   function bind(){
     document.querySelectorAll('[data-product-page]').forEach(b=>b.onclick=()=>{state.page=b.dataset.productPage;render();});
     $('productLanguage')?.addEventListener('click',()=>window.toggleLanguage?.());

@@ -36,6 +36,7 @@ from core.ai_user_orders import AiUserOrders
 from core.ai_position_actions import AiPositionActions
 from core.ai_review import AiReview, account_guard
 from core.manual_positions import ManualPositions, ManualActionError
+from core.manual_leader_copy import ManualLeaderCopyService
 from core.confirmed_execution_adapter import build_context
 from core.execution_journal import ExecutionJournal
 from core.ai_policy import ReviewPolicy
@@ -56,6 +57,7 @@ ai_user_orders = AiUserOrders(os.path.dirname(os.path.dirname(storage.path)))
 ai_position_actions = AiPositionActions(os.path.dirname(os.path.dirname(storage.path)))
 ai_review = AiReview(ROOT)
 execution_journal = ExecutionJournal(os.path.dirname(os.path.dirname(storage.path)))
+manual_leader_service: ManualLeaderCopyService | None = None
 analysis_cache: dict[str, tuple[float, dict]] = {}
 analysis_requests: dict[int, deque[float]] = defaultdict(deque)
 chart_cache: dict[tuple[str, str, str], tuple[float, list[dict]]] = {}
@@ -216,6 +218,11 @@ class AiSlotInput(BaseModel):
 
 class DeleteWalletInput(BaseModel):
     confirm_open_positions: bool = False
+
+class ManualCopyInput(BaseModel):
+    leader: str | None = None
+    allocation_pct: float | None = None
+    action: Literal["start", "stop"] | None = None
 
 
 class PositionInput(BaseModel):
@@ -513,6 +520,76 @@ def account_client_for(profile: dict) -> HyperliquidAccount:
     if not account:
         raise HTTPException(400, "Hyperliquid-аккаунт не подключён.")
     return HyperliquidAccount(account["address"], storage.decrypt(account["private_key"]), settings.hl_mode, slippage_pct=settings.max_slippage_pct)
+
+
+def manual_leader_controller() -> ManualLeaderCopyService:
+    global manual_leader_service
+    if manual_leader_service is None:
+        manual_leader_service = ManualLeaderCopyService(engine)
+    return manual_leader_service
+
+
+def manual_leader_account(user_id: int, profile: dict) -> tuple[dict, HyperliquidAccount]:
+    account = profile.get("account")
+    if not account:
+        raise HTTPException(400, "Hyperliquid account is not connected")
+    try:
+        # Configuration/start/stop are public strategy mutations; no signer is
+        # required and the private key must not be loaded for these endpoints.
+        client = HyperliquidAccount(account["address"], None, settings.hl_mode)
+    except Exception as exc:
+        raise HTTPException(400, "Hyperliquid account is unavailable") from exc
+    # ManualLeaderCopyService uses the tenant in Scope; do not persist secrets
+    # or return this enriched dictionary to the client.
+    return {**account, "_tenant": str(user_id)}, client
+
+
+@app.get("/api/manual-copy")
+def manual_copy_config(x_telegram_init_data: str | None = Header(default=None)):
+    user = require_user(x_telegram_init_data)
+    _, profile = storage.profile(user["id"])
+    account = profile.get("account")
+    if not account:
+        return {"configured": False, "enabled": False, "allocation_pct": None, "leader": None}
+    try:
+        scoped, client = manual_leader_account(user["id"], profile)
+        config = manual_leader_controller().config(scoped, client)
+    except HTTPException:
+        raise
+    except Exception:
+        config = None
+    if not config:
+        return {"configured": False, "enabled": False, "allocation_pct": None, "leader": None}
+    return {"configured": True, "enabled": bool(config.enabled), "allocation_pct": config.allocation_pct,
+            "leader": config.leader, "alias": config.alias, "updated_ms": config.updated_ms,
+            "network": config.scope.network}
+
+
+@app.put("/api/manual-copy")
+def configure_manual_copy(payload: ManualCopyInput, x_telegram_init_data: str | None = Header(default=None)):
+    user = require_user(x_telegram_init_data)
+    _, profile = storage.profile(user["id"])
+    scoped, client = manual_leader_account(user["id"], profile)
+    controller = manual_leader_controller()
+    try:
+        config = controller.config(scoped, client)
+        if payload.leader is not None:
+            leader = payload.leader.strip().lower()
+            if not re.fullmatch(r"0x[0-9a-fA-F]{40}", leader):
+                raise ValueError("Invalid Hyperliquid leader address")
+        elif config:
+            leader = config.leader
+        else:
+            raise ValueError("Manual leader is required")
+        allocation = payload.allocation_pct if payload.allocation_pct is not None else (config.allocation_pct if config else 80.0)
+        config = controller.configure(scoped, client, leader, allocation, alias=leader)
+        if payload.action == "start": config = controller.start(scoped, client)
+        elif payload.action == "stop": config, _ = controller.stop(scoped, client)
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(400, str(exc)) from None
+    return {"configured": True, "enabled": bool(config.enabled), "allocation_pct": config.allocation_pct,
+            "leader": config.leader, "alias": config.alias, "updated_ms": config.updated_ms,
+            "network": config.scope.network}
 
 
 def own_position(profile: dict, coin: str, dex: str) -> dict:

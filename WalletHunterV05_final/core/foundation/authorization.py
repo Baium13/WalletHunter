@@ -40,6 +40,8 @@ class AuthorizationService:
                 CREATE TRIGGER IF NOT EXISTS auth_no_update BEFORE UPDATE ON authorization_requests BEGIN SELECT RAISE(ABORT,'immutable'); END;
                 CREATE TRIGGER IF NOT EXISTS auth_no_delete BEFORE DELETE ON authorization_requests BEGIN SELECT RAISE(ABORT,'immutable'); END;
             ''')
+            if 'event' not in {r[1] for r in db.execute('PRAGMA table_info(authorization_requests)')}:
+                db.execute('ALTER TABLE authorization_requests ADD COLUMN event TEXT')
 
     def decide(self,policy,event,consensus,now):
         policy=AuthorizationPolicy.model_validate_json(policy.model_dump_json())
@@ -64,13 +66,13 @@ class AuthorizationService:
             execution_mode=execution,created_ms=now,expires_ms=max(now,event.exchange_ms+policy.max_signal_age_ms),reasons=tuple(reasons))
         with self.store.transaction() as db:
             self.store.bind(db,policy.scope)
-            previous=db.execute('SELECT body FROM authorization_requests WHERE id=?',(decision_id,)).fetchone()
+            previous=db.execute('SELECT body,event FROM authorization_requests WHERE id=?',(decision_id,)).fetchone()
             if previous:
                 old=AuthorizationDecision.model_validate_json(previous[0])
-                if old.consensus_hash!=decision.consensus_hash: raise ValueError('DECISION_IDENTITY_CONFLICT')
+                if old.consensus_hash!=decision.consensus_hash or previous['event']!=encoded(event): raise ValueError('DECISION_IDENTITY_CONFLICT')
                 return old # A policy toggle cannot replay the same leader action.
-            db.execute('INSERT INTO authorization_requests VALUES(?,?,?,?,?,?)',
-                (decision_id,scope_key(policy.scope),event.event_id,encoded(decision),encoded(policy),encoded(consensus)))
+            db.execute('INSERT INTO authorization_requests VALUES(?,?,?,?,?,?,?)',
+                (decision_id,scope_key(policy.scope),event.event_id,encoded(decision),encoded(policy),encoded(consensus),encoded(event)))
         return decision
 
     def confirm(self,decision_id,scope,now,*,authenticated_user):

@@ -25,6 +25,9 @@ CUTOVER_FILE = 'docs/protected-source-copy-cutover.json'
 RESEARCH_FILE = 'docs/protected-source-research-api.json'
 RESEARCH_PARENT = 'f110f04c79e4ae72023217c95799a4c85303cb0ef8f0b36395e82d1142389f0b'
 RESEARCH_PATHS = {'WalletHunterV05_final/webapp/server.py','WalletHunterV05_final/webapp/intelligence_api.py'}
+BACKEND_FILE = 'docs/protected-source-autonomous-backend.json'
+BACKEND_PARENT = '5856b7af82876faccce508c86e7f9e539557b3562d887faf25f3493f96397118'
+BACKEND_PATHS = {'WalletHunterV05_final/core/foundation/'+name+'.py' for name in ('contracts','execution','risk')}
 CUTOVER_PARENT = '61462cdc2660a634250496d0f8a983eab58ee34ff6da03b7fca85189d2d5027f'
 CUTOVER_PATHS = {'WalletHunterV05_final/' + p for p in (
     'core/execution_journal.py', 'core/trading_engine.py', 'core/foundation/contracts.py',
@@ -287,6 +290,24 @@ def check(root):
                     raise ValueError('invalid_research_transition')
             effective.update({name:row['reviewed_sha256'] for name,row in rows.items()})
             report['transition_chain'].append({'phase':'research-api','files':rows})
+        except (ValueError,OSError,TypeError) as exc:
+            report.update(status='FAIL',reason=str(exc))
+            return report
+    backend=root/BACKEND_FILE
+    if backend.exists() or backend.is_symlink():
+        try:
+            if backend.is_symlink() or research.is_symlink() or not research.is_file(): raise ValueError('invalid_backend_parent')
+            document=json.loads(backend.read_bytes())
+            parent=hashlib.sha256(research.read_bytes()).hexdigest()
+            if set(document)!={'phase','parent_manifest_sha256','files'} or document['phase']!='autonomous-backend' or parent!=BACKEND_PARENT or document['parent_manifest_sha256']!=parent:
+                raise ValueError('invalid_backend_manifest')
+            rows=document['files']
+            if set(rows)!=BACKEND_PATHS: raise ValueError('invalid_backend_paths')
+            for name,row in rows.items():
+                if set(row)!={'previous_sha256','reviewed_sha256'} or row['previous_sha256']!=effective.get(name) or not re.fullmatch('[a-f0-9]{64}',row['reviewed_sha256']):
+                    raise ValueError('invalid_backend_transition')
+            effective.update({name:row['reviewed_sha256'] for name,row in rows.items()})
+            report['transition_chain'].append({'phase':'autonomous-backend','files':rows})
         except (ValueError,OSError,TypeError) as exc:
             report.update(status='FAIL',reason=str(exc))
             return report

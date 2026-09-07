@@ -1,0 +1,18 @@
+{
+  "phase": "autonomous-backend",
+  "parent_manifest_sha256": "5856b7af82876faccce508c86e7f9e539557b3562d887faf25f3493f96397118",
+  "files": {
+    "WalletHunterV05_final/core/foundation/contracts.py": {
+      "previous_sha256": "b9c36db6feb1edb042d360e892c9dcd408783ceb9ca6940fea254af80acf2977",
+      "reviewed_sha256": "e68cac4d841f7097034bfa138b764ffc98d1390ff9ef2f1bec9263adfdc20244"
+    },
+    "WalletHunterV05_final/core/foundation/execution.py": {
+      "previous_sha256": "89830cd8fee0a0306b2b8db2c648bc91f38fca576d52984c1bf880cc31760631",
+      "reviewed_sha256": "5393c09926d57dd192161b76ccb9aaeb26fcdecae901e9c98e31e6f709ad0f3d"
+    },
+    "WalletHunterV05_final/core/foundation/risk.py": {
+      "previous_sha256": "b3b1e9e5fc82019f9aba69c61cebdc00197db3a29c2d9170e5d5bbf1f3e010f0",
+      "reviewed_sha256": "daada3963ff315aaed463ba7aeac30cf38dadc524ca961e52f3338b087a2642c"
+    }
+  }
+}

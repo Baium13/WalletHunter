@@ -157,7 +157,27 @@ class ExecutionGateway:
                 raise ValueError('Durable copy authority unavailable')
             db.execute('INSERT OR IGNORE INTO grants VALUES(?,?,?)', (intent.intent_id, scope_key(intent.scope), digest(intent)))
 
-    def execute(self, intent, market, *, copy_ledger=None):
+    def authorize_paper(self,intent,authorization):
+        from .authorization import AuthorizationService
+        if type(self.__exchange) is not FakeExchange or intent.execution_mode!='PAPER' or intent.authorization!='PAPER_POLICY':
+            raise ValueError('Paper adapter and policy required')
+        if (authorization.execution_mode!='PAPER' or authorization.scope!=intent.scope or authorization.event_id!=intent.correlation_id
+            or intent.intent_id!=authorization.decision_id
+            or intent.expires_ms>authorization.expires_ms or not AuthorizationService(self.store).verify(authorization,self.clock())):
+            raise ValueError('Durable PAPER authorization required')
+        with self.store.transaction() as db:
+            row=db.execute('SELECT consensus,event FROM authorization_requests WHERE id=?',(authorization.decision_id,)).fetchone()
+            if not row or json.loads(row[0])['decision']!=('COPY_LONG' if intent.side=='BUY' else 'COPY_SHORT'):
+                raise ValueError('Consensus direction mismatch')
+            event=json.loads(row['event']) if row['event'] else {}
+            if event.get('instrument')!=intent.instrument.model_dump(mode='json') or event.get('action')!=intent.action:
+                raise ValueError('Authorized event scope mismatch')
+            self.store.bind(db,intent.scope)
+            old=db.execute('SELECT intent_hash FROM grants WHERE id=?',(intent.intent_id,)).fetchone()
+            if old and old[0]!=digest(intent): raise ValueError('Grant identity collision')
+            db.execute('INSERT OR IGNORE INTO grants VALUES(?,?,?)',(intent.intent_id,scope_key(intent.scope),digest(intent)))
+
+    def execute(self, intent, market, *, copy_ledger=None, autonomous_ledger=None):
         intent = OrderIntent.model_validate_json(intent.model_dump_json())
         with self.store.transaction() as db:
             now = self.clock()
@@ -171,6 +191,13 @@ class ExecutionGateway:
             reservations = [Reservation(**json.loads(r[0])) for r in pending] if intent.version == 1 else []
             grant = db.execute("SELECT intent_hash FROM grants WHERE id=? AND scope=?", (intent.intent_id, scope_key(intent.scope))).fetchone()
             ledger = Ledger(before, self.risk.policy.sources, reservations) if intent.version == 1 else copy_ledger
+            if autonomous_ledger is not None:
+                from .autonomous_allocation import AutonomousLedger
+                if type(autonomous_ledger) is not AutonomousLedger or intent.authorization!='PAPER_POLICY' or intent.version!=1:
+                    raise ValueError('Autonomous ledger scope invalid')
+                # Rebuild from durable pending reservations inside the same
+                # transaction; caller cannot omit a concurrent UNKNOWN intent.
+                ledger=AutonomousLedger(before,autonomous_ledger.policy,reservations)
             if ledger is None or ledger.portfolio != before: raise ValueError('Ledger snapshot mismatch')
             decision = self.risk.evaluate(intent, market, ledger, now, authorized=bool(grant and grant[0] == digest(intent)), unresolved=bool(pending))
             approved = decision.outcome == "APPROVED"

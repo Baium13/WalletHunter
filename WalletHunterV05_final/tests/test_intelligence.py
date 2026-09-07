@@ -82,6 +82,63 @@ class IntelligenceTests(unittest.TestCase):
         self.assertEqual(first,second)
         self.assertFalse(service.verify(first.model_copy(update={'outcome':'AUTHORIZED','execution_mode':'PAPER'}),NOW+1001))
         with self.assertRaises(ValueError): AuthorizationPolicy(scope=policy.scope,mode='LIVE_AUTO')
+    def paper_backend(self):
+        from core.autonomous import AutonomousBackend
+        from core.foundation.store import Store
+        from core.foundation.execution import FakeExchange
+        from core.foundation.authorization import AuthorizationPolicy
+        from core.foundation.risk import RiskPolicy
+        from core.intelligence.models import LeaderScore
+        analysis=self.activate(); event=self.signal()
+        self.worker.research(event,LeaderScore.model_validate(analysis['score']),self.reader._info,NOW+1000)
+        record=next(r['body'] for r in self.worker.records(limit=100) if r['kind']=='DECISION')
+        ledger=self.autonomous_ledger()
+        store=Store(Path(self.temp.name)/'paper.sqlite'); store.publish_portfolio(ledger.portfolio,'setup')
+        exchange=FakeExchange(Path(self.temp.name)/'fake.sqlite')
+        risk=RiskPolicy(scope=ledger.portfolio.scope,instrument=event.instrument,sources=('intelligence',),enabled=True,
+            max_leverage=5,min_notional=10.,max_notional=10000.,max_symbol_notional=10000.,max_total_notional=10000.,
+            max_slippage_pct=.5,max_price_deviation_pct=.5,fee_buffer_pct=.05,size_step=.001,
+            max_market_age_ms=30000,max_portfolio_age_ms=30000,max_intent_age_ms=60000)
+        backend=AutonomousBackend(store,exchange,ledger.policy,AuthorizationPolicy(scope=ledger.portfolio.scope,mode='PAPER_AUTO'),risk,lambda:NOW+1000)
+        return backend,record
+    def test_actual_discovery_to_canonical_paper_open(self):
+        backend,record=self.paper_backend()
+        result=backend.process(record)
+        self.assertEqual(result['status'],'FILLED')
+        self.assertEqual(result['risk']['outcome'],'APPROVED')
+        self.assertEqual(backend.exchange.calls,1)
+        self.assertEqual(len(backend.store.portfolio(backend.auth_policy.scope).positions),1)
+        self.assertEqual(backend.process(record),result)
+        self.assertEqual(backend.exchange.calls,1)
+    def test_worker_drain_consumes_actual_persisted_research_once(self):
+        backend,record=self.paper_backend()
+        for _ in range(4): backend.drain(self.worker)
+        self.assertEqual(backend.exchange.calls,1)
+        self.assertEqual(len(backend.store.portfolio(backend.auth_policy.scope).positions),1)
+    def test_paper_runtime_reloads_without_reseeding_equity(self):
+        from core.autonomous import load_paper_backend
+        backend,_=self.paper_backend()
+        config={'allocation':backend.allocation_policy.model_dump(mode='json'),
+            'authorization':backend.auth_policy.model_dump(mode='json'),'risk':backend.risk.policy.model_dump(mode='json'),
+            'initial_paper_equity':3000.}
+        path=Path(self.temp.name)/'config.json'; path.write_text(json.dumps(config),encoding='utf-8')
+        state=Path(self.temp.name)/'isolated'
+        fresh=load_paper_backend(path,state,'TESTNET',lambda:NOW+1000)
+        self.assertEqual(fresh.store.portfolio(fresh.auth_policy.scope).equity,3000.)
+        config['initial_paper_equity']=9999.; path.write_text(json.dumps(config),encoding='utf-8')
+        restored=load_paper_backend(path,state,'TESTNET',lambda:NOW+2000)
+        self.assertEqual(restored.store.portfolio(restored.auth_policy.scope).equity,3000.)
+    def test_actual_paper_unknown_retains_reservation_and_never_retries(self):
+        backend,record=self.paper_backend()
+        backend.exchange.behavior='ACK_LOSS'
+        result=backend.process(record)
+        self.assertEqual(result['status'],'UNKNOWN')
+        backend.process(record)
+        self.assertEqual(backend.exchange.calls,1)
+        with backend.store.transaction() as db:
+            row=db.execute('SELECT status,reservation FROM intents').fetchone()
+        self.assertEqual(row['status'],'UNKNOWN')
+        self.assertGreater(json.loads(row['reservation'])['margin'],0.)
     def autonomous_ledger(self,positions=(),reservations=(),**changes):
         from core.foundation.autonomous_allocation import AutonomousAllocationPolicy,AutonomousLedger
         from core.foundation.contracts import Scope,PortfolioSnapshot

@@ -167,7 +167,7 @@ class OrderIntent(Contract):
     order_type: Literal["IOC", "LEVERAGE"] = "IOC"
     leverage: Annotated[int, Field(strict=True, ge=1)]
     slippage_pct: Annotated[float, Field(strict=True, gt=0, le=10, allow_inf_nan=False)]
-    authorization: Literal["USER_CONFIRMED", "COPY_POLICY", "PAPER_TEST"]
+    authorization: Literal["USER_CONFIRMED", "COPY_POLICY", "PAPER_TEST", "PAPER_POLICY"]
     execution_mode: Literal["FAKE", "PAPER", "LIVE"]
     correlation_id: Name
     created_ms: Millis

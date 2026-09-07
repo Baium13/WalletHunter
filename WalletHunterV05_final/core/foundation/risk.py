@@ -43,7 +43,8 @@ class RiskGateway:
         require(p.enabled, "ACCOUNT_DISABLED")
         require(authorized is True, "AUTHORIZATION_REQUIRED")
         # No production execution adapter is enabled in this additive block.
-        require(intent.execution_mode in {"FAKE", "PAPER"} and intent.authorization == "PAPER_TEST", "LIVE_ROUTE_NOT_MIGRATED")
+        require((intent.execution_mode in {"FAKE", "PAPER"} and intent.authorization == "PAPER_TEST")
+            or (intent.execution_mode == 'PAPER' and intent.authorization == 'PAPER_POLICY'), "LIVE_ROUTE_NOT_MIGRATED")
         require(intent.action == "OPEN", "ACTION_NOT_MIGRATED")
         require(not unresolved, "UNRESOLVED_EXECUTION")
         require(type(now) is int and intent.created_ms <= now < intent.expires_ms

@@ -336,6 +336,7 @@ class CopyEngine:
             ai_user_holds.update(runtime.get("ai_user_order_holds", {}))
             ai_user_holds.update(runtime.get("ai_position_action_holds", {}))
             if self.ai_user_orders:
+                await asyncio.to_thread(self.ai_user_orders.reconcile_closed, user_id, profile, client, persist, int(time.time() * 1000))
                 independent_ai_holds.update(self.ai_user_orders.reserved_markets(None, account["address"]))
                 ai_user_holds.update(independent_ai_holds)
             if self.ai_position_actions:

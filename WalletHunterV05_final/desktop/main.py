@@ -739,6 +739,28 @@ async def ai_review_watcher():
             print("[AI REVIEW LOOP]", exc)
         await asyncio.sleep(60)
 
+def reconcile_ai_lifecycle(uid):
+    # Separate from the read-only signal observer. No signing client is created.
+    from core.ai_review import account_guard
+    with account_guard(ROOT, f"telegram-profile:{uid}"):
+        _, p = store.profile(uid)
+        account = p.get("account")
+        if not account: return
+        with account_guard(ROOT, account["address"]):
+            _, fresh = store.profile(uid)
+            if fresh.get("account") != account: return
+            ai_user_orders.reconcile_closed(uid, fresh, public_account_reader(fresh),
+                lambda: store.update_runtime(uid, fresh["runtime"]), int(time.time() * 1000))
+
+async def ai_lifecycle_watcher():
+    while True:
+        try:
+            for uid in store.load().get("profiles", {}):
+                try: await asyncio.to_thread(reconcile_ai_lifecycle, int(uid))
+                except Exception as exc: print("[AI RECONCILIATION]", uid, type(exc).__name__)
+        except Exception as exc: print("[AI RECONCILIATION LOOP]", type(exc).__name__)
+        await asyncio.sleep(60)
+
 async def main():
     await client.start(bot_token=S.telegram_bot_token)
     try:
@@ -758,6 +780,7 @@ async def main():
     asyncio.create_task(ai_review_watcher())
     asyncio.create_task(ai_position_watcher())
     asyncio.create_task(ai_entry_watcher())
+    asyncio.create_task(ai_lifecycle_watcher())
     await client.run_until_disconnected()
 
 if __name__ == "__main__": asyncio.run(main())

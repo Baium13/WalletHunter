@@ -254,6 +254,47 @@ class AiUserOrders:
         return {f"{self._row(row)['payload']['coin']}|": {"proposal_id": row["id"], "status": row["status"],
                 "operation_id": row["operation_id"]} for row in rows}
 
+    def reconcile_closed(self, uid, profile, client, persist_runtime, now_ms):
+        """Caller holds profile/account guard. Release only proven flat entries.
+
+        SUBMITTING/UNKNOWN never qualify. A SQL-first release is idempotent:
+        subsequent runs repair only this proposal's stale JSON holds.
+        """
+        address = _address(profile)
+        with closing(self._connect()) as db:
+            rows = db.execute("SELECT * FROM user_order_proposals WHERE user_id=? AND account=? AND status IN ('FILLED','PARTIAL','RELEASED')",
+                              (str(uid), address)).fetchall()
+        for raw in rows:
+            row = self._row(raw)
+            payload, key = row["payload"], f"{row['payload']['coin']}|"
+            if payload.get("network") != _network(client):
+                continue
+            if row["status"] != "RELEASED":
+                try:
+                    if key in self.journal.pending(address) or _positions(client, payload["coin"]) or _orders(client, payload["coin"]):
+                        continue
+                    verify = getattr(client, "verify_ai_closed", None)
+                    if not callable(verify): continue
+                    evidence = verify(dict(payload, created_ms=row["created_ms"]), row["result"] or {})
+                    if not isinstance(evidence, dict) or evidence.get("status") != "CLOSED_RECONCILED":
+                        continue
+                    result = dict(row["result"] or {}, closure=evidence, released_ms=now_ms)
+                    with closing(self._connect()) as db:
+                        db.execute("UPDATE user_order_proposals SET status='RELEASED',result=?,updated_ms=? WHERE id=? AND user_id=? AND account=? AND status IN ('FILLED','PARTIAL')",
+                                   (_json(result), now_ms, row["id"], str(uid), address))
+                        db.commit()
+                except Exception:
+                    self._remember(uid, address, "ai_position_reconciliation_required", now_ms)
+                    continue
+            runtime = profile.setdefault("runtime", {})
+            holds = runtime.get("ai_user_order_holds", {})
+            if isinstance(holds, dict) and (holds.get(key) or {}).get("proposal_id") == row["id"]:
+                holds.pop(key)
+                marker = runtime.get("ai_user_order_positions", {}).get(key)
+                if isinstance(marker, dict) and marker.get("proposal_id") == row["id"]:
+                    marker["status"] = "RELEASED"
+                persist_runtime()
+
     def _clear_market(self, uid, profile, client, address, coin, *, own_id=None):
         key = f"{coin}|"
         all_reserved = self.reserved_markets(None, address)

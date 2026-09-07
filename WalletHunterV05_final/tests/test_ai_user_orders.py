@@ -92,6 +92,29 @@ class Signer:
 
 
 class AiUserOrderTests(unittest.TestCase):
+    def test_verified_manual_close_releases_only_own_reservation_and_survives_restart(self):
+        proposal = self.proposal()
+        self.decide(proposal)
+        self.public.live_positions.clear()
+        self.public.verify_ai_closed = lambda payload, result: {"status": "CLOSED_RECONCILED", "trade_ids": [5, 6]}
+        self.service.reconcile_closed("139", self.profile, self.public, self.persist, NOW+2000)
+        self.assertEqual(self.service.reserved_markets("139", ADDRESS), {})
+        self.assertEqual(self.profile["runtime"]["ai_user_order_holds"], {})
+        restored = AiUserOrders(self.temp.name)
+        self.assertEqual(restored._get("139", ADDRESS, proposal["id"])["status"], "RELEASED")
+        self.assertEqual(len(self.signer.calls), 1)
+
+    def test_flat_without_closure_proof_or_wrong_network_never_releases(self):
+        proposal = self.proposal()
+        self.decide(proposal)
+        self.public.live_positions.clear()
+        self.service.reconcile_closed("139", self.profile, self.public, self.persist, NOW+2000)
+        self.assertIn("BTC|", self.service.reserved_markets("139", ADDRESS))
+        self.public.verify_ai_closed = lambda *args: {"status": "CLOSED_RECONCILED"}
+        self.public.base = "https://api.hyperliquid-testnet.xyz"
+        self.service.reconcile_closed("139", self.profile, self.public, self.persist, NOW+3000)
+        self.assertIn("BTC|", self.service.reserved_markets("139", ADDRESS))
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)

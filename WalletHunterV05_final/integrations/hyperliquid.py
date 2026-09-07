@@ -382,6 +382,31 @@ class HyperliquidAccount:
                     "verified_ms": int(time.time() * 1000)}
         except Exception as exc:
             raise ValueError("Copy execution proof unavailable; reconciliation required") from exc
+
+    def verify_ai_closed(self, payload, result):
+        """Prove flat plus complete entry/exit fill continuity; never trade."""
+        from core.capital_snapshot import finite_amount
+        coin = payload["coin"]
+        rows = fetch_fills(lambda query: self.info.post("/info", query), self.address,
+                           int(payload["created_ms"]), int(time.time() * 1000))
+        fills = [row for row in rows if row.get("coin") == coin]
+        if not fills or any(row.get("tid") is None for row in fills) or len({row["tid"] for row in fills}) != len(fills):
+            raise ValueError("Closure fill history unavailable")
+        quantity = finite_amount(result["filled_size"], "AI filled size")
+        entry = math.fsum(finite_amount(row["sz"], "entry fill size") for row in fills if str(row.get("oid")) == str(result["oid"]))
+        if quantity <= 0 or not math.isclose(entry, quantity, rel_tol=1e-8, abs_tol=1e-12):
+            raise ValueError("Entry identity not found in closure history")
+        signed = []
+        for row in fills:
+            size = finite_amount(row.get("sz"), "fill size")
+            if size <= 0 or row.get("side") not in ("B", "A"):
+                raise ValueError("Invalid closure fills")
+            signed.append(size * (1 if row["side"] == "B" else -1))
+        if not math.isclose(math.fsum(signed), 0., abs_tol=quantity * 1e-8):
+            raise ValueError("Entry and closure fills do not reconcile")
+        if any(p["coin"] == coin for p in self.positions(True, True)) or any(o.get("coin") == coin for o in self.frontend_open_orders("")):
+            raise ValueError("AI market is not conclusively flat")
+        return {"status": "CLOSED_RECONCILED", "entry_oid": result["oid"], "trade_ids": [row["tid"] for row in fills]}
     @staticmethod
     def _positions(state,typ,dex):
         from core.hyperliquid import HyperliquidReader

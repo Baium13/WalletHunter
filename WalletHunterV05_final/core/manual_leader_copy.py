@@ -114,32 +114,52 @@ class ManualLeaderEventBook:
     """
     def __init__(self, path: str | None = None):
         self._seen = set()
+        self._watermarks = {}
         self.path = path
         if path is not None:
             os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
             with closing(sqlite3.connect(path, timeout=10)) as db:
                 db.execute('PRAGMA journal_mode=WAL')
                 db.execute('CREATE TABLE IF NOT EXISTS manual_leader_events('
-                           'event_hash TEXT PRIMARY KEY,event_id TEXT NOT NULL,created_ms INTEGER NOT NULL)')
+                           'event_hash TEXT PRIMARY KEY,event_id TEXT NOT NULL,created_ms INTEGER NOT NULL,'
+                           'scope_key TEXT NOT NULL DEFAULT \'\',event_ms INTEGER)')
+                columns = {row[1] for row in db.execute('PRAGMA table_info(manual_leader_events)')}
+                if 'scope_key' not in columns:
+                    db.execute("ALTER TABLE manual_leader_events ADD COLUMN scope_key TEXT NOT NULL DEFAULT ''")
+                if 'event_ms' not in columns:
+                    db.execute('ALTER TABLE manual_leader_events ADD COLUMN event_ms INTEGER')
                 db.commit()
 
-    def accept(self, event_id: str, *, scope=None) -> bool:
+    def accept(self, event_id: str, *, scope=None, event_ms=None) -> bool:
         if not isinstance(event_id, str) or not event_id or len(event_id) > 128:
             raise ValueError('Invalid leader event identity')
+        if event_ms is not None and (isinstance(event_ms, bool) or not isinstance(event_ms, int) or event_ms < 0):
+            raise ValueError('Invalid leader event timestamp')
         scope_token = scope.model_dump_json() if hasattr(scope, 'model_dump_json') else str(scope or '')
         key = hashlib.sha256((scope_token + '|' + event_id).encode()).hexdigest()
         if self.path is not None:
             try:
                 with closing(sqlite3.connect(self.path, timeout=10)) as db:
                     db.execute('BEGIN IMMEDIATE')
-                    db.execute('INSERT INTO manual_leader_events VALUES(?,?,?)',
-                               (key, event_id, int(time.time() * 1000)))
+                    if event_ms is not None:
+                        latest = db.execute('SELECT MAX(event_ms) FROM manual_leader_events WHERE scope_key=?',
+                                            (scope_token,)).fetchone()[0]
+                        if latest is not None and event_ms < latest:
+                            db.rollback()
+                            return False
+                    db.execute('INSERT INTO manual_leader_events(event_hash,event_id,created_ms,scope_key,event_ms) VALUES(?,?,?,?,?)',
+                               (key, event_id, int(time.time() * 1000), scope_token, event_ms))
                     db.commit()
                     return True
             except sqlite3.IntegrityError:
                 return False
         if key in self._seen:
             return False
+        if event_ms is not None:
+            latest = self._watermarks.get(scope_token)
+            if latest is not None and event_ms < latest:
+                return False
+            self._watermarks[scope_token] = max(latest or event_ms, event_ms)
         self._seen.add(key)
         return True
 
@@ -217,7 +237,7 @@ class ManualLeaderCopyService:
     def process(self, account, client, *, event_id, action, leader_margin,
                 leader_capital, allocatable_capital, current_margin=0.0,
                 spec=None, before_position=None, fee_reserve_pct=0.0,
-                side=None):
+                side=None, event_ms=None):
         config = self.config(account, client)
         if config is None:
             raise ValueError('Manual Leader is not configured')
@@ -228,7 +248,8 @@ class ManualLeaderCopyService:
             leader_margin=leader_margin, leader_capital=leader_capital,
             allocatable_capital=allocatable_capital, current_margin=current_margin,
             spec=values, before_position=before_position,
-            fee_reserve_pct=fee_reserve_pct, side=side, event_book=self.events)
+            fee_reserve_pct=fee_reserve_pct, side=side, event_book=self.events,
+            event_ms=event_ms)
 
 
 def _canonical_receipt(engine, intent_id):
@@ -310,7 +331,7 @@ def _finish_manual(engine, operation, receipt, client, spec, coin, dex, *, final
 def execute_manual_leader(*, engine, account, client, operation, event_id, action,
                           leader_margin, leader_capital, allocatable_capital,
                           current_margin, spec, before_position=None,
-                          fee_reserve_pct=0.0, side=None, event_book=None):
+                          fee_reserve_pct=0.0, side=None, event_book=None, event_ms=None):
     """Route a proportional Manual Leader action through the proven COPY gateway.
 
     The leader quantity is never submitted: only the calculated follower delta
@@ -345,7 +366,7 @@ def execute_manual_leader(*, engine, account, client, operation, event_id, actio
             max(1.0, float(before_position.get('leverage', spec.get('leverage', 1)))))
     now = int(time.time() * 1000)
     book = event_book or ManualLeaderEventBook(engine.journal.path if engine and engine.journal else None)
-    if not book.accept(event_id, scope=policy.scope):
+    if not book.accept(event_id, scope=policy.scope, event_ms=event_ms):
         return {'event_id': event_id, 'status': 'DUPLICATE', 'action': action}
     plan = planner.plan_event(event_id, action, leader_margin=leader_margin,
         leader_capital=leader_capital, allocatable_capital=allocatable_capital,

@@ -88,6 +88,12 @@ class ManualLeaderCopyTests(unittest.TestCase):
         other = self.scope.model_copy(update={'tenant': 'u2'})
         self.assertTrue(book.accept('same-exchange-id', scope=other))
 
+    def test_older_leader_event_cannot_reopen_newer_state(self):
+        from core.manual_leader_copy import ManualLeaderEventBook
+        book = ManualLeaderEventBook()
+        self.assertTrue(book.accept('close-new', scope=self.scope, event_ms=200))
+        self.assertFalse(book.accept('open-old', scope=self.scope, event_ms=100))
+
     def test_copy_actions_are_proportional_and_provenanced(self):
         import test_engine_safety as fixture
         from core.manual_leader_copy import execute_manual_leader

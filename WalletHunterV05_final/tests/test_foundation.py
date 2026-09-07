@@ -120,3 +120,38 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(self.store.consume(scope(), "reader", lambda db,e: seen.append(e.event_id)), 0)
         self.assertEqual(len(seen), 1)
         self.assertEqual(len(self.store.replay(scope())), 1)
+
+
+class DataTests(unittest.TestCase):
+    # Reuse setup only, without inheriting the parent tests.
+    setUp = StoreTests.setUp
+    def test_cache_gap_reconnect_order_and_stale(self):
+        from types import SimpleNamespace
+        from core.foundation.data import MarketData, DataUnavailable
+        now = [1000]
+        calls = []
+        def read(query):
+            calls.append(query)
+            return {"time": now[0], "levels": [[{"px": "99"}], [{"px": "101"}]]}
+        hub = MarketData(SimpleNamespace(network="TESTNET", _info=read), self.store, lambda: now[0], max_age_ms=100, min_request_ms=10)
+        first = hub.get(scope(), instrument())
+        self.assertEqual(hub.get(scope(), instrument()), first)
+        self.assertEqual(len(calls), 1)
+        self.assertTrue(hub.ingest(scope(), first, 1))
+        self.assertFalse(hub.ingest(scope(), first, 1))
+        with self.assertRaises(DataUnavailable): hub.ingest(scope(), first, 3)
+        now[0] += 10
+        hub.get(scope(), instrument())
+        hub.disconnect()
+        with self.assertRaises(DataUnavailable): hub.get(scope(), instrument())
+        now[0] += 101
+        hub.get(scope(), instrument())
+        self.assertEqual(len(calls), 3)
+
+    def test_invalid_rest_never_returns_cached_fresh_data(self):
+        from types import SimpleNamespace
+        from core.foundation.data import MarketData, DataUnavailable
+        reader = SimpleNamespace(network="TESTNET", _info=lambda q: {"time": 1000, "levels": [[{"px": "NaN"}], [{"px": "1"}]]})
+        hub = MarketData(reader, self.store, lambda: 1000, max_age_ms=100, min_request_ms=10, capacity=1)
+        with self.assertRaises(DataUnavailable): hub.get(scope(), instrument())
+        with self.assertRaises(DataUnavailable): hub.get(scope("MAINNET"), instrument("MAINNET"))

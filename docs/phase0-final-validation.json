@@ -1,0 +1,176 @@
+{
+  "schema_version": 1,
+  "phase": "0 final validation",
+  "recorded_date": "2026-09-07",
+  "validated_source_revision": "18549f5b24156e86d5e451bb20d553f817a9ef37",
+  "status": "PARTIAL",
+  "application_baseline_readiness": {
+    "status": "PASS",
+    "scope": "Locally executable Phase 0 checks only; not full browser, deployment or trading readiness",
+    "full_validation_coverage": "PARTIAL"
+  },
+  "external_ci_execution_verification": "NOT_RUN",
+  "application_behavior_changed": false,
+  "application_files_changed": false,
+  "production_accessed": false,
+  "production_state_changed": false,
+  "host_features_installed_or_enabled": false,
+  "firewall_changed": false,
+  "phase1_started": false,
+  "phase1_findings_open": 10,
+  "tests": {
+    "python": {
+      "version": "3.12.14",
+      "discovered": 657,
+      "passed": 656,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 1,
+      "xfailed": 0,
+      "unexpected_successes": 0,
+      "duration_seconds": 102.157,
+      "skip": "test_archive_and_sensitive_members_have_owner_only_permissions: POSIX archive permissions are verified on Linux",
+      "skip_classification": "A: environment/platform"
+    },
+    "javascript": {"version": "24.19.0", "suites": 6, "discovered": 96, "passed": 96, "failed": 0, "skipped": 0, "duration_seconds": 1.828},
+    "existing_total": {"discovered": 753, "passed": 752, "failed": 0, "skipped": 1, "duration_seconds": 103.985},
+    "safety": {
+      "python_isolation_passed": 9,
+      "node_isolation_passed": 5,
+      "repository_guard_passed": 19,
+      "total": 33,
+      "passed": 33,
+      "failed": 0,
+      "duration_seconds": 0.332
+    },
+    "previous_baseline_counts_match": true,
+    "previous_javascript_suite_names_match": true,
+    "raw_local_report": ".phase0/final-validation-tests.json",
+    "raw_report_tracked": false,
+    "raw_report_sha256": "3b0eb7f1a5b8a0bc2e36559f80c002504199ab817c32fcfd1cdbd0e1e9529c87",
+    "warnings": [
+      "Existing Starlette TestClient HTTPX deprecation; no upgrade made",
+      "Expected urllib3 import-time IPv6 bind probe denied by test guard; not an exchange request"
+    ]
+  },
+  "static_source_checks": {
+    "python_ast_files_passed": 101,
+    "javascript_syntax_files_passed": 27,
+    "protected_original_files_unchanged": 131,
+    "baseline_index_files_scanned": 165,
+    "baseline_index_secret_findings": 0,
+    "reviewed_synthetic_fixture_exemptions": 1,
+    "application_imported_for_syntax_checks": false
+  },
+  "browser": {
+    "status": "SKIP",
+    "execution_status": "NOT_RUN",
+    "classification": "A: external environment limitation, not an application failure",
+    "suites": 4,
+    "scenarios": 20,
+    "executed": 0,
+    "passed": 0,
+    "failed": 0,
+    "skipped": 20,
+    "suite_scenario_counts": {"modes": 4, "user_orders": 4, "position_actions": 4, "startup": 8},
+    "original_harness_hashes_match": true,
+    "syntax_checks_passed": 4,
+    "playwright_version": "1.62.1",
+    "edge_observed_version": "152.0.4191.66",
+    "edge_signature": "Valid Microsoft signature",
+    "edge_executable_sha256": "02aaed8823a4e4bae8f672c620c9356bddebd68651d5bfd141ed9e6576d5f03c",
+    "edge_pinned_by_repository": false,
+    "browser_processes_launched": 0,
+    "blocker": "No available reproducibly isolated Edge runtime; observed firewall allows outbound traffic and page routing is not browser-wide egress denial",
+    "static_warnings": [
+      "No explicit service-worker block or WebSocket routing; current frontend usage not found",
+      "Node guard intentionally denies child processes and screenshot writes; unchanged",
+      "Modes fixture rescue -50 differs from current -40",
+      "Position-actions supporting trader fixture 1%/20x differs from current 10%/40x"
+    ],
+    "inventory": "docs/browser-baseline.json"
+  },
+  "linux_ci": {
+    "status": "PARTIAL",
+    "static_validation": "PASS",
+    "local_linux_execution": "NOT_RUN",
+    "hosted_actions_execution": "NOT_RUN",
+    "git_remotes": 0,
+    "environment_inventory": {
+      "wsl_status_exit_code": 50,
+      "wsl_installed": false,
+      "usable_container_or_vm_found": false,
+      "windows_sandbox_found": false,
+      "scope": "Configured command paths, services, installed-app and feature inventories, common runtime locations and available execution tools; not an exhaustive whole-disk search"
+    },
+    "workflow_syntax": {
+      "status": "PASS",
+      "parser": "Existing playwright-core 1.62.1 utilsBundle.yaml",
+      "yaml_version": "1.2",
+      "strict": true,
+      "unique_keys": true,
+      "errors": 0,
+      "warnings": 0,
+      "bash_parser": "Existing GNU Bash 5.2.37 x86_64-pc-msys, syntax only",
+      "ci_script_syntax": "PASS",
+      "workflow_run_blocks_syntax_passed": 2,
+      "ci_script_crlf_count": 0,
+      "ci_script_bom": false,
+      "actionlint_executed": false,
+      "shellcheck_executed": false
+    },
+    "dependency_validation": {
+      "pins_verified": 51,
+      "pip_check": "PASS",
+      "linux_targets": ["x86_64", "aarch64"],
+      "artifacts_per_target": 47,
+      "wheels_per_target": 46,
+      "sdists_per_target": 1,
+      "active_dependency_edges_per_target": 66,
+      "hash_metadata_tag_and_elf_errors": 0,
+      "maximum_required_glibc_tag": "2.34",
+      "build_package_metadata_compatible": true,
+      "linux_pyaes_build_executed": false,
+      "linux_install_executed": false,
+      "python_runtime_metadata_source": "https://raw.githubusercontent.com/actions/python-versions/main/versions-manifest.json",
+      "python_linux_24_04_archives_listed": ["x64", "arm64"],
+      "node_runtime_metadata_source": "https://nodejs.org/dist/v24.19.0/SHASUMS256.txt",
+      "node_linux_tar_gz_sha256": {
+        "x64": "f625d97cd707df4ff96254916fbc5ff014f09c09effe5a1e0ca8f6d41a8789d4",
+        "arm64": "d28c8a5bf0a808f0ed434a1dce8c54ae98f0371c0bd86ac58abc613f73e6643f"
+      }
+    },
+    "safety_review": {
+      "production_credential_requirements": false,
+      "production_entrypoint_execution": false,
+      "persisted_checkout_credentials": false,
+      "permissions": "contents: read",
+      "network_enabled_provisioning": "Hash-approved dependencies only, before repository test execution",
+      "test_network_boundary": "unshare --net; non-root; capabilities dropped; env -i; no-new-privileges; namespace preflight; copied language-guarded test runner",
+      "network_enabled_test_fallback": false,
+      "windows_ci_entrypoint_refused_before_tests": true,
+      "expected_windows_refusal_exit_code": 1,
+      "new_critical_static_findings": 0
+    },
+    "unexecuted_or_nonblocking_observations": [
+      "Hosted Ubuntu image is not digest-pinned",
+      "No separate ARM64 CI execution job",
+      "pyaes Linux build and POSIX permission test require actual Linux execution",
+      "CI reports are not uploaded as artifacts",
+      "Temporary HOME has no explicit cleanup on ephemeral runner",
+      "Shell drops CapInh but Python preflight does not independently assert it"
+    ]
+  },
+  "validated_control_hashes": {
+    ".github/workflows/baseline.yml": "64432ba68b973b0320e0e22c57411c1d214f3136ea4bcf880eece1cef7132f03",
+    "tools/baseline/ci_offline.sh": "35716c8ff2c43ae767179663683a8aafebb2a54126df2b7a7e098bcb29ab1c8b",
+    "tools/baseline/ci_checks.py": "cd73a566659272698aa7e331202702e7bfe5a82ad600642f7d1b8d7ec6a9183a",
+    "tools/baseline/run_tests.py": "6ec6a1dfd3d781e20184e31c931e4752d805629c69276b3363ef7477636aa38e"
+  },
+  "remaining_blockers": [
+    "Approved reproducibly isolated Edge test environment for 20 original scenarios",
+    "Approved Linux runtime for installation, namespace and POSIX execution checks",
+    "Git remote/external runner access for actual hosted GitHub Actions verification"
+  ],
+  "recommendation": "Phase 1 may be reviewed and explicitly approved with these coverage limits; no automatic Phase 1 start or production readiness claim"
+}

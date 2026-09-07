@@ -5,6 +5,10 @@ not a production readiness certificate. The offline unit baseline is PASS; the
 four additional browser harnesses and the Linux CI job have not been executed
 here. No Phase 1 application fix is included.
 
+The [final local validation follow-up](PHASE0_FINAL_VALIDATION.md) records a
+fresh matching unit run and separates locally passing baseline checks from
+external browser/Linux execution limits. Original evidence below is retained.
+
 ## What changed
 
 - Git exclusions and byte-preserving attributes; no credential rotation, history

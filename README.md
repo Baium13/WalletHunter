@@ -6,6 +6,9 @@ not repair trading defects, change policies, deploy code or rewrite runtime stat
 
 Start with [Phase 0 status and safe commands](docs/PHASE0.md).
 
+See [final local validation and external execution limits](docs/PHASE0_FINAL_VALIDATION.md)
+for the follow-up result; no Phase 1 changes are included.
+
 - [Exact dependencies and installation](docs/DEPENDENCIES.md)
 - [Environment contract and actual defaults](docs/ENVIRONMENT.md)
 - [Existing entrypoints and modules](docs/ENTRYPOINTS.md)

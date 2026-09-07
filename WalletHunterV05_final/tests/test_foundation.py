@@ -1,5 +1,7 @@
 """Core architecture: disposable storage and fake transport only."""
 import unittest
+import tempfile
+from pathlib import Path
 from pydantic import ValidationError
 from core.foundation.contracts import *
 
@@ -79,3 +81,42 @@ class LedgerTests(unittest.TestCase):
         p = portfolio(positions=(position(),))
         self.assertEqual(Ledger(p, ("a",)).allocations,
             Ledger(PortfolioSnapshot.model_validate_json(p.model_dump_json()), ("a",)).allocations)
+
+
+class StoreTests(unittest.TestCase):
+    def setUp(self):
+        from core.foundation.store import Store
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.path = Path(self.tmp.name)/"core.sqlite3"
+        self.store = Store(self.path)
+
+    def test_durability_order_replay_scope_and_idempotence(self):
+        from core.foundation.store import Store, ReplayReader
+        self.store.publish_portfolio(portfolio(), "trace")
+        self.assertFalse(self.store.publish_portfolio(portfolio(), "trace"))
+        self.store.publish_portfolio(portfolio(revision=2, received_ms=1001), "trace")
+        rows = self.store.replay(scope())
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows, ReplayReader(Store(self.path), scope()).read())
+        self.assertEqual(self.store.replay(scope(tenant="other")), ())
+        self.assertEqual(self.store.replay(scope(network="MAINNET")), ())
+        with self.assertRaises(ValueError): self.store.replay(scope(), limit=501)
+
+    def test_out_of_order_collision_and_owner_conflict(self):
+        self.store.publish_portfolio(portfolio(), "trace")
+        with self.assertRaises(ValueError): self.store.publish_portfolio(portfolio(equity=3100.), "trace")
+        with self.assertRaises(ValueError): self.store.publish_portfolio(portfolio(scope=scope(tenant="other")), "trace")
+        seq, event = self.store.replay(scope())[0]
+        with self.assertRaises(ValueError): self.store.append(event.model_copy(update={"correlation_id": "other"}))
+        self.assertEqual(self.store.replay(scope())[0][0], seq)
+
+    def test_consumer_failure_does_not_lose_events_or_advance_cursor(self):
+        self.store.publish_portfolio(portfolio(), "trace")
+        def failed(db, event): raise RuntimeError("consumer unavailable")
+        with self.assertRaises(RuntimeError): self.store.consume(scope(), "reader", failed)
+        seen = []
+        self.assertEqual(self.store.consume(scope(), "reader", lambda db,e: seen.append(e.event_id)), 1)
+        self.assertEqual(self.store.consume(scope(), "reader", lambda db,e: seen.append(e.event_id)), 0)
+        self.assertEqual(len(seen), 1)
+        self.assertEqual(len(self.store.replay(scope())), 1)

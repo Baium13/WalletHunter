@@ -1,0 +1,20 @@
+{
+  "task": "Canonical copy migration",
+  "status": "PARTIAL",
+  "application_revision": "9d8b3f96959f828d0b1e2b93e67ada1ea2700254",
+  "implemented": ["Explicit fixture and production network boundary", "OrderIntent v2 source weights, parent identity and leverage prerequisite", "Version 1 intent wire/hash compatibility", "Exact copy IOC primitive using SDK order cloid and expiry"],
+  "original_17": {"passed": 17, "route": "legacy; canonical migration not yet exercised"},
+  "targeted_engine_p11_p12": {"passed": 110, "tests": 110},
+  "targeted_core_sdk": {"passed": 97, "tests": 97},
+  "python": {"passed": 811, "tests": 812, "failed": 0, "errors": 0, "skipped": 1, "duration_seconds": 119.25},
+  "javascript": {"passed": 96, "tests": 96},
+  "safety": {"repository": 56, "sandbox": 14, "passed": 70},
+  "full_report_sha256": "5294860293220d9b8234be62f1d9265bb190ac7648cf7f91e550066726f3988b",
+  "copy_route_migrated": false,
+  "new_sdk_primitive_connected_to_copy": false,
+  "remaining": ["Live account evidence and pool capacities", "Linked legacy/canonical reservations", "Live COPY_POLICY risk", "Adapter-based ExecutionGateway", "Connected live settlement/recovery", "Copy write replacement, leverage and emergency scope", "Actual migrated-route E2E and bypass guard"],
+  "external_api_impossibility": null,
+  "production_state_changed": false,
+  "real_orders_executed": false,
+  "warnings": ["Existing POSIX permission test skipped on Windows", "Existing Starlette HTTPX deprecation warning", "Initial fixture-only run exposed 12 related source-fixture failures; same-network synthetic provenance fixed without changing assertions", "Migration acceptance criteria remain unmet"]
+}

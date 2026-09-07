@@ -20,11 +20,34 @@ SPRINT_FILE = "docs/protected-source-phase1.json"
 BLOCK1_FILE = "docs/protected-source-block1.json"
 BLOCK1_PARENT = "201bd595c0d349149e228dbc261bbb8f713ea5a1a2e0b8018667a029b2db185e"
 READTHROUGH_FILE = "docs/protected-source-block1-readthrough.json"
+COPY_INTERFACE_FILE = "docs/protected-source-copy-interface.json"
+COPY_INTERFACE_PARENT = "7417735956038133a279847eec531ce2cf9d79c65003957a9797006ba280a014"
+COPY_INTERFACE_PATHS = {"WalletHunterV05_final/" + name for name in (
+    "core/foundation/contracts.py", "core/trading_engine.py", "integrations/hyperliquid.py",
+    "tests/test_engine_safety.py", "tests/test_source_allocation.py", "tests/test_journal_bridge.py")}
 READTHROUGH_PARENT = "1c5467be2f29f3760ea1e2828a2f709f476c3744a24a34033c71f9aa9c36bd91"
 READTHROUGH_PATHS = {"WalletHunterV05_final/core/foundation/journal_bridge.py",
     "WalletHunterV05_final/core/foundation/live_reconciliation.py", "WalletHunterV05_final/tests/test_journal_bridge.py"}
 BLOCK1_PATHS = {"WalletHunterV05_final/core/foundation/" + name + ".py" for name in
                 ("__init__", "contracts", "ledger", "store", "data", "risk", "execution")} | {"WalletHunterV05_final/tests/test_foundation.py"}
+
+
+def reviewed_copy_interface(previous, document, parent_digest):
+    if (not isinstance(document, dict) or set(document) != {"phase", "parent_manifest_sha256", "files"}
+            or document["phase"] != "copy-interface" or parent_digest != COPY_INTERFACE_PARENT
+            or document["parent_manifest_sha256"] != parent_digest):
+        raise ValueError("invalid_copy_interface_parent_or_schema")
+    rows = document["files"]
+    if not isinstance(rows, dict) or set(rows) != COPY_INTERFACE_PATHS:
+        raise ValueError("copy_interface_requires_exact_reviewed_paths")
+    for name, row in rows.items():
+        if (not isinstance(row, dict) or set(row) != {"previous_sha256", "reviewed_sha256"}
+                or name not in previous or row["previous_sha256"] != previous[name]
+                or not isinstance(row["reviewed_sha256"], str)
+                or not re.fullmatch(r"[a-f0-9]{64}", row["reviewed_sha256"])
+                or row["reviewed_sha256"] == row["previous_sha256"]):
+            raise ValueError("invalid_copy_interface_hash_transition")
+    return rows
 
 
 def reviewed_block1(previous, document, parent_digest):
@@ -199,6 +222,17 @@ def check(root):
         effective.update(rows)
         report.update(effective_protected_files=len(effective))
         report["transition_chain"].append({"phase": "block1-readthrough", "files": rows})
+    copy_interface = root / COPY_INTERFACE_FILE
+    if copy_interface.exists() or copy_interface.is_symlink():
+        try:
+            if copy_interface.is_symlink() or not readthrough.is_file() or readthrough.is_symlink():
+                raise ValueError("copy_interface_requires_readthrough_parent")
+            rows = reviewed_copy_interface(effective, json.loads(copy_interface.read_bytes()), hashlib.sha256(readthrough.read_bytes()).hexdigest())
+        except (ValueError, OSError) as exc:
+            report.update(status="FAIL", reason=str(exc))
+            return report
+        effective.update({name: row["reviewed_sha256"] for name, row in rows.items()})
+        report["transition_chain"].append({"phase": "copy-interface", "files": rows})
     report["changed"] = [name for name, digest in effective.items()
                          if (root / name).is_symlink() or not (root / name).is_file()
                          or hashlib.sha256((root / name).read_bytes()).hexdigest() != digest]

@@ -1,0 +1,12 @@
+{
+  "phase": "copy-interface",
+  "parent_manifest_sha256": "7417735956038133a279847eec531ce2cf9d79c65003957a9797006ba280a014",
+  "files": {
+    "WalletHunterV05_final/core/foundation/contracts.py": {"previous_sha256": "c8d5ec529ca3eed87461f08d1238c8191f7917bd0e27004a4e5bf71bea01221d", "reviewed_sha256": "86c47bddc5bb615a6ed0f61ecb0c55ef7a9994a279e00c1b367d0142b3d32b89"},
+    "WalletHunterV05_final/core/trading_engine.py": {"previous_sha256": "e7894beefda089d16cb1192040fa2b3eb232b62d3cb26255c4fccd2200f7b7aa", "reviewed_sha256": "6003c2d1c281706e76a479f02ccc230cbdd7bb25227756447976980f648ba1cf"},
+    "WalletHunterV05_final/integrations/hyperliquid.py": {"previous_sha256": "543e23c293e46b4cd6694f001c9fd0f0d31abe37066b4a3ae93b99160946806e", "reviewed_sha256": "7cef63e7306b092f572b95d2509cfee14c237fb0d25c2154da3edbf215c2d9d7"},
+    "WalletHunterV05_final/tests/test_engine_safety.py": {"previous_sha256": "7f293b7a62281dc5d55c57bddc651b23609104f6afde4850a48a8e3d0e238de4", "reviewed_sha256": "a45e4b5a6d3bac466e7d6aee32d8a7c0b5b5d07fff912b7a3dc787e35b7e5e28"},
+    "WalletHunterV05_final/tests/test_source_allocation.py": {"previous_sha256": "3aa7d3c96d485a610e27e0fa69b03ab651d1ce48d4387b4a35acf83143e85cee", "reviewed_sha256": "c3d320df5ca7fad2bce0bcdae6c11d77f8de951863b5f380e16f80f4457e1429"},
+    "WalletHunterV05_final/tests/test_journal_bridge.py": {"previous_sha256": "22ab4eff92f470025abb4f41a1e3bbbab5b8107e0961c139f459f213b818a784", "reviewed_sha256": "2051dd52000686e9543e902cca95c2377bee331e78014e99fd2ceff625bef665"}
+  }
+}

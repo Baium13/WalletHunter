@@ -515,6 +515,24 @@ class SprintTransitionTests(unittest.TestCase):
 
 
 class Block1TransitionTests(unittest.TestCase):
+    def test_copy_interface_transition_is_exact_and_cannot_change_fixed_thirds(self):
+        import copy
+        previous = {name: "0"*64 for name in protected.COPY_INTERFACE_PATHS}
+        document = {"phase": "copy-interface", "parent_manifest_sha256": protected.COPY_INTERFACE_PARENT,
+            "files": {name: {"previous_sha256": "0"*64, "reviewed_sha256": "1"*64} for name in previous}}
+        self.assertEqual(protected.reviewed_copy_interface(previous, document, protected.COPY_INTERFACE_PARENT), document["files"])
+        self.assertNotIn(protected.P12_NEW_PATH, protected.COPY_INTERFACE_PATHS)
+        self.assertNotIn(protected.P11_REGRESSION_PATH, protected.COPY_INTERFACE_PATHS)
+        for fault in ("parent", "extra", "previous", "digest"):
+            changed = copy.deepcopy(document)
+            name = next(iter(changed["files"]))
+            if fault == "parent": changed["parent_manifest_sha256"] = "0"*64
+            if fault == "extra": changed["files"][protected.P12_NEW_PATH] = changed["files"][name]
+            if fault == "previous": changed["files"][name]["previous_sha256"] = "2"*64
+            if fault == "digest": changed["files"][name]["reviewed_sha256"] = "*"
+            with self.subTest(fault=fault), self.assertRaises(ValueError):
+                protected.reviewed_copy_interface(previous, changed, protected.COPY_INTERFACE_PARENT)
+
     def test_readthrough_cannot_override_prior_core_or_strategy(self):
         import copy
         previous = {name: "0"*64 for name in protected.BLOCK1_PATHS}

@@ -1,0 +1,215 @@
+"""Immutable wire contracts. No free-form event dictionaries or credentials."""
+from typing import Annotated, Literal
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+Amount = Annotated[float, Field(strict=True, ge=0, allow_inf_nan=False)]
+Positive = Annotated[float, Field(strict=True, gt=0, allow_inf_nan=False)]
+Millis = Annotated[int, Field(strict=True, ge=0)]
+Name = Annotated[str, Field(pattern=r"^[A-Za-z0-9_.-]{1,64}$")]
+Network = Literal["MAINNET", "TESTNET"]
+
+
+class Contract(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
+    version: Literal[1] = 1
+
+
+class Scope(Contract):
+    tenant: Name
+    account: Annotated[str, Field(pattern=r"^0x[0-9a-f]{40}$")]
+    network: Network
+
+
+class InstrumentId(Contract):
+    network: Network
+    venue: Literal["HYPERLIQUID"] = "HYPERLIQUID"
+    dex: Annotated[str, Field(pattern=r"^[a-z0-9_-]{0,24}$")] = ""
+    symbol: Annotated[str, Field(pattern=r"^[A-Z0-9][A-Z0-9._-]{0,31}$")]
+
+    @property
+    def market_key(self):
+        return f"{self.dex+':' if self.dex else ''}{self.symbol}|{self.dex}"
+
+
+class MarketSnapshot(Contract):
+    instrument: InstrumentId
+    exchange_ms: Millis | None
+    received_ms: Millis
+    price: Positive | None
+    bid: Positive | None
+    ask: Positive | None
+    completeness: Literal["COMPLETE", "UNKNOWN", "GAP"]
+    freshness: Literal["FRESH", "STALE"]
+    source: Literal["REST", "STREAM", "FAKE"]
+    source_version: Name
+
+    @model_validator(mode="after")
+    def complete(self):
+        if self.completeness == "COMPLETE" and any(x is None for x in (self.exchange_ms, self.price, self.bid, self.ask)):
+            raise ValueError("Complete snapshot requires explicit evidence")
+        if self.bid is not None and self.ask is not None and self.bid > self.ask:
+            raise ValueError("Crossed book")
+        return self
+
+
+class Contribution(Contract):
+    source: Name
+    notional: Positive
+
+
+class Position(Contract):
+    instrument: InstrumentId
+    side: Literal["LONG", "SHORT"]
+    size: Positive
+    entry_price: Positive
+    notional: Positive
+    margin: Amount | None
+    leverage: Annotated[int, Field(strict=True, ge=1)]
+    held: bool = False
+    evidence: Literal["VERIFIED", "EXTERNAL", "UNKNOWN"]
+    order_ids: tuple[Name, ...] = ()
+    contributions: tuple[Contribution, ...] = ()
+
+    @model_validator(mode="after")
+    def provenance(self):
+        if self.evidence != "VERIFIED" and self.contributions:
+            raise ValueError("Unproven attribution")
+        if self.evidence == "VERIFIED" and (not self.order_ids or not self.contributions):
+            raise ValueError("Missing ownership evidence")
+        if len({c.source for c in self.contributions}) != len(self.contributions):
+            raise ValueError("Duplicate source contribution")
+        return self
+
+
+class OpenOrder(Contract):
+    instrument: InstrumentId
+    order_id: Name
+    size: Positive
+    reduce_only: bool
+
+
+class PortfolioSnapshot(Contract):
+    scope: Scope
+    revision: Annotated[int, Field(strict=True, ge=1)]
+    exchange_ms: Millis | None
+    received_ms: Millis
+    equity: Amount | None
+    sizing_capital: Amount | None
+    available_collateral: Amount | None
+    positions: tuple[Position, ...] = ()
+    orders: tuple[OpenOrder, ...] = ()
+    completeness: Literal["COMPLETE", "UNKNOWN"]
+    evidence: Literal["EXCHANGE", "FAKE", "LEGACY_UNKNOWN"]
+
+    @model_validator(mode="after")
+    def coherent(self):
+        if any(p.instrument.network != self.scope.network for p in (*self.positions, *self.orders)):
+            raise ValueError("Portfolio network mismatch")
+        if len({p.instrument for p in self.positions}) != len(self.positions):
+            raise ValueError("Duplicate position")
+        if self.completeness == "COMPLETE" and any(x is None for x in (self.exchange_ms, self.equity, self.sizing_capital, self.available_collateral)):
+            raise ValueError("Unknown collateral cannot be complete")
+        if self.equity is not None and self.available_collateral is not None and self.available_collateral > self.equity:
+            raise ValueError("Available collateral exceeds equity")
+        return self
+
+
+class Allocation(Contract):
+    scope: Scope
+    source: Name
+    limit: Amount
+    committed: Amount
+    reserved: Amount
+    available: Amount
+    revision: Annotated[int, Field(strict=True, ge=1)]
+    received_ms: Millis
+
+
+class AnalysisResult(Contract):
+    """Research only: deliberately has no authorization or executable order."""
+    instrument: InstrumentId
+    correlation_id: Name
+    created_ms: Millis
+    evidence_ids: tuple[Name, ...]
+    conclusion: Literal["NO_OPINION", "RESEARCH_ONLY"]
+
+
+class OrderIntent(Contract):
+    intent_id: Name
+    scope: Scope
+    instrument: InstrumentId
+    source: Name
+    action: Literal["OPEN", "ADD", "REDUCE", "CLOSE"]
+    side: Literal["BUY", "SELL"]
+    size: Positive
+    limit_price: Positive
+    order_type: Literal["IOC"] = "IOC"
+    leverage: Annotated[int, Field(strict=True, ge=1)]
+    slippage_pct: Annotated[float, Field(strict=True, gt=0, le=10, allow_inf_nan=False)]
+    authorization: Literal["USER_CONFIRMED", "COPY_POLICY", "PAPER_TEST"]
+    execution_mode: Literal["FAKE", "PAPER", "LIVE"]
+    correlation_id: Name
+    created_ms: Millis
+    expires_ms: Millis
+
+    @model_validator(mode="after")
+    def coherent(self):
+        if self.instrument.network != self.scope.network or self.expires_ms <= self.created_ms:
+            raise ValueError("Invalid intent identity/lifetime")
+        return self
+
+
+class RiskDecision(Contract):
+    intent_id: Name
+    intent_hash: Annotated[str, Field(pattern=r"^[a-f0-9]{64}$")]
+    outcome: Literal["APPROVED", "REDUCED", "REJECTED"]
+    reasons: tuple[Name, ...]
+    approved_size: Amount
+    approved_limit: Amount
+    portfolio_revision: Annotated[int, Field(strict=True, ge=1)]
+    created_ms: Millis
+
+
+class Fill(Contract):
+    intent_id: Name
+    instrument: InstrumentId
+    order_id: Name
+    trade_id: Name
+    side: Literal["BUY", "SELL"]
+    size: Positive
+    price: Positive
+    exchange_ms: Millis
+
+
+class ExecutionReceipt(Contract):
+    intent_id: Name
+    scope: Scope
+    status: Literal["SUBMITTING", "FILLED", "PARTIAL", "UNKNOWN", "REJECTED"]
+    order_ids: tuple[Name, ...] = ()
+    fills: tuple[Fill, ...] = ()
+    reconciliation: Literal["CONFIRMED", "PARTIAL", "RECONCILIATION_REQUIRED", "REJECTED"]
+    received_ms: Millis
+    provenance: Literal["FAKE_EXCHANGE", "EXCHANGE", "UNKNOWN"]
+
+
+Payload = MarketSnapshot | PortfolioSnapshot | OrderIntent | RiskDecision | ExecutionReceipt | AnalysisResult
+
+
+class DomainEvent(Contract):
+    event_id: Name
+    event_type: Literal["MARKET_SNAPSHOT", "PORTFOLIO_SNAPSHOT", "LEADER_EVENT", "ORDER_INTENT_CREATED",
+        "RISK_APPROVED", "RISK_REJECTED", "ORDER_SUBMITTED", "ORDER_PARTIALLY_FILLED", "ORDER_FILLED",
+        "EXECUTION_UNKNOWN", "POSITION_OPENED", "POSITION_CHANGED", "POSITION_CLOSED", "RECONCILIATION_REQUIRED"]
+    correlation_id: Name
+    scope: Scope
+    event_ms: Millis
+    received_ms: Millis
+    payload: Payload
+
+    @model_validator(mode="after")
+    def scoped(self):
+        scope = getattr(self.payload, "scope", self.scope)
+        instrument = getattr(self.payload, "instrument", None)
+        if scope != self.scope or (instrument and instrument.network != self.scope.network):
+            raise ValueError("Event scope mismatch")
+        return self

@@ -672,12 +672,15 @@ async def scheduled_report(uid, p, c, days, title):
         remember_notification(uid, p, message)
     except Exception as exc: print("[REPORT]", uid, exc)
 
-async def watcher():
-    while True:
-        try:
-            for uid_text, p in store.load().get("profiles", {}).items():
-                if not p.get("copy_enabled") or not p.get("account") or not p.get("leaders"): continue
-                uid = int(uid_text); c = account_client(uid, p); snapshots = []
+async def watcher_cycle():
+    # Bound concurrent users, but never cancel a possibly submitted execution.
+    # SDK transport timeouts bound individual network calls instead.
+    limit = asyncio.Semaphore(4)
+    async def process(uid_text, p):
+        async with limit:
+            try:
+                if not p.get("copy_enabled") or not p.get("account") or not p.get("leaders"): return
+                uid = int(uid_text); c = await asyncio.to_thread(account_client, uid, p); snapshots = []
                 for wallet in p["leaders"][:3]:
                     positions, bal = await asyncio.gather(asyncio.to_thread(reader.positions, wallet, p.get("crypto_enabled", True), p.get("stocks_enabled", True)), asyncio.to_thread(reader.balance, wallet))
                     snapshots.append({"wallet":wallet, "positions":positions, "balance":bal, "enabled":leader_is_enabled(p, wallet)})
@@ -692,7 +695,15 @@ async def watcher():
                     await scheduled_report(uid, p, c, 7, "ЕЖЕНЕДЕЛЬНЫЙ ОТЧЁТ")
                     runtime["weekly_report"] = week
                 store.update_runtime(uid, runtime)
-        except Exception as exc: print("[WATCHER]", exc)
+            except Exception as exc:
+                print("[WATCHER USER]", uid_text, type(exc).__name__)
+    await asyncio.gather(*(process(uid, p) for uid, p in store.load().get("profiles", {}).items()))
+
+async def watcher():
+    while True:
+        try:
+            await watcher_cycle()
+        except Exception as exc: print("[WATCHER CYCLE]", type(exc).__name__)
         await asyncio.sleep(S.watch_interval)
 
 

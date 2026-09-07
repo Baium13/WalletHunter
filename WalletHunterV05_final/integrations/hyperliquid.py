@@ -19,7 +19,7 @@ class Snapshot:
 class HyperliquidAccount:
     def __init__(self, address, private_key, mode="MAINNET"):
         self.address=address.strip(); self.base=constants.TESTNET_API_URL if mode=="TESTNET" else constants.MAINNET_API_URL
-        self.info=Info(self.base,skip_ws=True)
+        self.info=Info(self.base,skip_ws=True,timeout=20)
         self.exchange=None
         self._xyz_sz_decimals={}
         if private_key:
@@ -31,7 +31,7 @@ class HyperliquidAccount:
                 # Load both the original crypto perp DEX and XYZ metadata.
                 # Without the empty DEX, SDK name_to_asset("BTC") raises
                 # KeyError before update_leverage can submit a crypto order.
-                perp_dexs=["", "xyz"]
+                perp_dexs=["", "xyz"], timeout=20
             )
     def snapshot(self,dex=""):
         state=self.info.user_state(self.address,dex=dex); m=state.get("marginSummary") or {}

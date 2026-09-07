@@ -8,6 +8,26 @@ import unittest
 class StopLoop(BaseException):pass
 
 class ConfirmationSchedulerTests(unittest.TestCase):
+    def test_copy_cycle_isolates_failure_and_keeps_other_users_running(self):
+        source=Path(__file__).resolve().parents[1]/'desktop/main.py'
+        node=next(n for n in ast.parse(source.read_text()).body if isinstance(n,ast.AsyncFunctionDef) and n.name=='watcher_cycle')
+        calls=[]; messages=[]
+        profiles={str(uid):{'copy_enabled':True,'account':{'address':str(uid)},'leaders':[str(uid)],'notifications':False} for uid in (1,2)}
+        async def sync(uid,p,c,snapshots,notify):
+            calls.append(uid)
+            if uid==1:raise ValueError('SECRET failure')
+            self.assertEqual(snapshots[0]['wallet'],'2')
+        from datetime import datetime
+        env={'asyncio':asyncio,'datetime':datetime,'store':SimpleNamespace(load=lambda:{'profiles':profiles},update_runtime=lambda uid,r:None),
+             'account_client':lambda uid,p:object(),'reader':SimpleNamespace(positions=lambda *args:[],balance=lambda *args:300),
+             'leader_is_enabled':lambda *args:True,'engine':SimpleNamespace(sync_profile=sync),'notify':lambda *args:None,
+             'print':lambda *args:messages.append(args)}
+        exec(compile(ast.Module(body=[node],type_ignores=[]),str(source),'exec'),env)
+        asyncio.run(env['watcher_cycle']())
+        self.assertCountEqual(calls,[1,2])
+        self.assertNotIn('SECRET',str(messages))
+        self.assertIn('ValueError',str(messages))
+
     def run_worker(self,name,issue=None):
         source=Path(__file__).resolve().parents[1]/'desktop/main.py'
         tree=ast.parse(source.read_text(encoding='utf-8-sig'))

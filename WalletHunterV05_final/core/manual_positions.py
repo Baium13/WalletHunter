@@ -235,7 +235,8 @@ class ManualPositions:
         self._begin(key, "close", position=deepcopy(position))
         try:
             if position:
-                response = self.client.market_close(coin, dex)
+                from core.confirmed_execution_adapter import manual_close
+                response = manual_close(self.client, coin, dex)
                 remaining, flat = self._wait(lambda: self._position(key), lambda p: p is None)
                 if not flat:
                     self._record(key, status="incomplete", remaining=remaining,

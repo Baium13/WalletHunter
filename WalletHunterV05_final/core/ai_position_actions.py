@@ -557,8 +557,8 @@ class AiPositionActions:
             signer = signing_factory()
             if str(getattr(signer, "address", "")).lower() != row["account"] or _network(signer) != payload["network"] or now+max(0,int((self.monotonic()-started)*1000)) >= row["expires_ms"]:
                 raise ValueError("signer_mismatch_or_expiry")
-            response = signer.submit_position_ioc(payload["coin"], payload["is_buy"], payload["size"], payload["limit_price"],
-                payload["reduce_only"], payload["cloid"], payload["dex"], expires_ms=row["expires_ms"], expected_position=_identity(payload["position_before"]))
+            from core.confirmed_execution_adapter import confirmed_ai_position
+            response = confirmed_ai_position(signer, {**payload, 'expected_position': _identity(payload['position_before'])}, row['expires_ms'])
             status, result = self._verify(public_client, payload, response, lambda: now+max(0,int((self.monotonic()-started)*1000)))
         except Exception:
             status, result = "UNKNOWN", {"reason": "intervention_unconfirmed_no_retry", "copy_on_hold": True}

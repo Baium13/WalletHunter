@@ -633,9 +633,8 @@ class AiUserOrders:
                 raise ValueError("signing_account_or_network_mismatch")
             if now + max(0, int((self.monotonic()-started)*1000)) >= proposal["expires_ms"]:
                 raise ValueError("proposal_expired_before_submission")
-            response = signing_client.submit_user_ioc(payload["coin"], payload["direction"] == "LONG", payload["size"],
-                                                      payload["limit_price"], payload["leverage"], payload["cloid"],
-                                                      expires_ms=proposal["expires_ms"])
+            from core.confirmed_execution_adapter import confirmed_ai_order
+            response = confirmed_ai_order(signing_client, payload, proposal["expires_ms"])
             status, result = self._verify(public_client, payload, response)
         except Exception:
             status, result = "UNKNOWN", {"reason": "submission_or_verification_unconfirmed_no_retry"}

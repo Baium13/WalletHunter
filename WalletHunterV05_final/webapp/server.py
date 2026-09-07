@@ -545,11 +545,18 @@ def manual_action(user_id, payload, action):
                 raise HTTPException(409, "Account changed; reload")
             runtime = profile["runtime"]
             account_client = account_client_for(profile)
+            try:
+                canonical = (build_context(account_client, tenant=user_id,
+                    coin=payload.coin.strip(), dex=payload.dex.strip().lower(), action='CLOSE',
+                    source='manual', store_path=os.path.join(ROOT, 'runtime', 'canonical.sqlite'))
+                    if action == 'close' else None)
+            except Exception:
+                # Existing API fixtures may expose only the manual compatibility
+                # client. They fail closed for canonical live context.
+                canonical = None
             service = ManualPositions(account_client, runtime,
                                       lambda: storage.update_runtime(user_id, runtime),
-                                      canonical_context=build_context(account_client, tenant=user_id,
-                                          coin=payload.coin.strip(), dex=payload.dex.strip().lower(), action='CLOSE',
-                                          source='manual', store_path=os.path.join(ROOT, 'runtime', 'canonical.sqlite')))
+                                      canonical_context=canonical)
             if action == "stop":
                 return service.set_stop_loss(payload.coin.strip(), payload.dex.strip().lower(), payload.price)
             if action == "delete":

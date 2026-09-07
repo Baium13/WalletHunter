@@ -64,6 +64,39 @@ class ExactExchange:
 
 
 class PositionActionSdkTests(unittest.TestCase):
+    def test_ai_closure_requires_complete_balanced_unique_fills_and_flat_market(self):
+        from types import SimpleNamespace
+        client = HyperliquidAccount.__new__(HyperliquidAccount)
+        client.address = ACCOUNT
+        client.info = SimpleNamespace(post=lambda *args: None)
+        client.positions = lambda *args: []
+        client.frontend_open_orders = lambda *args: []
+        entry = {"coin": "BTC", "tid": 1, "oid": 7, "sz": "1", "side": "B"}
+        close = {"coin": "BTC", "tid": 2, "oid": 8, "sz": "1", "side": "A"}
+        payload, result = {"coin": "BTC", "created_ms": 0}, {"oid": 7, "filled_size": 1}
+        with patch("integrations.hyperliquid.fetch_fills", return_value=[entry, close]):
+            self.assertEqual(client.verify_ai_closed(payload, result)["status"], "CLOSED_RECONCILED")
+            client.frontend_open_orders = lambda *args: [{"coin": "BTC", "oid": 9}]
+            with self.assertRaises(ValueError): client.verify_ai_closed(payload, result)
+        client.frontend_open_orders = lambda *args: []
+        for fills in ([], [entry], [entry, close, close], [dict(entry, sz="NaN"), close], [dict(entry, oid=99), close]):
+            with self.subTest(fills=fills), patch("integrations.hyperliquid.fetch_fills", return_value=fills), self.assertRaises(ValueError):
+                client.verify_ai_closed(payload, result)
+
+    def test_reduce_uses_explicit_percent_slippage_and_reduce_only_ioc(self):
+        from types import SimpleNamespace
+        calls = []
+        client = HyperliquidAccount.__new__(HyperliquidAccount)
+        client._sz_decimals = lambda coin: 4
+        def limit(coin, buy, slippage, price):
+            calls.append(("price", coin, buy, slippage, price))
+            return price*(1+slippage if buy else 1-slippage)
+        client.exchange = SimpleNamespace(info=SimpleNamespace(post=lambda *args: {"levels": [[{"px": "100"}], [{"px": "101"}]]}),
+            _slippage_price=limit, order=lambda *args, **kwargs: calls.append(("order", args, kwargs)))
+        client.market_reduce("BTC", False, 1, slippage_pct=0.5)
+        self.assertEqual(calls[0], ("price", "BTC", False, 0.005, 100.))
+        self.assertEqual(calls[1], ("order", ("BTC", False, 1., 99.5, {"limit": {"tif": "Ioc"}}), {"reduce_only": True}))
+
     def test_invalid_network_is_rejected_before_any_transport(self):
         from core.settings import validated_network
         from core.hyperliquid import HyperliquidReader

@@ -1045,6 +1045,23 @@ class CopyEngine:
                 positions = (await asyncio.to_thread(client.positions, True, True)) if live else list((runtime.get("positions") or {}).values())
                 for position in positions:
                     if self._key(position["coin"], position.get("dex")) in managed:
+                        # Emergency permission is "close managed", not "adopt
+                        # every position named in stale JSON". Recheck evidence.
+                        if live:
+                            record = self.journal.owned(account["address"]).get(market_key(position), {}) if self.journal else {}
+                            saved = record.get("position") or {}
+                            network = getattr(client, "network", None)
+                            if (not record.get("managed") or market_key(position) in self.journal.pending(account["address"])
+                                    or (network and record.get("network") != network)
+                                    or saved.get("side") != position.get("side")
+                                    or saved.get("size") != position.get("size")
+                                    or saved.get("entry_price") != position.get("entry_price")):
+                                raise ValueError("Emergency ownership ambiguous; position retained for reconciliation")
+                            history = await asyncio.to_thread(self.reader._info, {"type": "userFillsByTime", "user": account["address"],
+                                "startTime": record["verified_at_ms"], "aggregateByTime": False})
+                            if (not isinstance(history, list) or len(history) >= 2000
+                                    or any(self._key(row["coin"], row.get("dex")) == self._key(position["coin"], position.get("dex")) for row in history)):
+                                raise ValueError("Emergency fill history requires reconciliation; position retained")
                         closed = await self._close(account, client, position, runtime=runtime,
                             persist=lambda: self._persist_mode_runtime(user_id, profile, runtime, live))
                         results.append(closed)

@@ -119,6 +119,30 @@ class ExchangeBoundary:
 
 
 class EngineSafetyTests(unittest.TestCase):
+    def test_emergency_does_not_close_network_ambiguous_managed_position(self):
+        self.client.network = self.engine.reader.network = "MAINNET"
+        self.run_cycle()
+        self.client.calls.clear()
+        self.client.cancel_open_orders = lambda: []
+        self.client.network = "TESTNET"
+        _, profile = self.store.profile(1)
+        result = asyncio.run(self.engine.emergency_stop(1, profile, self.client, True))
+        self.assertFalse(result[-1].ok)
+        self.assertEqual(self.client.calls, [])
+        self.assertTrue(self.client.rows)
+
+    def test_network_mismatched_pending_intent_blocks_other_new_risk(self):
+        self.client.network = self.engine.reader.network = "MAINNET"
+        self.engine.journal.prepare(ACCOUNT, "ETH|", {"network": "TESTNET", "action": "UNKNOWN"})
+        self.run_cycle()
+        self.assertEqual(self.client.calls, [])
+        self.assertIn("ETH|", self.store.profile(1)[1]["runtime"]["recovery_required"])
+
+    def test_reader_signer_network_mismatch_cannot_trade(self):
+        self.client.network, self.engine.reader.network = "MAINNET", "TESTNET"
+        with self.assertRaises(ValueError): self.run_cycle()
+        self.assertEqual(self.client.calls, [])
+
     def test_execution_network_identity_is_persisted_and_mismatch_holds(self):
         self.client.network = self.engine.reader.network = "MAINNET"
         self.run_cycle()

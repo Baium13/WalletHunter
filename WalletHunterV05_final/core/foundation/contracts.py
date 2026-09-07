@@ -1,6 +1,6 @@
 """Immutable wire contracts. No free-form event dictionaries or credentials."""
 from typing import Annotated, Literal
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator, field_validator
 
 Amount = Annotated[float, Field(strict=True, ge=0, allow_inf_nan=False)]
 Positive = Annotated[float, Field(strict=True, gt=0, allow_inf_nan=False)]
@@ -12,6 +12,12 @@ Network = Literal["MAINNET", "TESTNET"]
 class Contract(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
     version: Literal[1] = 1
+
+    @field_validator("version", mode="before")
+    @classmethod
+    def exact_version(cls, value):
+        if type(value) is not int or value != 1: raise ValueError("Unsupported schema version")
+        return value
 
 
 class Scope(Contract):
@@ -191,6 +197,14 @@ class ExecutionReceipt(Contract):
     received_ms: Millis
     provenance: Literal["FAKE_EXCHANGE", "EXCHANGE", "UNKNOWN"]
 
+    @model_validator(mode="after")
+    def scoped_fills(self):
+        if any(f.instrument.network != self.scope.network or f.intent_id != self.intent_id or f.order_id not in self.order_ids for f in self.fills):
+            raise ValueError("Receipt fill identity mismatch")
+        if self.status in {"FILLED", "PARTIAL"} and (not self.fills or self.provenance == "UNKNOWN"):
+            raise ValueError("Filled receipt requires evidence")
+        return self
+
 
 Payload = MarketSnapshot | PortfolioSnapshot | OrderIntent | RiskDecision | ExecutionReceipt | AnalysisResult
 
@@ -212,4 +226,9 @@ class DomainEvent(Contract):
         instrument = getattr(self.payload, "instrument", None)
         if scope != self.scope or (instrument and instrument.network != self.scope.network):
             raise ValueError("Event scope mismatch")
+        expected = {"MARKET_SNAPSHOT": MarketSnapshot, "PORTFOLIO_SNAPSHOT": PortfolioSnapshot,
+            "LEADER_EVENT": AnalysisResult, "ORDER_INTENT_CREATED": OrderIntent,
+            "RISK_APPROVED": RiskDecision, "RISK_REJECTED": RiskDecision}
+        if not isinstance(self.payload, expected.get(self.event_type, ExecutionReceipt)):
+            raise ValueError("Event type/payload mismatch")
         return self

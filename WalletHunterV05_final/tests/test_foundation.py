@@ -22,6 +22,11 @@ def intent(**changes):
 
 
 class ContractTests(unittest.TestCase):
+    def test_boolean_version_and_mismatched_event_payload_are_invalid(self):
+        with self.assertRaises(ValidationError): intent(version=True)
+        with self.assertRaises(ValidationError):
+            DomainEvent(event_id="event", event_type="RISK_APPROVED", correlation_id="trace", scope=scope(),
+                event_ms=1000, received_ms=1000, payload=intent())
     def test_roundtrip_and_frozen(self):
         row = intent()
         self.assertEqual(OrderIntent.model_validate_json(row.model_dump_json()), row)
@@ -84,6 +89,13 @@ class LedgerTests(unittest.TestCase):
 
 
 class StoreTests(unittest.TestCase):
+    def test_events_are_append_only_and_model_copy_cannot_bypass_validation(self):
+        self.store.publish_portfolio(portfolio(), "trace")
+        import sqlite3
+        with self.assertRaises(sqlite3.IntegrityError), self.store.transaction() as db:
+            db.execute("DELETE FROM events")
+        event = self.store.replay(scope())[0][1]
+        with self.assertRaises(ValueError): self.store.append(event.model_copy(update={"version": 99}))
     def setUp(self):
         from core.foundation.store import Store
         self.tmp = tempfile.TemporaryDirectory()
@@ -125,6 +137,15 @@ class StoreTests(unittest.TestCase):
 class DataTests(unittest.TestCase):
     # Reuse setup only, without inheriting the parent tests.
     setUp = StoreTests.setUp
+    def test_failed_subscriptions_are_bounded(self):
+        from types import SimpleNamespace
+        from core.foundation.data import MarketData, DataUnavailable
+        now = [1000]
+        reader = SimpleNamespace(network="TESTNET", _info=lambda q: {})
+        hub = MarketData(reader, self.store, lambda: now[0], max_age_ms=100, min_request_ms=1, capacity=1)
+        with self.assertRaises(DataUnavailable): hub.get(scope(), instrument())
+        now[0] += 1
+        with self.assertRaisesRegex(DataUnavailable, "SUBSCRIPTION_CAPACITY"): hub.get(scope(), instrument(symbol="ETH"))
     def test_cache_gap_reconnect_order_and_stale(self):
         from types import SimpleNamespace
         from core.foundation.data import MarketData, DataUnavailable
@@ -198,6 +219,55 @@ class RiskTests(unittest.TestCase):
 
 class PipelineTests(unittest.TestCase):
     setUp = StoreTests.setUp
+
+    def test_parallel_same_intent_submits_at_most_once(self):
+        from concurrent.futures import ThreadPoolExecutor
+        gateway, exchange = self.pipeline()
+        gateway.authorize_fake(intent())
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            list(pool.map(lambda _: gateway.execute(intent(), market()), range(2)))
+        self.assertEqual(exchange.calls, 1)
+        self.assertEqual(gateway.recover(intent()).status, "FILLED")
+
+    def test_crash_after_exchange_commit_recovers_from_durable_evidence(self):
+        from unittest.mock import patch
+        gateway, exchange = self.pipeline()
+        gateway.authorize_fake(intent())
+        with patch.object(gateway, "_settle", side_effect=RuntimeError("synthetic crash")):
+            with self.assertRaises(RuntimeError): gateway.execute(intent(), market())
+        self.assertEqual(gateway.recover(intent()).status, "FILLED")
+        self.assertEqual(exchange.calls, 1)
+
+    def test_malformed_reconciliation_proof_cannot_release_reservation(self):
+        from unittest.mock import patch
+        gateway, exchange = self.pipeline()
+        exchange.behavior = "ACK_LOSS"
+        gateway.authorize_fake(intent())
+        gateway.execute(intent(), market())
+        original = exchange.query(intent())
+        fake_fill = original.fills[0].model_copy(update={"size": float("nan")})
+        with patch.object(exchange, "query", return_value=original.model_copy(update={"fills": (fake_fill,)})):
+            self.assertEqual(gateway.recover(intent()).status, "UNKNOWN")
+        self.assertEqual(self.store.portfolio(scope()).positions, ())
+
+    def test_expiry_after_reservation_cannot_dispatch(self):
+        gateway, exchange = self.pipeline()
+        gateway.authorize_fake(intent())
+        ticks = iter((1000, 2000, 2000))
+        gateway.clock = lambda: next(ticks)
+        self.assertEqual(gateway.execute(intent(), market()).status, "UNKNOWN")
+        self.assertEqual(exchange.calls, 0)
+
+    def test_core_has_no_signing_dependency(self):
+        import ast
+        root = Path(__file__).resolve().parents[1]/"core"/"foundation"
+        for file in root.glob("*.py"):
+            tree = ast.parse(file.read_bytes())
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ImportFrom):
+                    self.assertFalse((node.module or "").startswith(("integrations", "eth_account", "hyperliquid")))
+                if isinstance(node, ast.Import):
+                    self.assertFalse(any(n.name.startswith(("integrations", "eth_account", "hyperliquid")) for n in node.names))
 
     def pipeline(self):
         from core.foundation.execution import FakeExchange, ExecutionGateway

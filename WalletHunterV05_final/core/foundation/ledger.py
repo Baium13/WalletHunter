@@ -15,6 +15,8 @@ class Reservation:
 
 class Ledger:
     def __init__(self, portfolio: PortfolioSnapshot, sources: tuple[str, ...], reservations=()):
+        portfolio = PortfolioSnapshot.model_validate_json(portfolio.model_dump_json())
+        reservations = tuple(reservations)
         self.portfolio = portfolio
         self.errors = []
         self.allocations = {}

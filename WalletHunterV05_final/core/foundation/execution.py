@@ -146,8 +146,8 @@ class ExecutionGateway:
 
     def execute(self, intent, market):
         intent = OrderIntent.model_validate_json(intent.model_dump_json())
-        now = self.clock()
         with self.store.transaction() as db:
+            now = self.clock()
             self.store.bind(db, intent.scope)
             old = db.execute("SELECT * FROM intents WHERE id=?", (intent.intent_id,)).fetchone()
             if old:
@@ -167,13 +167,17 @@ class ExecutionGateway:
                 account_capacity=notional/intent.leverage+notional*self.risk.policy.fee_buffer_pct/100)
             db.execute("INSERT INTO intents VALUES(?,?,?,?,?,?,?)", (intent.intent_id, scope_key(intent.scope), encoded(intent),
                 receipt.status, encoded(decision), json.dumps(reservation), encoded(receipt)))
+            db.execute("INSERT INTO intent_prestate VALUES(?,?)", (intent.intent_id, encoded(before)))
             db.execute("DELETE FROM grants WHERE id=?", (intent.intent_id,))
             self._event(db, intent, "ORDER_INTENT_CREATED", intent, now)
             self._event(db, intent, "RISK_APPROVED" if approved else "RISK_REJECTED", decision, now)
             if approved: self._event(db, intent, "ORDER_SUBMITTED", receipt, now)
         if not approved: return receipt
         # Crash from here onward leaves a durable reservation. Never auto-resubmit.
-        try: report = self.__exchange.submit(intent, before, now)
+        try:
+            dispatch_ms = self.clock()
+            if not intent.created_ms <= dispatch_ms < intent.expires_ms: raise TimeoutError("Intent expired before dispatch")
+            report = self.__exchange.submit(intent, before, dispatch_ms)
         except Exception: report = None
         return self._settle(intent, before, report)
 
@@ -202,7 +206,9 @@ class ExecutionGateway:
             row = db.execute("SELECT body,status,receipt FROM intents WHERE id=? AND scope=?", (intent.intent_id, scope_key(intent.scope))).fetchone()
             if not row or row["body"] != encoded(intent): raise ValueError("Unknown intent identity")
             if row["status"] not in {"SUBMITTING", "UNKNOWN"}: return ExecutionReceipt.model_validate_json(row["receipt"])
-            before = self.store.portfolio_in(db, intent.scope)
+            prestate = db.execute("SELECT body FROM intent_prestate WHERE id=?", (intent.intent_id,)).fetchone()
+            if not prestate: raise ValueError("Missing pre-execution evidence; no retry")
+            before = PortfolioSnapshot.model_validate_json(prestate[0])
         try: report = self.__exchange.query(intent)
         except Exception: report = None
         return self._settle(intent, before, report)

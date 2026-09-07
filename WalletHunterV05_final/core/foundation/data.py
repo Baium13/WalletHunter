@@ -25,7 +25,7 @@ class MarketData:
     def _scope(self, scope, instrument):
         if scope.network != instrument.network or instrument.network != self.reader.network:
             raise DataUnavailable("NETWORK_MISMATCH")
-        if instrument not in self._cache and len(self._cache) >= self.capacity:
+        if instrument not in self._cache and instrument not in self._gaps and len(set(self._cache) | self._gaps) >= self.capacity:
             raise DataUnavailable("SUBSCRIPTION_CAPACITY")
 
     def _publish(self, scope, snapshot):

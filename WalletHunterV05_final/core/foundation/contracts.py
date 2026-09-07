@@ -168,6 +168,8 @@ class OrderIntent(Contract):
 class RiskDecision(Contract):
     intent_id: Name
     intent_hash: Annotated[str, Field(pattern=r"^[a-f0-9]{64}$")]
+    policy_hash: Annotated[str, Field(pattern=r"^[a-f0-9]{64}$")]
+    market_hash: Annotated[str, Field(pattern=r"^[a-f0-9]{64}$")]
     outcome: Literal["APPROVED", "REDUCED", "REJECTED"]
     reasons: tuple[Name, ...]
     approved_size: Amount

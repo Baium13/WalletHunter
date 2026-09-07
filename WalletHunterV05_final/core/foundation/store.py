@@ -52,6 +52,7 @@ class Store:
                     status TEXT NOT NULL,decision TEXT,reservation TEXT,receipt TEXT);
                 CREATE TABLE IF NOT EXISTS grants(id TEXT PRIMARY KEY,scope TEXT NOT NULL,intent_hash TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS intent_prestate(id TEXT PRIMARY KEY,body TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS policies(hash TEXT PRIMARY KEY,body TEXT NOT NULL);
             """)
 
     @contextmanager

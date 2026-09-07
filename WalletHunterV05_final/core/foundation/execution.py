@@ -168,7 +168,9 @@ class ExecutionGateway:
             db.execute("INSERT INTO intents VALUES(?,?,?,?,?,?,?)", (intent.intent_id, scope_key(intent.scope), encoded(intent),
                 receipt.status, encoded(decision), json.dumps(reservation), encoded(receipt)))
             db.execute("INSERT INTO intent_prestate VALUES(?,?)", (intent.intent_id, encoded(before)))
+            db.execute("INSERT OR IGNORE INTO policies VALUES(?,?)", (digest(self.risk.policy), encoded(self.risk.policy)))
             db.execute("DELETE FROM grants WHERE id=?", (intent.intent_id,))
+            self._event(db, intent, "MARKET_SNAPSHOT", market, now)
             self._event(db, intent, "ORDER_INTENT_CREATED", intent, now)
             self._event(db, intent, "RISK_APPROVED" if approved else "RISK_REJECTED", decision, now)
             if approved: self._event(db, intent, "ORDER_SUBMITTED", receipt, now)

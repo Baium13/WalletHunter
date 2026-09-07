@@ -76,7 +76,7 @@ class RiskGateway:
             require(capacity <= ledger.available_capacity, "ACCOUNT_CAPACITY")
         except (ValueError, ArithmeticError, TypeError):
             reasons.append("FINANCIAL_EVIDENCE_INVALID")
-        return RiskDecision(intent_id=intent.intent_id, intent_hash=digest(intent),
+        return RiskDecision(intent_id=intent.intent_id, intent_hash=digest(intent), policy_hash=digest(p), market_hash=digest(market),
             outcome="REJECTED" if reasons else "APPROVED", reasons=tuple(dict.fromkeys(reasons)),
             approved_size=0. if reasons else intent.size, approved_limit=0. if reasons else intent.limit_price,
             portfolio_revision=snapshot.revision, created_ms=now)

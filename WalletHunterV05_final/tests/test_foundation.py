@@ -288,8 +288,14 @@ class PipelineTests(unittest.TestCase):
         after = self.store.portfolio(scope())
         self.assertEqual(Ledger(after, policy().sources).allocation("a").available, 900.)
         events = [e for _,e in self.store.replay(scope()) if e.correlation_id == order.correlation_id]
-        self.assertEqual([e.event_type for e in events], ["ORDER_INTENT_CREATED", "RISK_APPROVED", "ORDER_SUBMITTED",
+        self.assertEqual([e.event_type for e in events], ["MARKET_SNAPSHOT", "ORDER_INTENT_CREATED", "RISK_APPROVED", "ORDER_SUBMITTED",
             "PORTFOLIO_SNAPSHOT", "ORDER_FILLED", "POSITION_OPENED"])
+        from core.foundation.store import digest
+        decision = next(e.payload for e in events if e.event_type == "RISK_APPROVED")
+        self.assertEqual(decision.market_hash, digest(market()))
+        self.assertEqual(decision.policy_hash, digest(policy()))
+        with self.store.transaction() as db:
+            self.assertIsNotNone(db.execute("SELECT body FROM policies WHERE hash=?", (decision.policy_hash,)).fetchone())
 
     def test_duplicate_and_collision_cannot_resubmit(self):
         gateway, exchange = self.pipeline()

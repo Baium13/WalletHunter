@@ -76,6 +76,7 @@ class LedgerTests(unittest.TestCase):
     def test_unknown_attribution_and_malformed_reservations_fail_closed(self):
         from core.foundation.ledger import Ledger, Reservation
         p = position(evidence="UNKNOWN", contributions=(), order_ids=())
+        self.assertIsNone(Ledger(portfolio(positions=(p,)), ("a",)).available_capacity)
         with self.assertRaises(ValueError): Ledger(portfolio(positions=(p,)), ("a",)).allocation("a")
         for value in (float("nan"), float("inf"), -1., True):
             with self.assertRaises(ValueError):

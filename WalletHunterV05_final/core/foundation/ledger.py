@@ -20,7 +20,7 @@ class Ledger:
         self.portfolio = portfolio
         self.errors = []
         self.allocations = {}
-        self.available_capacity = 0.
+        self.available_capacity = None
         if portfolio.completeness != "COMPLETE" or portfolio.evidence == "LEGACY_UNKNOWN":
             self.errors.append("PORTFOLIO_UNKNOWN")
             return
@@ -63,7 +63,8 @@ class Ledger:
                     revision=portfolio.revision, received_ms=portfolio.received_ms)
         except (ValueError, OverflowError):
             self.errors.append("LEDGER_INVALID")
-            self.available_capacity = 0.
+        if self.errors:
+            self.available_capacity = None
 
     def allocation(self, source):
         if self.errors or source not in self.allocations:

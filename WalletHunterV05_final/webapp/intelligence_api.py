@@ -32,7 +32,25 @@ class ResearchView:
                 db.execute('PRAGMA query_only=ON')
                 health=db.execute('SELECT last_success,error FROM intelligence_health WHERE network=?',(self.network,)).fetchone()
                 counts={r[0]:r[1] for r in db.execute('SELECT status,COUNT(*) FROM candidates WHERE network=? GROUP BY status',(self.network,))}
-                leaders=[dict(r) for r in db.execute('SELECT wallet,status,score,confidence,last_seen FROM candidates WHERE network=? ORDER BY score DESC,wallet LIMIT 32',(self.network,))]
+                leaders=[]
+                for row in db.execute('SELECT wallet,status,score,confidence,last_seen,analysis FROM candidates WHERE network=? ORDER BY score DESC,wallet LIMIT 32',(self.network,)):
+                    item={k:row[k] for k in ('wallet','status','score','confidence','last_seen')}
+                    # Analysis is public research evidence.  Keep only the
+                    # immutable, non-account fields needed by the product
+                    # detail view; never broadcast raw database columns or
+                    # private runtime state.
+                    try:
+                        raw=json.loads(row['analysis']) if row['analysis'] else None
+                    except (TypeError,ValueError,json.JSONDecodeError):
+                        raw=None
+                    if isinstance(raw,dict):
+                        item['analysis']={k:raw[k] for k in (
+                            'wallet','network','computed_ms','score','windows',
+                            'history_method','equity_drawdown_pct',
+                            'funding_included','not_a_profit_probability') if k in raw}
+                    else:
+                        item['analysis']=None
+                    leaders.append(item)
                 events=[]
                 for row in db.execute('SELECT rowid AS seq,kind,created,body FROM intelligence_records WHERE network=? AND rowid>? ORDER BY rowid LIMIT ?',(self.network,after,limit)):
                     body=json.loads(row['body'])

@@ -123,7 +123,16 @@ def index():
 
 @app.get("/health")
 def health():
-    return {"ok": True}
+    # This endpoint reports process/API reachability only.  It deliberately
+    # does not claim that exchange, risk or reconciliation are healthy without
+    # a verified tenant/account context; the UI renders those components as
+    # UNKNOWN/DEGRADED until their own evidence is available.
+    return {"ok": True, "status": "DEGRADED", "reason": "PROCESS_ONLY",
+            "network": settings.hl_mode, "checked_ms": int(time.time() * 1000),
+            "components": {"Web/API": {"status": "HEALTHY", "detail": "HTTP endpoint available"},
+                           "Database": {"status": "UNKNOWN", "detail": "Tenant-scoped check required"},
+                           "Execution": {"status": "UNKNOWN", "detail": "Gateway evidence required"},
+                           "Reconciliation": {"status": "UNKNOWN", "detail": "Tenant-scoped check required"}}}
 
 
 @app.get("/api/dashboard")

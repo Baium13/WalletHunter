@@ -146,9 +146,21 @@ class EngineSafetyTests(unittest.TestCase):
         profile["runtime"].update(changes)
         self.store.update_runtime(1, profile["runtime"])
 
-    def managed(self, row):
+    def managed(self, row, *, source_evidence=True):
         self.client.seed(row)
         self.runtime(managed=[CopyEngine._runtime_key(CopyEngine._key(row["coin"], row.get("dex")))])
+        if not source_evidence:
+            return  # Explicit legacy managed-flag fixture, no invented journal.
+        # Explicit synthetic bot provenance, not merely a runtime managed flag.
+        # These tests exercise execution/collateral behavior for known ownership.
+        # Missing/unsafe attribution is covered separately in source-allocation tests.
+        market = CopyEngine._runtime_key(CopyEngine._key(row["coin"], row.get("dex")))
+        operation = self.engine.journal.prepare(ACCOUNT, market, {"action": "OFFLINE_TEST_FIXTURE"})
+        self.engine.journal.finish(operation, {"ok": True}, {
+            "managed": True, "position": deepcopy(row), "size": row["size"], "side": row["side"],
+            "source_targets": [{"wallet": SOURCE_A, "margin": row["margin_used"],
+                "signed_notional": row["position_value"] * (1 if row["side"] == "LONG" else -1),
+                "slot_budget": self.client.cash / 3}], "attribution": "synthetic_test_fixture"})
 
     def run_cycle(self, snapshots=None, notify=None):
         _, profile = self.store.profile(1)
@@ -240,7 +252,7 @@ class EngineSafetyTests(unittest.TestCase):
                 self.client.rows.clear(); self.client.calls.clear()
                 self.run_cycle()
                 self.assertEqual(self.client.calls, [])
-                self.managed(position())
+                self.managed(position(), source_evidence=False)
                 self.run_cycle([snapshot()])
                 self.assertEqual(self.client.calls, [])
                 self.runtime(**{field: {}})

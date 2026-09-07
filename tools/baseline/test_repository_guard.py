@@ -333,5 +333,155 @@ class Phase11ToolGuards(unittest.TestCase):
             sys.modules.pop(name, None)
 
 
+class Phase12ToolGuards(unittest.TestCase):
+    digest = staticmethod(Phase11ToolGuards.digest)
+    transition = Phase11ToolGuards.transition
+    store_transition = Phase11ToolGuards.store_transition
+
+    def setUp(self):
+        Phase11ToolGuards.setUp(self)
+        for name in protected.P12_PATHS - {protected.TRANSITION_PATH, protected.P12_NEW_PATH}:
+            path = self.root / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(("original " + name).encode())
+            self.baseline[name] = self.digest(path)
+        self.manifest.write_text(json.dumps({"schema_version": 1, "files": self.baseline}), encoding="utf-8")
+        self.original_manifest_bytes = self.manifest.read_bytes()
+        self.parent_document = self.transition()
+        self.store_transition(self.parent_document)
+        self.parent_path = self.root / protected.TRANSITION_FILE
+        self.parent_bytes = self.parent_path.read_bytes()
+        self.previous = dict(self.baseline)
+        self.previous[protected.TRANSITION_PATH] = self.digest(self.engine)
+        self.regression = self.root / protected.P11_REGRESSION_PATH
+        self.regression.write_bytes(b"unchanged P1.1 regression tests")
+        for constant, digest in (("P12_BASELINE_SHA256", self.digest(self.manifest)),
+                                 ("P12_PARENT_SHA256", self.digest(self.parent_path)),
+                                 ("P11_REGRESSION_SHA256", self.digest(self.regression))):
+            patcher = patch.object(protected, constant, digest)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def phase12_transition(self):
+        rows = {}
+        for name in sorted(protected.P12_PATHS):
+            path = self.root / name
+            path.write_bytes(("reviewed P1.2 " + name).encode())
+            rows[name] = {"previous_sha256": self.previous.get(name), "reviewed_sha256": self.digest(path)}
+        return {"schema_version": 1, "phase": "1.2", "baseline_manifest_sha256": self.digest(self.manifest),
+                "parent_manifest_sha256": self.digest(self.parent_path), "files": rows}
+
+    def store_phase12(self, document):
+        (self.root / protected.P12_TRANSITION_FILE).write_text(json.dumps(document), encoding="utf-8")
+
+    def test_valid_chain_checks_latest_bytes_and_keeps_prior_manifests_unchanged(self):
+        self.store_phase12(self.phase12_transition())
+        result = protected.check(self.root)
+        self.assertEqual(result["status"], "PASS")
+        self.assertEqual(result["phase"], "1.2")
+        self.assertEqual(result["effective_protected_files"], len(self.baseline) + 2)
+        self.assertEqual([row["phase"] for row in result["transition_chain"]], ["1.1", "1.2"])
+        self.assertEqual(result["transition_chain"][0]["files"], self.parent_document["files"])
+        self.assertEqual(self.manifest.read_bytes(), self.original_manifest_bytes)
+        self.assertEqual(self.parent_path.read_bytes(), self.parent_bytes)
+
+    def test_missing_parent_fails_closed(self):
+        self.store_phase12(self.phase12_transition())
+        self.parent_path.unlink()
+        result = protected.check(self.root)
+        self.assertEqual(result["status"], "FAIL")
+        self.assertEqual(result["reason"], "p1.2_requires_valid_p1.1_parent")
+
+    def test_parent_bytes_cannot_be_changed_even_with_updated_child_reference(self):
+        value = self.phase12_transition()
+        self.parent_path.write_bytes(self.parent_bytes + b"\n")
+        value["parent_manifest_sha256"] = self.digest(self.parent_path)
+        self.store_phase12(value)
+        self.assertEqual(protected.check(self.root)["reason"], "p1.2_immutable_manifest_chain_mismatch")
+
+    def test_original_manifest_bytes_cannot_be_changed(self):
+        value = self.phase12_transition()
+        self.manifest.write_bytes(self.original_manifest_bytes + b"\n")
+        value["baseline_manifest_sha256"] = self.digest(self.manifest)
+        self.store_phase12(value)
+        self.assertEqual(protected.check(self.root)["reason"], "p1.2_immutable_manifest_chain_mismatch")
+
+    def test_engine_previous_hash_must_be_p11_not_original(self):
+        value = self.phase12_transition()
+        value["files"][protected.TRANSITION_PATH]["previous_sha256"] = self.baseline[protected.TRANSITION_PATH]
+        self.store_phase12(value)
+        self.assertEqual(protected.check(self.root)["reason"], "p1.2_previous_hash_mismatch")
+
+    def test_only_new_allocation_path_accepts_null_previous(self):
+        for invalid in ("engine_null", "new_not_null"):
+            with self.subTest(invalid=invalid):
+                value = self.phase12_transition()
+                if invalid == "engine_null": value["files"][protected.TRANSITION_PATH]["previous_sha256"] = None
+                else: value["files"][protected.P12_NEW_PATH]["previous_sha256"] = "0" * 64
+                self.store_phase12(value)
+                self.assertEqual(protected.check(self.root)["status"], "FAIL")
+
+    def test_extra_or_missing_transition_path_fails(self):
+        for invalid in ("extra", "missing"):
+            with self.subTest(invalid=invalid):
+                value = self.phase12_transition()
+                if invalid == "extra": value["files"][self.other_name] = dict(value["files"][protected.TRANSITION_PATH])
+                else: value["files"].pop(protected.P12_NEW_PATH)
+                self.store_phase12(value)
+                self.assertEqual(protected.check(self.root)["reason"], "p1.2_transition_must_only_name_approved_paths")
+
+    def test_malformed_transition_fails_closed(self):
+        (self.root / protected.P12_TRANSITION_FILE).write_text("{bad json", encoding="utf-8")
+        self.assertEqual(protected.check(self.root)["status"], "FAIL")
+
+    def test_schema_and_exact_hashes_are_validated(self):
+        for invalid in ("phase", "bool_version", "bad_digest", "unchanged_digest", "extra_field", "wrong_parent"):
+            with self.subTest(invalid=invalid):
+                value = self.phase12_transition()
+                row = value["files"][protected.TRANSITION_PATH]
+                if invalid == "phase": value["phase"] = "1.3"
+                if invalid == "bool_version": value["schema_version"] = True
+                if invalid == "bad_digest": row["reviewed_sha256"] = "*"
+                if invalid == "unchanged_digest": row["reviewed_sha256"] = row["previous_sha256"]
+                if invalid == "extra_field": value["skip_validation"] = True
+                if invalid == "wrong_parent": value["parent_manifest_sha256"] = "0" * 64
+                self.store_phase12(value)
+                self.assertEqual(protected.check(self.root)["status"], "FAIL")
+
+    def test_new_file_and_unrelated_original_test_remain_exactly_protected(self):
+        self.store_phase12(self.phase12_transition())
+        (self.root / protected.P12_NEW_PATH).write_bytes(b"unreviewed additional edit")
+        self.other.write_bytes(b"unapproved assertion change")
+        self.assertEqual(set(protected.check(self.root)["changed"]), {protected.P12_NEW_PATH, self.other_name})
+
+    def test_prior_ownership_regression_cannot_change(self):
+        self.store_phase12(self.phase12_transition())
+        self.regression.write_bytes(b"changed P1.1 regression tests")
+        self.assertEqual(protected.check(self.root)["changed"], [protected.P11_REGRESSION_PATH])
+
+    def test_ci_selects_latest_explicit_phase(self):
+        self.assertEqual(ci_checks.phase_arguments(self.root), ["--phase", "1.1"])
+        self.store_phase12(self.phase12_transition())
+        self.assertEqual(ci_checks.phase_arguments(self.root), ["--phase", "1.2"])
+
+    def test_phase12_requires_report_and_protects_historical_reports(self):
+        for args in (["--phase", "1.2"],
+                     ["--phase", "1.2", "--report", str(runner.REPOSITORY / "docs/baseline-tests.json")],
+                     ["--phase", "1.2", "--report", str(runner.REPOSITORY / "docs/p1.1-validation.json")]):
+            with self.subTest(arguments=args):
+                with self.assertRaises(ValueError):
+                    runner.validate_options(runner.argument_parser().parse_args(args), self.root / "WalletHunterV05_final")
+
+    def test_phase12_targeted_and_full_selection_keep_phase_marker_controlled(self):
+        common = ["--phase", "1.2", "--report", str(self.root / "p1.2.json")]
+        for names in ([], ["--python-module", "test_original"]):
+            args = runner.argument_parser().parse_args(common + names)
+            self.assertEqual(runner.validate_options(args, self.root / "WalletHunterV05_final"), ["test_original"] if names else [])
+        with patch.dict("os.environ", {"WALLETHUNTER_BASELINE_PHASE": "1.1", "AUTO_TRADING": "true"}):
+            env = runner.safe_environment(self.root, self.root / "source", self.root / "copy", self.root / "manifest", "python", "1.2")
+        self.assertEqual(env["WALLETHUNTER_BASELINE_PHASE"], "1.2")
+        self.assertEqual(env["AUTO_TRADING"], "false")
+
+
 if __name__ == "__main__":
     unittest.main()

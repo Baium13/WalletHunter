@@ -37,6 +37,20 @@ class ExecutionJournal:
                               (account.lower(),)).fetchall()
         return {row["market"] for row in rows}
 
+    def pending_intents(self, account):
+        """Read unresolved reservation evidence without changing order state.
+
+        Invalid JSON is an error, never evidence of zero reserved capital.
+        Account scoping is identical to pending() and owned().
+        """
+        with closing(self.connect()) as db:
+            rows = db.execute("SELECT market,intent FROM operations WHERE account=? AND status IN ('PREPARED','UNKNOWN')",
+                              (account.lower(),)).fetchall()
+        intents = {row["market"]: json.loads(row["intent"]) for row in rows}
+        if len(intents) != len(rows):
+            raise ValueError("Multiple unresolved intents for one market require reconciliation")
+        return intents
+
     def prepare(self, account, market, intent):
         now, oid = time.time(), uuid.uuid4().hex
         with closing(self.connect()) as db:

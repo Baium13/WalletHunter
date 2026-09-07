@@ -5,6 +5,7 @@ import math
 import uuid
 from dataclasses import asdict
 from core.execution_journal import ExecutionJournal
+from core.source_allocation import SourceAllocationBook
 from core.ai_user_orders import AiUserOrders
 from core.ai_position_actions import AiPositionActions
 from core.ai_review import account_guard, market_key
@@ -329,11 +330,13 @@ class CopyEngine:
         # even stale state.json or a re-bound Telegram profile cannot adopt it.
         # A failed ledger read deliberately stops this cycle before any trade.
         ai_user_holds = set()
+        independent_ai_holds = set()
         if live:
             ai_user_holds.update(runtime.get("ai_user_order_holds", {}))
             ai_user_holds.update(runtime.get("ai_position_action_holds", {}))
             if self.ai_user_orders:
-                ai_user_holds.update(self.ai_user_orders.reserved_markets(None, account["address"]))
+                independent_ai_holds.update(self.ai_user_orders.reserved_markets(None, account["address"]))
+                ai_user_holds.update(independent_ai_holds)
             if self.ai_position_actions:
                 ai_user_holds.update(self.ai_position_actions.reserved_markets(None, account["address"]))
         owned = self.journal.owned(account["address"]) if live and self.journal else {}
@@ -432,6 +435,8 @@ class CopyEngine:
         cooldowns = dict(runtime.get("cooldowns") or {})
         strategy = self.strategy(profile)
 
+        allocation_uncertain = set(recovery_holds)
+
         def commit_positions():
             runtime["managed"] = sorted(self._runtime_key(k) for k in managed)
             runtime["cooldowns"] = dict(cooldowns)
@@ -467,6 +472,8 @@ class CopyEngine:
                     managed.discard(key); actual.pop(key, None)
                     cooldowns[self._runtime_key(key)] = int((now + 4 * 3600) * 1000)
                     commit_positions()
+                elif live and self.journal and self._runtime_key(key) in self.journal.pending(account["address"]):
+                    allocation_uncertain.add(self._runtime_key(key))
                 results.append(result)
                 await safe_notify(result)
 
@@ -513,7 +520,47 @@ class CopyEngine:
                 persist()
                 await safe_notify(result)
                 continue
-            result = await self._reconcile(account, client, key, spec, existing, key in managed, profile)
+            # Desired targets still use the full fixed third. Only additional
+            # commitment is capped against capital already held or reserved.
+            # Rebuild after EVERY operation: UNKNOWN is not a released budget,
+            # and planned reductions are not credit until actually confirmed.
+            current_owned = {}
+            allocation_can_reduce = False
+            try:
+                current_owned = self.journal.owned(account["address"]) if live and self.journal else {
+                    self._runtime_key(k): {"managed": True, "position": p,
+                        "size": p.get("size"), "side": p.get("side"),
+                        "source_targets": p.get("source_targets", [])}
+                    for k, p in actual.items() if k in managed}
+                current_pending = self.journal.pending_intents(account["address"]) if live and self.journal else {}
+                allocation_can_reduce = True
+                book = SourceAllocationBook(target_balance, list(configured),
+                    {self._runtime_key(k): p for k, p in actual.items()}, current_owned,
+                    {self._runtime_key(k) for k in managed}, current_pending,
+                    excluded={market for market in independent_ai_holds
+                              if not current_owned.get(market, {}).get("source_targets")},
+                    uncertain=allocation_uncertain)
+                spec = book.cap(self._runtime_key(key), spec, existing)
+                spec["_source_reserved_margin"] = math.fsum(row.reserved_margin for row in book.accounts.values())
+                allocation_error = ""
+            except Exception as exc:
+                allocation_error = f"Cannot verify source allocation: {exc}"
+            if allocation_error and not (allocation_can_reduce and self._allocation_reduction(spec, existing, live)):
+                result = Result(False, "EXECUTION_BLOCK", account["name"], key[0], spec["side"],
+                    market_type=spec["market_type"], dex=key[1] or None,
+                    error=allocation_error, paper=not live)
+            else:
+                if allocation_error:
+                    # Reducing an uncertain book cannot transfer its retained
+                    # capital to the current plan's different source weights.
+                    spec = dict(spec, _source_reduce_only=True,
+                                sources=current_owned.get(self._runtime_key(key), {}).get("source_targets", []))
+                result = await self._reconcile(account, client, key, spec, existing, key in managed, profile)
+            if not result.ok and live and self.journal and self._runtime_key(key) in self.journal.pending(account["address"]):
+                # This cycle's pre-order snapshot is no longer enough after an
+                # ambiguous mutation (including malformed collateral evidence).
+                # A later cycle can rebuild bounded reservations from fresh data.
+                allocation_uncertain.add(self._runtime_key(key))
             notification_key = self._runtime_key(key)
             if result.action in {"MIN_NOTIONAL_SKIP", "WAIT_PRICE", "WAIT_SPREAD", "WAIT_FUNDING", "EXECUTION_BLOCK", "FUNDING_BLOCK"}:
                 if notification_key in entry_block_notified:
@@ -538,6 +585,16 @@ class CopyEngine:
                                    "leverage": result.leverage, "position_value": result.size*result.price,
                                    "entry_price": entry,
                                    "market_type": result.market_type}
+                    if live and self.journal:
+                        verified = self.journal.owned(account["address"]).get(self._runtime_key(key), {}).get("position")
+                        if verified:
+                            # Preserve the confirmed exchange margin, including
+                            # isolated collateral. Do not reconstruct it as free.
+                            actual[key] = dict(verified)
+                    elif not live:
+                        # New PAPER provenance stays in the isolated PAPER book;
+                        # legacy rows without it are not retroactively attributed.
+                        actual[key]["source_targets"] = plain(spec.get("sources", []))
                 else:
                     managed.discard(key); actual.pop(key, None)
                 # Commit ownership before waiting for the next watcher cycle.
@@ -594,6 +651,29 @@ class CopyEngine:
         return results
 
     @staticmethod
+    def _allocation_reduction(spec, existing, live):
+        """An unavailable source budget must not prevent a genuine reduction.
+
+        No reversal, add, or collateral-increasing leverage change is permitted
+        by this fallback. It mirrors the existing reduce-first leverage rule.
+        """
+        if not existing or existing.get("side") != spec.get("side"):
+            return False
+        try:
+            old, target = existing["position_value"], spec["target_notional"]
+            old_lev, new_lev = existing["leverage"], spec["leverage"]
+            if any(isinstance(v, bool) or not isinstance(v, (int, float)) or
+                   not math.isfinite(v) or v <= 0 for v in (old, target, old_lev, new_lev, existing["size"])):
+                return False
+            if "margin_used" in existing and (isinstance(existing["margin_used"], bool) or
+                    not isinstance(existing["margin_used"], (int, float)) or
+                    not math.isfinite(existing["margin_used"]) or existing["margin_used"] < 0):
+                return False
+            return target < old and (live or target / new_lev <= old / old_lev)
+        except (ValueError, TypeError, KeyError):
+            return False
+
+    @staticmethod
     def _mode_runtime(profile, account, live):
         shared = profile.setdefault("runtime", snapshot({}))
         if live:
@@ -643,7 +723,7 @@ class CopyEngine:
             self.journal.finish(operation, asdict(result), ownership)
         return result
 
-    async def _margin_preflight(self, client, dex, current_size, current_leverage, target_size, target_leverage, price):
+    async def _margin_preflight(self, client, dex, current_size, current_leverage, target_size, target_leverage, price, reserved_margin=0.):
         """Fresh spendable collateral, never portfolio equity or cached balance.
 
         This only reads the exchange. Rejection precedes PREPARED, so an API
@@ -658,6 +738,11 @@ class CopyEngine:
             available = await asyncio.to_thread(available_method, dex)
             if isinstance(available, bool) or not isinstance(available, (int, float)) or not math.isfinite(available) or available < 0:
                 raise ValueError("Invalid available collateral")
+            if isinstance(reserved_margin, bool) or not isinstance(reserved_margin, (int, float)) or not math.isfinite(reserved_margin) or reserved_margin < 0:
+                return "Cannot verify pending collateral reservations"
+            # Unresolved intents may not yet be reflected in exchange capacity.
+            # Count them conservatively as well as enforcing each source's third.
+            available = max(0., available - reserved_margin)
             incremental = max(0., target_size * price / target_leverage - current_size * price / current_leverage)
             # Reserve 10bps fees plus the configured worst permitted slippage
             # on newly added notional. This is a buffer, not a fee prediction.
@@ -692,6 +777,16 @@ class CopyEngine:
             size_step = await asyncio.to_thread(client.size_step, coin, dex)
             executable = await asyncio.to_thread(client.round_size, coin, abs(desired_signed), dex)
             desired_signed = (1 if desired_signed >= 0 else -1) * executable
+
+        if spec.get("_source_reduce_only"):
+            # Revalidate with the FRESH execution price. A lower USD target can
+            # become a size increase when price falls after the account snapshot.
+            if (not existing or current_signed * desired_signed <= 0 or
+                    abs(desired_signed) >= abs(current_signed)):
+                return Result(False, "EXECUTION_BLOCK", account["name"], coin, spec["side"],
+                              error="Source allocation unavailable: only a verified size reduction is allowed.", paper=not live)
+            spec = dict(spec, leverage=float(existing["leverage"]),
+                        target_margin=abs(desired_signed) * price / float(existing["leverage"]))
 
         # New entries must be cheap enough to execute and must not immediately
         # pay abnormal funding. Existing positions are never silently changed by
@@ -761,7 +856,8 @@ class CopyEngine:
             decreases_leverage = bool(existing) and spec["leverage"] < current_leverage
             if live and not reverse and (increases_exposure or decreases_leverage):
                 rejection = await self._margin_preflight(client, dex, abs(current_signed), current_leverage,
-                                                         abs(desired_signed), spec["leverage"], price)
+                                                         abs(desired_signed), spec["leverage"], price,
+                                                         spec.get("_source_reserved_margin", 0.))
                 if rejection:
                     return Result(False, "EXECUTION_BLOCK", account["name"], coin,
                                   existing.get("side", spec["side"]) if existing else spec["side"],
@@ -789,7 +885,8 @@ class CopyEngine:
                     # Closing may release margin, so refetch only after the
                     # exchange confirmed flat and stop cleanup completed.
                     rejection = await self._margin_preflight(client, dex, 0., spec["leverage"],
-                                                             abs(desired_signed), spec["leverage"], price)
+                                                             abs(desired_signed), spec["leverage"], price,
+                                                             spec.get("_source_reserved_margin", 0.))
                     if rejection:
                         close.error = f"Old side closed; reverse entry not placed. {rejection}"
                         return self._finish_operation(operation, close)
@@ -814,6 +911,23 @@ class CopyEngine:
                     response = await asyncio.to_thread(client.market_open, coin, False, abs(delta), dex, spec["leverage"], self.settings.max_slippage_pct) if live else {"status": "paper"}
                     action = "REVERSE" if reverse else ("ADD" if abs(current_signed) > tolerance else "OPEN")
             else:
+                if live and lev_changed:
+                    # A leverage-only update can consume collateral too. Keep
+                    # a real post-update snapshot, not the pre-update margin.
+                    snapshot_started_ms = int(time.time() * 1000)
+                    rows = await asyncio.to_thread(client.positions, True, True)
+                    refreshed = next((p for p in rows if self._key(p["coin"], p.get("dex")) == key), None)
+                    if not refreshed:
+                        raise ValueError("Cannot verify collateral after leverage update")
+                    if (refreshed.get("side") != existing.get("side") or
+                            not math.isclose(float(refreshed["size"]), float(existing["size"]), rel_tol=1e-8, abs_tol=1e-12) or
+                            not math.isclose(float(refreshed["entry_price"]), float(existing["entry_price"]), rel_tol=1e-8, abs_tol=1e-8) or
+                            not math.isclose(float(refreshed["leverage"]), float(spec["leverage"]), rel_tol=1e-8, abs_tol=1e-8)):
+                        raise ValueError("Uncertain position or leverage after collateral update")
+                    if "margin_used" in refreshed and (isinstance(refreshed["margin_used"], bool) or
+                            not math.isfinite(float(refreshed["margin_used"])) or float(refreshed["margin_used"]) < 0):
+                        raise ValueError("Invalid collateral after leverage update")
+                    existing = dict(refreshed, snapshot_started_ms=snapshot_started_ms)
                 result = Result(True, "LEVERAGE_UPDATE" if lev_changed else "NO_CHANGE", account["name"], coin, spec["side"], spec["target_notional"], abs(current_signed),
                               spec["leverage"], spec["market_type"], dex or None, price, paper=not live,
                               capital_pct=spec["capital_pct"], target_margin=spec["target_margin"])

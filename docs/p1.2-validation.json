@@ -1,0 +1,256 @@
+{
+  "schema_version": 1,
+  "phase": "1.2",
+  "finding": "P1-02",
+  "status": "PASS",
+  "scope": "Local held/committed capital allocation correctness only; no deployment.",
+  "validated_on": "2026-09-07",
+  "source_identity": {
+    "parent_commit": "ab20d2d2311247a27956f6ea7c0fe7bc4ad105a6",
+    "manifest": "docs/protected-source-p1.2.json",
+    "manifest_sha256": "af06edabf7c302caf86ade2211ef5338559b8221009910b41ba019cc8d2590b9",
+    "new_regression_sha256": "3aa7d3c96d485a610e27e0fa69b03ab651d1ce48d4387b4a35acf83143e85cee",
+    "revision_resolution": "git log -1 --format=%H -- docs/protected-source-p1.2.json"
+  },
+  "runs": [
+    {
+      "report": ".phase0/p1.2-source-allocation-selected.json",
+      "sha256": "de4b61a7d6b65aeef494cb6cda245cc44dc19225d578a80b98787541a8a73d7c",
+      "success": true,
+      "source_unchanged": true,
+      "python_version": "Python 3.12.14",
+      "node_version": "v24.19.0",
+      "python": {
+        "tests": 48,
+        "passed": 48,
+        "failed": 0,
+        "errors": 0,
+        "skipped": 0,
+        "expected_failures": 0,
+        "unexpected_successes": 0,
+        "duration_seconds": 3.594,
+        "skips": [],
+        "denied_operations": {
+          "network": 0,
+          "process": 0,
+          "filesystem": 0
+        }
+      },
+      "totals": {
+        "existing": {
+          "tests": 144,
+          "passed": 144,
+          "failed": 0,
+          "errors": 0,
+          "skipped": 0,
+          "duration_seconds": 5.5
+        },
+        "guards": {
+          "tests": 14,
+          "passed": 14,
+          "duration_seconds": 0.327
+        }
+      }
+    },
+    {
+      "report": ".phase0/p1.2-p1.1-regression.json",
+      "sha256": "4581c26da1cd9a75d2b2fde2eb66961779764a5ee80021c55824cd65a90a8c89",
+      "success": true,
+      "source_unchanged": true,
+      "python_version": "Python 3.12.14",
+      "node_version": "v24.19.0",
+      "python": {
+        "tests": 18,
+        "passed": 18,
+        "failed": 0,
+        "errors": 0,
+        "skipped": 0,
+        "expected_failures": 0,
+        "unexpected_successes": 0,
+        "duration_seconds": 5.125,
+        "skips": [],
+        "denied_operations": {
+          "network": 0,
+          "process": 0,
+          "filesystem": 0
+        }
+      },
+      "totals": {
+        "existing": {
+          "tests": 114,
+          "passed": 114,
+          "failed": 0,
+          "errors": 0,
+          "skipped": 0,
+          "duration_seconds": 7.015
+        },
+        "guards": {
+          "tests": 14,
+          "passed": 14,
+          "duration_seconds": 0.328
+        }
+      }
+    },
+    {
+      "report": ".phase0/p1.2-affected.json",
+      "sha256": "2e87ca9c29278170b4f3e657311cd21f0e0b8f531c560287db2c8d9659cd74b6",
+      "success": true,
+      "source_unchanged": true,
+      "python_version": "Python 3.12.14",
+      "node_version": "v24.19.0",
+      "python": {
+        "tests": 93,
+        "passed": 93,
+        "failed": 0,
+        "errors": 0,
+        "skipped": 0,
+        "expected_failures": 0,
+        "unexpected_successes": 0,
+        "duration_seconds": 25.594,
+        "skips": [],
+        "denied_operations": {
+          "network": 1,
+          "process": 0,
+          "filesystem": 0
+        }
+      },
+      "totals": {
+        "existing": {
+          "tests": 189,
+          "passed": 189,
+          "failed": 0,
+          "errors": 0,
+          "skipped": 0,
+          "duration_seconds": 27.687
+        },
+        "guards": {
+          "tests": 14,
+          "passed": 14,
+          "duration_seconds": 0.359
+        }
+      }
+    },
+    {
+      "report": ".phase0/p1.2-full.json",
+      "sha256": "41e22be1be31572b85bdcf4c54416ad33342fc6ef67f99964782cb7c71fb5e79",
+      "success": true,
+      "source_unchanged": true,
+      "python_version": "Python 3.12.14",
+      "node_version": "v24.19.0",
+      "python": {
+        "tests": 723,
+        "passed": 722,
+        "failed": 0,
+        "errors": 0,
+        "skipped": 1,
+        "expected_failures": 0,
+        "unexpected_successes": 0,
+        "duration_seconds": 115.25,
+        "skips": [
+          {
+            "test": "test_archive_and_sensitive_members_have_owner_only_permissions (test_backup_runtime.BackupRuntimeTests.test_archive_and_sensitive_members_have_owner_only_permissions)",
+            "reason": "POSIX archive permissions are verified on Linux",
+            "classification": "A"
+          }
+        ],
+        "denied_operations": {
+          "network": 1,
+          "process": 0,
+          "filesystem": 0
+        }
+      },
+      "totals": {
+        "existing": {
+          "tests": 819,
+          "passed": 818,
+          "failed": 0,
+          "errors": 0,
+          "skipped": 1,
+          "duration_seconds": 117.172
+        },
+        "guards": {
+          "tests": 14,
+          "passed": 14,
+          "duration_seconds": 0.376
+        }
+      }
+    }
+  ],
+  "javascript": {
+    "files": 6,
+    "tests": 96,
+    "passed": 96,
+    "failed": 0
+  },
+  "safety": {
+    "sandbox": {
+      "tests": 14,
+      "passed": 14
+    },
+    "repository_and_tooling": {
+      "tests": 49,
+      "passed": 49,
+      "duration_seconds": 0.809
+    },
+    "total": 63,
+    "passed": 63
+  },
+  "protected_source": {
+    "status": "PASS",
+    "original_files": 131,
+    "effective_files": 133,
+    "unauthorized_changes": []
+  },
+  "ast_unchanged": [
+    "desired",
+    "_plan",
+    "_close",
+    "_mode_runtime",
+    "emergency_stop",
+    "_OwnershipHistoryProof",
+    "complete_ownership_recovery_loop"
+  ],
+  "fixed_thirds_changed": false,
+  "hold_exit_policy_changed": false,
+  "ai_policy_changed": false,
+  "production_state_changed": false,
+  "financial_schema_migration": false,
+  "new_execution_path": false,
+  "behavioral_change": "Additional copy commitment is capped by source commitments/reservations and actual account capacity; ambiguous mutations block further additions until fresh evidence. Genuine reductions remain quantity-checked and preserve provenance.",
+  "warnings": [
+    "One pre-existing Windows skip: POSIX backup permission verification requires Linux.",
+    "Existing Starlette HTTPX TestClient deprecation; dependencies unchanged.",
+    "urllib3 import-time local IPv6 socket.bind capability probe denied; not an outbound exchange request.",
+    "Existing observed-flat recovery assumes manual_hold_keys is a list; legacy dict shape raises AttributeError. Tracked P1-04/P1-06, not repaired in P1.2."
+  ],
+  "intermediate_validation": [
+    {
+      "status": "RESOLVED_TEST_SETUP",
+      "issue": "Synthetic confirmed provenance added to old execution fixtures interacted with legacy HOLD loop; the legacy HOLD-only case explicitly keeps managed-flag-only setup. Assertions unchanged."
+    },
+    {
+      "status": "RESOLVED_TEST_SCOPE",
+      "issue": "Unknown-managed new-budget test now explicitly holds BTC; absent-leader exit semantics were intentionally not changed."
+    },
+    {
+      "status": "FIXED_AND_REGRESSION_TESTED",
+      "issue": "Malformed post-leverage collateral could admit a later market in the same cycle; newly UNKNOWN mutations now require fresh-cycle evidence before further commitment."
+    }
+  ],
+  "limitations": [
+    "Missing/mixed source attribution, orphaned retained sources and unsupported pending intents conservatively block new commitment; no historical ownership or slot identity is invented.",
+    "Account reservations can conservatively double-count collateral already encumbered at the exchange.",
+    "Full fill ownership and independent AI lifecycle/reservations remain P1-05/P1-07; existing network/journal semantics remain P1-10.",
+    "Prior external browser/hosted Linux validation limitations remain; frontend and network isolation controls were not changed."
+  ],
+  "unresolved_p1_findings": 8,
+  "next_phase_started": false,
+  "reproduction": [
+    "python -B tools/baseline/run_tests.py --phase 1.2 --python .phase0/venv/Scripts/python.exe --node node --report .phase0/p1.2-full.json",
+    "python -B tools/baseline/run_tests.py --phase 1.2 --python .phase0/venv/Scripts/python.exe --node node --python-module test_source_allocation --report .phase0/p1.2-source-allocation-selected.json",
+    "python -B tools/baseline/run_tests.py --phase 1.2 --python .phase0/venv/Scripts/python.exe --node node --python-module test_ownership_history_cache --report .phase0/p1.2-p1.1-regression.json",
+    "python -B -m unittest tools.baseline.test_repository_guard",
+    "python -B tools/baseline/check_protected_source.py",
+    "python -B tools/baseline/check_repository.py --index"
+  ]
+}

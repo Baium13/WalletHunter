@@ -33,6 +33,47 @@ class PublicFixture:
 
 
 class IntelligenceTests(unittest.TestCase):
+    def actionable(self):
+        from core.intelligence.models import RiskContextEvidence,LeaderScore
+        from core.foundation.contracts import Scope,PortfolioSnapshot,MarketSnapshot,Allocation
+        analysis=self.activate(); event=self.signal()
+        scope=Scope(tenant='7',account=ADDRESS,network='TESTNET')
+        portfolio=PortfolioSnapshot(scope=scope,revision=1,exchange_ms=NOW+1000,received_ms=NOW+1000,
+            equity=3000.,sizing_capital=3000.,available_collateral=3000.,completeness='COMPLETE',evidence='FAKE')
+        market=MarketSnapshot(instrument=event.instrument,exchange_ms=NOW+1000,received_ms=NOW+1000,price=100.,bid=100.,ask=100.01,
+            completeness='COMPLETE',freshness='FRESH',source='FAKE',source_version='test')
+        allocation=Allocation(scope=scope,source='intelligence',limit=1000.,committed=0.,reserved=0.,available=1000.,revision=1,received_ms=NOW+1000)
+        context=RiskContextEvidence(portfolio=portfolio,market=market,allocation=allocation,unresolved=False,
+            required_margin=10.,required_capacity=11.,slippage_pct=.1,max_slippage_pct=.5)
+        def run(e=context):
+            return evaluate(event,LeaderScore.model_validate(analysis['score']),self.reader._info({'type':'candleSnapshot'}),
+                self.reader._info({'type':'l2Book'}),NOW+1000,self.worker.policy,context=e,actionable=True)
+        return event,context,run
+    def test_actionable_agents_use_full_context(self):
+        event,context,run=self.actionable(); agents=run()
+        self.assertEqual(len(agents),7)
+        self.assertEqual(next(a for a in agents if a.agent_id=='risk_context').direction,'PASS')
+        self.assertEqual(next(a for a in agents if a.agent_id=='order_flow').direction,'WAIT')
+        self.assertEqual(consensus(event,agents,NOW+1000,self.worker.policy).decision,'COPY_LONG')
+        for a in agents: self.assertEqual(a.model_validate_json(a.model_dump_json()),a)
+    def test_missing_context_blocks_actionable_consensus(self):
+        event,_,run=self.actionable(); agents=run(None)
+        self.assertEqual(next(a for a in agents if a.agent_id=='risk_context').direction,'BLOCK')
+        self.assertEqual(consensus(event,agents,NOW+1000,self.worker.policy).decision,'WAIT')
+    def test_context_rejects_unresolved_capacity_and_slippage(self):
+        event,e,run=self.actionable()
+        for update in ({'unresolved':None},{'unresolved':True},{'required_margin':1001.},{'required_capacity':3001.},{'slippage_pct':1.}):
+            with self.subTest(update=update):
+                agents=run(e.model_copy(update=update))
+                self.assertEqual(consensus(event,agents,NOW+1000,self.worker.policy).decision,'WAIT')
+    def test_context_rejects_nonfinite_and_mismatched_allocation(self):
+        event,e,run=self.actionable()
+        for update in ({'required_margin':float('nan')},{'required_capacity':float('inf')},
+                       {'allocation':e.allocation.model_copy(update={'available':1100.})},
+                       {'market':e.market.model_copy(update={'exchange_ms':1})},
+                       {'portfolio':e.portfolio.model_copy(update={'received_ms':1})}):
+            agents=run(e.model_copy(update=update))
+            self.assertEqual(consensus(event,agents,NOW+1000,self.worker.policy).decision,'WAIT')
     def test_deep_metrics_are_explicit_and_deduplicated(self):
         rows=history()
         first=reports(rows,NOW)['30']

@@ -1,7 +1,8 @@
 """Versioned, finite, immutable intelligence contracts; confidence is heuristic."""
 from typing import Literal, Annotated
 from pydantic import Field, model_validator
-from core.foundation.contracts import Contract, InstrumentId, Name, Millis, Positive, Amount
+from core.foundation.contracts import Contract, InstrumentId, Name, Millis, Positive, Amount, PortfolioSnapshot, MarketSnapshot, Allocation
+from pydantic import StrictBool
 
 Wallet = Annotated[str, Field(pattern=r'^0x[0-9a-f]{40}$')]
 Unit = Annotated[float, Field(ge=0, le=1, allow_inf_nan=False)]
@@ -70,7 +71,7 @@ class AgentResult(Contract):
     agent_id: Name
     instrument: InstrumentId
     created_ms: Millis
-    direction: Literal['LONG','SHORT','PASS','CAUTION','WAIT']
+    direction: Literal['LONG','SHORT','PASS','CAUTION','WAIT','BLOCK']
     confidence: Unit
     score: float = Field(ge=-1, le=1, allow_inf_nan=False)
     evidence: tuple[Name,...]
@@ -91,3 +92,14 @@ class ConsensusDecision(Contract):
     blockers: tuple[Name,...]
     supporting: tuple[Name,...]
     opposing: tuple[Name,...]
+
+
+class RiskContextEvidence(Contract):
+    portfolio: PortfolioSnapshot
+    market: MarketSnapshot
+    allocation: Allocation
+    unresolved: StrictBool | None
+    required_margin: Amount
+    required_capacity: Amount
+    slippage_pct: Amount
+    max_slippage_pct: Positive

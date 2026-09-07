@@ -4,7 +4,7 @@ import statistics
 from .models import AgentResult, ConsensusDecision
 
 
-def evaluate(event, leader, candles, book, now, policy):
+def evaluate(event, leader, candles, book, now, policy, *, context=None, actionable=False):
     def result(name, direction='WAIT', confidence=0., score=0., evidence=('INSUFFICIENT_EVIDENCE',), freshness='UNKNOWN'):
         return AgentResult(agent_id=name,instrument=event.instrument,created_ms=now,direction=direction,
             confidence=confidence,score=score,evidence=evidence,freshness=freshness)
@@ -62,6 +62,9 @@ def evaluate(event, leader, candles, book, now, policy):
         'FRESH' if 0 <= now-leader.computed_ms <= policy.reevaluate_ms else 'STALE'))
     fresh=0 <= now-event.exchange_ms <= policy.max_signal_age_ms
     output.append(result('risk_context','PASS' if fresh else 'CAUTION',1.,1. if fresh else -1.,('SIGNAL_AGE',),'FRESH' if fresh else 'STALE'))
+    if actionable or context is not None:
+        from .risk_context import analyze
+        output[-1]=analyze(event,output,context,now,policy)
     return tuple(output)
 
 
@@ -78,7 +81,7 @@ def consensus(event, agents, now, policy):
         blockers.append('POSITION_LIFECYCLE_REQUIRED')
     for key in ('liquidity','risk_context','leader','volatility'):
         a=by_id.get(key)
-        if a is None or a.freshness!='FRESH' or a.direction in {'WAIT','CAUTION'}: blockers.append(key+'_UNAVAILABLE_OR_BLOCKING')
+        if a is None or a.freshness!='FRESH' or a.direction in {'WAIT','CAUTION','BLOCK'}: blockers.append(key+'_UNAVAILABLE_OR_BLOCKING')
     # Correlated structure/momentum form ONE trend group, not independent votes.
     trend=[a for a in agents if a.agent_id in {'structure','momentum'} and a.freshness=='FRESH']
     trend_score=sum(a.score*a.confidence for a in trend)/max(sum(a.confidence for a in trend),1e-12)

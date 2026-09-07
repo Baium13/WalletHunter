@@ -155,3 +155,42 @@ class DataTests(unittest.TestCase):
         hub = MarketData(reader, self.store, lambda: 1000, max_age_ms=100, min_request_ms=10, capacity=1)
         with self.assertRaises(DataUnavailable): hub.get(scope(), instrument())
         with self.assertRaises(DataUnavailable): hub.get(scope("MAINNET"), instrument("MAINNET"))
+
+
+def market(**changes):
+    return MarketSnapshot(**dict(dict(instrument=instrument(), exchange_ms=1000, received_ms=1000,
+        price=100., bid=99., ask=101., completeness="COMPLETE", freshness="FRESH", source="FAKE", source_version="1"), **changes))
+
+
+def policy(**changes):
+    from core.foundation.risk import RiskPolicy
+    return RiskPolicy(**dict(dict(scope=scope(), instrument=instrument(), sources=("a", "b", "c"), enabled=True,
+        max_leverage=5, min_notional=10., max_notional=1000., max_symbol_notional=1000., max_total_notional=3000.,
+        max_slippage_pct=1., max_price_deviation_pct=1., fee_buffer_pct=.1, size_step=.01,
+        max_market_age_ms=100, max_portfolio_age_ms=100, max_intent_age_ms=500), **changes))
+
+
+class RiskTests(unittest.TestCase):
+    def decide(self, order=None, data=None, snapshot=None, config=None, **kwargs):
+        from core.foundation.ledger import Ledger
+        from core.foundation.risk import RiskGateway
+        p = config or policy()
+        return RiskGateway(p).evaluate(order or intent(), data or market(), Ledger(snapshot or portfolio(), p.sources),
+            1000, **dict(dict(authorized=True), **kwargs))
+
+    def test_valid_and_unauthorized(self):
+        self.assertEqual(self.decide().outcome, "APPROVED")
+        self.assertIn("AUTHORIZATION_REQUIRED", self.decide(authorized=False).reasons)
+
+    def test_stale_unknown_disabled_and_live_never_approve(self):
+        variants = [dict(data=market(exchange_ms=1)), dict(snapshot=portfolio(received_ms=1, exchange_ms=1)),
+            dict(config=policy(enabled=False)), dict(order=intent(execution_mode="LIVE")), dict(unresolved=True),
+            dict(data=market(exchange_ms=None, price=None, completeness="UNKNOWN"))]
+        for args in variants:
+            with self.subTest(args=args): self.assertEqual(self.decide(**args).outcome, "REJECTED")
+
+    def test_limits_normalization_network_and_budget(self):
+        for order in (intent(leverage=6), intent(size=1.001), intent(size=11.), intent(limit_price=105.),
+                      intent(scope=scope(tenant="other")), intent(source="unallocated"), intent(expires_ms=1500, created_ms=1400)):
+            self.assertEqual(self.decide(order=order).outcome, "REJECTED")
+        self.assertIn("ACCOUNT_CAPACITY", self.decide(snapshot=portfolio(available_collateral=99.)).reasons)

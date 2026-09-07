@@ -327,7 +327,7 @@ class SourceAllocationEngineTests(unittest.TestCase):
 
     def test_failed_reduction_does_not_release_capacity_for_next_market(self):
         self.seed_owned(fixture.position(notional=800))
-        with patch.object(self.client, "market_reduce", side_effect=RuntimeError("Synthetic rejected reduction")):
+        with patch.object(self.client, "submit_copy_ioc", side_effect=RuntimeError("Synthetic rejected reduction")):
             self.run_cycle([fixture.snapshot(positions=[fixture.position(notional=200), fixture.position("ETH", 800)])])
         self.assertAlmostEqual(self.client.rows[("BTC", "")]["position_value"], 800)
         self.assertLessEqual(self.client.rows.get(("ETH", ""), {}).get("margin_used", 0), 200.00001)
@@ -336,9 +336,11 @@ class SourceAllocationEngineTests(unittest.TestCase):
 
     def test_confirmed_partial_reduction_releases_only_observed_amount(self):
         self.seed_owned(fixture.position(notional=800))
-        reduce = self.client.market_reduce
-        def partial(coin, buy, size, dex, slippage): return reduce(coin, buy, size * .5, dex, slippage)
-        with patch.object(self.client, "market_reduce", side_effect=partial):
+        submit = self.client.submit_copy_ioc
+        def partial(coin, buy, size, limit, reduce_only, cloid, dex='', *, expires_ms):
+            self.client.fill_fraction = .5 if reduce_only else 1.
+            return submit(coin, buy, size, limit, reduce_only, cloid, dex, expires_ms=expires_ms)
+        with patch.object(self.client, "submit_copy_ioc", side_effect=partial):
             self.run_cycle([fixture.snapshot(positions=[fixture.position(notional=200), fixture.position("ETH", 800)])])
         self.assertAlmostEqual(self.client.rows[("BTC", "")]["position_value"], 500)
         self.assertAlmostEqual(self.client.rows[("ETH", "")]["position_value"], 500)

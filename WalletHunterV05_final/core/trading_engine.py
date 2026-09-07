@@ -219,7 +219,7 @@ class CopyEngine:
         network = validated_network(getattr(client, "network", None))
         if validated_network(getattr(self.reader, "network", None)) != network:
             raise ValueError("Reader/signing network mismatch; reconciliation required")
-        account = profile["account"]
+        account = dict(profile["account"], _tenant=str(user_id), _sources=tuple(profile.get('leaders', [])))
         live = self.settings.auto_trading and client.exchange is not None
         target_balance = await asyncio.to_thread(client.balance)
         if not math.isfinite(float(target_balance)) or target_balance < 0:
@@ -897,7 +897,7 @@ class CopyEngine:
                 reversal_runtime = profile.get("runtime") if live and profile.get("user_id") else None
                 reversal_persist = (lambda: self.storage.update_runtime(profile["user_id"], reversal_runtime)) if reversal_runtime is not None else None
                 close = await self._close(account, client, existing or {"coin": coin, "dex": dex, "side": "LONG" if current_signed > 0 else "SHORT", "leverage": spec["leverage"]}, journalled=False,
-                                          runtime=reversal_runtime, persist=reversal_persist)
+                                          runtime=reversal_runtime, persist=reversal_persist, parent_operation=operation)
                 if not close.ok:
                     return self._finish_operation(operation, close)
                 current_signed = 0.0
@@ -916,25 +916,26 @@ class CopyEngine:
                         close.error = f"Old side closed; reverse entry not placed. {rejection}"
                         return self._finish_operation(operation, close)
             lev_changed = bool(existing) and abs(float(existing.get("leverage", 1)) - spec["leverage"]) > 1e-9
-            if live and (not existing or lev_changed):
-                error = client.response_error(await asyncio.to_thread(client.set_leverage, coin, spec["leverage"], dex))
-                if error:
-                    raise RuntimeError(f"Leverage rejected: {error}")
             delta = desired_signed - current_signed
             submitted_ms = int(time.time() * 1000)
+            receipt = None
+            if live and (abs(delta) > tolerance or lev_changed):
+                from core.foundation.copy_execution import execute_copy
+                canonical_action = ('REDUCE' if current_signed*delta < 0 else ('ADD' if current_signed else 'OPEN')) if abs(delta) > tolerance else 'LEVERAGE_UPDATE'
+                receipt = await asyncio.to_thread(execute_copy, self, account, client, operation,
+                    canonical_action, abs(delta) if abs(delta) > tolerance else abs(current_signed),
+                    delta > 0 if abs(delta) > tolerance else current_signed > 0,
+                    dict(spec, coin=coin, dex=dex), None if reverse else existing,
+                    configure=(not existing or lev_changed or reverse))
             if delta > tolerance:
                 if current_signed < -tolerance:
-                    response = await asyncio.to_thread(client.market_reduce, coin, True, delta, dex, self.settings.max_slippage_pct) if live else {"status": "paper"}
                     action = "PARTIAL_CLOSE"
                 else:
-                    response = await asyncio.to_thread(client.market_open, coin, True, delta, dex, spec["leverage"], self.settings.max_slippage_pct) if live else {"status": "paper"}
                     action = "REVERSE" if reverse else ("ADD" if abs(current_signed) > tolerance else "OPEN")
             elif delta < -tolerance:
                 if current_signed > tolerance:
-                    response = await asyncio.to_thread(client.market_reduce, coin, False, abs(delta), dex, self.settings.max_slippage_pct) if live else {"status": "paper"}
                     action = "PARTIAL_CLOSE"
                 else:
-                    response = await asyncio.to_thread(client.market_open, coin, False, abs(delta), dex, spec["leverage"], self.settings.max_slippage_pct) if live else {"status": "paper"}
                     action = "REVERSE" if reverse else ("ADD" if abs(current_signed) > tolerance else "OPEN")
             else:
                 if live and lev_changed:
@@ -959,16 +960,13 @@ class CopyEngine:
                               capital_pct=spec["capital_pct"], target_margin=spec["target_margin"])
                 return self._finish_operation(operation, result, existing, spec.get("sources"))
             if live:
-                error = client.order_error(response)
-                if error:
-                    raise RuntimeError(error)
                 snapshot_started_ms = int(time.time() * 1000)
                 rows = await asyncio.to_thread(client.positions, True, True)
                 actual = next((p for p in rows if self._key(p["coin"], p.get("dex")) == key), None)
                 if actual: actual = dict(actual, snapshot_started_ms=snapshot_started_ms)
-                proof = getattr(client, "verify_copy_execution", None)
-                execution_evidence = await asyncio.to_thread(proof, response, coin, dex,
-                    None if reverse else existing, actual, submitted_ms) if callable(proof) else None
+                execution_evidence = {'intent_id': receipt.intent_id, 'network': client.network,
+                    'order_ids': list(receipt.order_ids), 'trade_ids': [f.trade_id for f in receipt.fills],
+                    'verified_ms': receipt.received_ms}
                 size = float(actual.get("size", 0)) if actual else 0.0
                 actual_signed = size * (1 if actual and actual.get("side") == "LONG" else -1)
                 warning = ""
@@ -990,7 +988,7 @@ class CopyEngine:
                           spec["capital_pct"], spec["target_margin"])
             return self._finish_operation(operation, result)
 
-    async def _close(self, account, client, position, journalled=True, runtime=None, persist=None):
+    async def _close(self, account, client, position, journalled=True, runtime=None, persist=None, parent_operation=None):
         live = self.settings.auto_trading and client.exchange is not None
         operation = None
         try:
@@ -998,21 +996,20 @@ class CopyEngine:
                 operation = self.journal.prepare(account["address"], market_key(position), {"action": "CLOSE", "before": position,
                     "network": getattr(client, "network", "LEGACY_UNKNOWN")})
             submitted_ms = int(time.time() * 1000)
-            response = await asyncio.to_thread(client.market_close, position["coin"], position.get("dex") or "",
-                slippage_pct=self.settings.max_slippage_pct) if live else {"status": "paper"}
             if live:
-                error = client.order_error(response)
-                if error:
-                    raise RuntimeError(error)
+                from core.foundation.copy_execution import execute_copy
+                receipt = await asyncio.to_thread(execute_copy, self, account, client, operation or parent_operation,
+                    'CLOSE', float(position['size']), position['side'] == 'SHORT',
+                    dict(position, target_notional=position['position_value']), position)
                 rows = await asyncio.to_thread(client.positions, True, True)
                 key = self._key(position["coin"], position.get("dex"))
                 remaining = next((p for p in rows if self._key(p["coin"], p.get("dex")) == key
                                   and abs(float(p.get("size", 0))) > 0), None)
                 if remaining:
                     raise RuntimeError("Close is not complete: exchange still reports an open position; ownership retained")
-                proof = getattr(client, "verify_copy_execution", None)
-                execution_evidence = await asyncio.to_thread(proof, response, position["coin"], position.get("dex") or "",
-                    position, None, submitted_ms) if callable(proof) else None
+                execution_evidence = {'intent_id': receipt.intent_id, 'network': client.network,
+                    'order_ids': list(receipt.order_ids), 'trade_ids': [f.trade_id for f in receipt.fills],
+                    'verified_ms': receipt.received_ms}
                 if runtime is not None and persist:
                     from core.manual_positions import ManualPositions
                     await asyncio.to_thread(ManualPositions(client, runtime, persist).delete_stop_loss,

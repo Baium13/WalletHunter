@@ -1,5 +1,6 @@
 """One source book for new routes; reuse Phase 1.2 instead of redefining thirds."""
 import math
+from contextlib import closing
 from dataclasses import dataclass
 from core.source_allocation import SourceAllocationBook
 from .contracts import Allocation, PortfolioSnapshot, Scope
@@ -70,3 +71,60 @@ class Ledger:
         if self.errors or source not in self.allocations:
             raise ValueError("Ledger requires reconciliation")
         return self.allocations[source]
+
+
+class CopyLedger:
+    """Read-through P1.2 accounting, with the current journal envelope excluded
+    ONLY from its own admission calculation. All other pending envelopes remain.
+    The same operation is reserved durably by the gateway before submission.
+    """
+    def __init__(self, portfolio, sources, journal, operation, spec):
+        self.portfolio, self.spec = portfolio, spec
+        self.errors = []
+        owned = journal.owned(portfolio.scope.account)
+        self.owned = owned
+        actual = {p.instrument.market_key: dict(side=p.side, size=p.size, entry_price=p.entry_price,
+            position_value=p.notional, leverage=p.leverage, margin_used=p.margin)
+            for p in portfolio.positions}
+        with closing(journal.connect()) as db:
+            rows = db.execute("SELECT id,market,intent FROM operations WHERE account=? AND status IN ('PREPARED','UNKNOWN')",
+                (portfolio.scope.account,)).fetchall()
+            close = db.execute("SELECT body,receipt FROM intents WHERE id=? AND status='FILLED'", (operation+'-close',)).fetchone()
+        import json
+        if close:
+            identity = json.loads(close['body'])
+            market = identity['instrument']['symbol']+'|'+identity['instrument']['dex']
+            if identity['instrument']['dex']: market = identity['instrument']['dex']+':'+market
+            if market not in actual and identity['scope']['network'] == portfolio.scope.network:
+                owned = dict(owned)
+                owned.pop(market, None)
+        pending = {r['market']: json.loads(r['intent']) for r in rows if r['id'] != operation}
+        if any(r.get('network') != portfolio.scope.network for r in pending.values()):
+            self.errors.append('NETWORK_UNKNOWN')
+        try:
+            self.book = SourceAllocationBook(portfolio.sizing_capital, list(sources), actual, owned,
+                {k for k, v in owned.items() if v.get('managed') and v.get('network') == portfolio.scope.network}, pending)
+            self.errors.extend(self.book.errors)
+        except Exception:
+            self.book = None
+            self.errors.append('CAPITAL_UNKNOWN')
+        self.available_capacity = portfolio.available_collateral
+
+    def permits(self, intent, reference):
+        """Recheck the existing source cap against the actual requested target."""
+        if self.errors or self.book is None: return False
+        before = next((p for p in self.portfolio.positions if p.instrument == intent.instrument), None)
+        row = None if before is None else dict(side=before.side, size=before.size,
+            position_value=before.notional, leverage=before.leverage, margin_used=before.margin)
+        spec = dict(self.spec)
+        capped = self.book.cap(intent.instrument.market_key, spec, row)
+        target = ((before.size if before else 0.) + intent.size) * reference
+        if intent.action == 'LEVERAGE_UPDATE': target = before.size * reference
+        return target <= capped['target_notional'] * (1 + 1e-9)
+
+    def owns(self, intent):
+        row = next((p for p in self.portfolio.positions if p.instrument == intent.instrument), None)
+        saved = self.owned.get(intent.instrument.market_key, {})
+        return bool(row and saved.get('managed') and saved.get('network') == intent.scope.network
+            and saved.get('side') == row.side
+            and math.isclose(float(saved.get('size', -1)), row.size, rel_tol=1e-8, abs_tol=0.))

@@ -98,7 +98,7 @@ class MarketData:
             return True
 
 
-def account_snapshot(client, scope, revision, clock_ms):
+def account_snapshot(client, scope, revision, clock_ms, *, dex=None, require_collateral=True):
     """Read-only bridge. REST account API provides no atomic exchange watermark.
 
     Preserve that limitation as UNKNOWN: this adapter cannot authorize execution
@@ -106,6 +106,8 @@ def account_snapshot(client, scope, revision, clock_ms):
     routes retain their validated capital adapter; no financial history is adopted.
     """
     if client.network != scope.network: raise DataUnavailable("NETWORK_MISMATCH")
+    if dex is not None:
+        return copy_account_snapshot(client, scope, revision, clock_ms, dex, require_collateral)
     capital = client.capital_snapshot()
     rows = client.positions(True, True)
     if any(not isinstance(p["leverage"], (int, float)) or isinstance(p["leverage"], bool)
@@ -118,3 +120,56 @@ def account_snapshot(client, scope, revision, clock_ms):
     return PortfolioSnapshot(scope=scope, revision=revision, exchange_ms=None, received_ms=clock_ms(),
         equity=None, sizing_capital=capital.sizing_base_usdc, available_collateral=None,
         positions=positions, completeness="UNKNOWN", evidence="EXCHANGE")
+
+
+def copy_account_snapshot(client, scope, revision, clock_ms, dex, require_collateral=True):
+    """Bounded live read: a pool capacity is never presented as all-pool cash.
+
+    Position existence comes from the exchange; attribution is supplied separately
+    by the journal book, never inferred from these rows. Missing timestamps fail
+    closed rather than being replaced with the local receipt time.
+    """
+    from core.capital_snapshot import finite_amount
+    from .contracts import OpenOrder
+    if client.network != scope.network or client.address.lower() != scope.account:
+        raise DataUnavailable("ACCOUNT_NETWORK_MISMATCH")
+    stamps = []
+    for pool in ("", "xyz"):
+        state = client.info.user_state(scope.account, pool)
+        stamp = state.get("time")
+        if type(stamp) is not int or stamp < 0:
+            raise DataUnavailable("ACCOUNT_WATERMARK_UNAVAILABLE")
+        stamps.append(stamp)
+    rows = client.positions(True, True)
+    positions = []
+    for p in rows:
+        lev = finite_amount(p.get("leverage"), "leverage")
+        if lev != int(lev): raise DataUnavailable("INVALID_LEVERAGE")
+        positions.append(Position(instrument=InstrumentId(network=scope.network,
+            dex=p.get("dex") or "", symbol=p["coin"].split(":")[-1]),
+            side=p["side"], size=p["size"], entry_price=p["entry_price"],
+            notional=p["position_value"], margin=p.get("margin_used"), leverage=int(lev), evidence="UNKNOWN"))
+    orders = []
+    for pool in ("", "xyz"):
+        raw = client.frontend_open_orders(pool)
+        if not isinstance(raw, list): raise DataUnavailable("ORDERS_UNAVAILABLE")
+        for row in raw:
+            if type(row.get("reduceOnly")) is not bool: raise DataUnavailable("ORDER_SCOPE_UNKNOWN")
+            orders.append(OpenOrder(instrument=InstrumentId(network=scope.network, dex=pool,
+                symbol=row["coin"].split(":")[-1]), order_id=str(row["oid"]),
+                size=finite_amount(row.get("sz"), "order size"), reduce_only=row["reduceOnly"]))
+    equity = capacity = sizing = None
+    try:
+        if not require_collateral: raise ValueError('Collateral not required for proven reduction')
+        sizing = finite_amount(client.capital_snapshot().sizing_base_usdc, "sizing capital")
+        capacity = finite_amount(client.available_margin(dex), "pool capacity")
+        # Existing capital semantics are the sizing/collateral basis, not a
+        # fabricated sum of unified spot plus duplicated perp account balances.
+        equity = sizing
+        if min(sizing, capacity) < 0 or capacity > equity: raise ValueError("Inconsistent collateral")
+    except Exception:
+        equity = capacity = sizing = None
+    return PortfolioSnapshot(scope=scope, revision=revision, exchange_ms=min(stamps), received_ms=clock_ms(),
+        equity=equity, sizing_capital=sizing, available_collateral=capacity, collateral_dex=dex,
+        positions=tuple(positions), orders=tuple(orders),
+        completeness="COMPLETE" if sizing is not None else "UNKNOWN", evidence="EXCHANGE")

@@ -73,6 +73,10 @@ class ExecutionJournal:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute("SELECT * FROM operations WHERE id=?", (oid,)).fetchone()
             if not row or row["status"] != "PREPARED": raise ValueError("Operation is not pending")
+            links = json.loads(row['intent']).get('canonical_intents', [])
+            if links and not result.get('ok'):
+                states = [db.execute('SELECT status FROM intents WHERE id=?', (identity,)).fetchone() for identity in links]
+                if all(state and state[0] == 'REJECTED' for state in states): status = 'REJECTED'
             db.execute("UPDATE operations SET status=?,updated=?,outcome=? WHERE id=?",
                        (status, time.time(), json.dumps(result), oid))
             if ownership is not None:

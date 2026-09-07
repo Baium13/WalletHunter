@@ -102,6 +102,7 @@ class PortfolioSnapshot(Contract):
     equity: Amount | None
     sizing_capital: Amount | None
     available_collateral: Amount | None
+    collateral_dex: str | None = None
     positions: tuple[Position, ...] = ()
     orders: tuple[OpenOrder, ...] = ()
     completeness: Literal["COMPLETE", "UNKNOWN"]
@@ -238,7 +239,7 @@ class Fill(Contract):
 class ExecutionReceipt(Contract):
     intent_id: Name
     scope: Scope
-    status: Literal["SUBMITTING", "FILLED", "PARTIAL", "UNKNOWN", "REJECTED"]
+    status: Literal["SUBMITTING", "FILLED", "PARTIAL", "UNKNOWN", "REJECTED", "CONFIGURED"]
     order_ids: tuple[Name, ...] = ()
     fills: tuple[Fill, ...] = ()
     reconciliation: Literal["CONFIRMED", "PARTIAL", "RECONCILIATION_REQUIRED", "REJECTED"]
@@ -261,7 +262,7 @@ class DomainEvent(Contract):
     event_id: Name
     event_type: Literal["MARKET_SNAPSHOT", "PORTFOLIO_SNAPSHOT", "LEADER_EVENT", "ORDER_INTENT_CREATED",
         "RISK_APPROVED", "RISK_REJECTED", "ORDER_SUBMITTED", "ORDER_PARTIALLY_FILLED", "ORDER_FILLED", "ORDER_REJECTED",
-        "EXECUTION_UNKNOWN", "POSITION_OPENED", "POSITION_CHANGED", "POSITION_CLOSED", "RECONCILIATION_REQUIRED"]
+        "EXECUTION_UNKNOWN", "POSITION_OPENED", "POSITION_INCREASED", "POSITION_REDUCED", "LEVERAGE_CONFIGURED", "POSITION_CHANGED", "POSITION_CLOSED", "RECONCILIATION_REQUIRED"]
     correlation_id: Name
     scope: Scope
     event_ms: Millis

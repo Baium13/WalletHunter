@@ -7,6 +7,7 @@ import asyncio
 from copy import deepcopy
 import tempfile
 import unittest
+import time
 from types import SimpleNamespace
 
 from cryptography.fernet import Fernet
@@ -49,6 +50,11 @@ class ExchangeBoundary:
     network = "TESTNET"
 
     def __init__(self):
+        self.address = ACCOUNT
+        self.info = self
+        self.orders = {}
+        self.fills = []
+        self.fill_fraction = 1.
         self.rows = {}
         self.calls = []
         self.leverages = {}
@@ -63,7 +69,30 @@ class ExchangeBoundary:
         self.rows[CopyEngine._key(row["coin"], row.get("dex"))] = deepcopy(row)
 
     def balance(self): return self.cash
-    def available_margin(self, dex=""): return 1_000_000.
+    def available_margin(self, dex=""): return self.cash
+    def capital_snapshot(self): return SimpleNamespace(sizing_base_usdc=self.cash)
+    def user_state(self, account, dex=''): return {'time': int(time.time()*1000)}
+    def round_price(self, coin, price, dex=''): return price
+    def user_fills_by_time(self, account, start, end): return [f for f in self.fills if start <= f['time'] <= end]
+    def query_order_by_cloid(self, cloid): return self.orders.get(str(cloid), {'status':'unknownOid'})
+    def submit_copy_ioc(self, coin, buy, size, limit_price, reduce_only, cloid, dex='', *, expires_ms):
+        key = CopyEngine._key(coin, dex)
+        before = deepcopy(self.rows.get(key))
+        stamp = int(time.time()*1000)
+        if reduce_only and before and abs(size-before['size']) < 1e-12:
+            response = self.market_close(coin, dex)
+        else:
+            response = self._trade('reduce' if reduce_only else 'open', coin, buy, size*self.fill_fraction, dex)
+        after = self.rows.get(key)
+        signed = lambda p: 0. if not p else p['size']*(1 if p['side']=='LONG' else -1)
+        filled = abs(signed(after)-signed(before))
+        oid = len(self.orders)+1
+        self.orders[cloid] = {'status':'order','order': {'status':'filled' if filled == size else 'iocCancel',
+            'statusTimestamp':stamp, 'order': {'oid':oid,'cloid':cloid,'coin':key[0], 'side':'B' if buy else 'A',
+            'reduceOnly':reduce_only,'origSz':str(size),'limitPx':str(limit_price),'timestamp':stamp}}}
+        if filled: self.fills.append({'coin':key[0],'oid':oid,'tid':oid,'side':'B' if buy else 'A',
+            'sz':str(filled),'px':str(self.mid(coin,dex)),'time':stamp})
+        return response
     def frontend_open_orders(self, dex=""): return []
     def realized_pnl_since(self, since): return self.pnl
     def mid(self, coin, dex=""): return self.prices.get(CopyEngine._key(coin, dex), 100.)

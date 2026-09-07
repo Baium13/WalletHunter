@@ -122,7 +122,8 @@ class FakeExchange:
 
 class ExecutionGateway:
     def __init__(self, store, risk, exchange, clock_ms):
-        if type(exchange) is not FakeExchange: raise ValueError("Live adapter not migrated")
+        from .copy_execution import HyperliquidExecutionAdapter
+        if type(exchange) not in (FakeExchange, HyperliquidExecutionAdapter): raise ValueError("Uncontrolled execution adapter")
         self.store, self.risk, self.__exchange, self.clock = store, risk, exchange, clock_ms
 
     def authorize_fake(self, intent):
@@ -144,7 +145,19 @@ class ExecutionGateway:
         return ExecutionReceipt(intent_id=intent.intent_id, scope=intent.scope, status=status,
             reconciliation="RECONCILIATION_REQUIRED", received_ms=now, provenance="UNKNOWN")
 
-    def execute(self, intent, market):
+    def authorize_copy(self, intent):
+        from .copy_execution import HyperliquidExecutionAdapter
+        if type(self.__exchange) is not HyperliquidExecutionAdapter:
+            raise ValueError('Copy adapter required')
+        self.__exchange.validate_scope(intent)
+        with self.store.transaction() as db:
+            self.store.bind(db, intent.scope)
+            row = db.execute('SELECT account,intent,status FROM operations WHERE id=?', (intent.parent_intent_id,)).fetchone()
+            if not row or row['account'] != intent.scope.account or row['status'] != 'PREPARED' or json.loads(row['intent']).get('network') != intent.scope.network:
+                raise ValueError('Durable copy authority unavailable')
+            db.execute('INSERT OR IGNORE INTO grants VALUES(?,?,?)', (intent.intent_id, scope_key(intent.scope), digest(intent)))
+
+    def execute(self, intent, market, *, copy_ledger=None):
         intent = OrderIntent.model_validate_json(intent.model_dump_json())
         with self.store.transaction() as db:
             now = self.clock()
@@ -155,9 +168,10 @@ class ExecutionGateway:
                 return ExecutionReceipt.model_validate_json(old["receipt"]) if old["receipt"] else self._unknown(intent, now, "SUBMITTING")
             before = self.store.portfolio_in(db, intent.scope)
             pending = db.execute("SELECT reservation FROM intents WHERE scope=? AND status IN ('SUBMITTING','UNKNOWN')", (scope_key(intent.scope),)).fetchall()
-            reservations = [Reservation(**json.loads(r[0])) for r in pending]
+            reservations = [Reservation(**json.loads(r[0])) for r in pending] if intent.version == 1 else []
             grant = db.execute("SELECT intent_hash FROM grants WHERE id=? AND scope=?", (intent.intent_id, scope_key(intent.scope))).fetchone()
-            ledger = Ledger(before, self.risk.policy.sources, reservations)
+            ledger = Ledger(before, self.risk.policy.sources, reservations) if intent.version == 1 else copy_ledger
+            if ledger is None or ledger.portfolio != before: raise ValueError('Ledger snapshot mismatch')
             decision = self.risk.evaluate(intent, market, ledger, now, authorized=bool(grant and grant[0] == digest(intent)), unresolved=bool(pending))
             approved = decision.outcome == "APPROVED"
             receipt = self._unknown(intent, now, "SUBMITTING") if approved else ExecutionReceipt(intent_id=intent.intent_id,
@@ -168,6 +182,16 @@ class ExecutionGateway:
             db.execute("INSERT INTO intents VALUES(?,?,?,?,?,?,?)", (intent.intent_id, scope_key(intent.scope), encoded(intent),
                 receipt.status, encoded(decision), json.dumps(reservation), encoded(receipt)))
             db.execute("INSERT INTO intent_prestate VALUES(?,?)", (intent.intent_id, encoded(before)))
+            if intent.version == 2:
+                # Same SQLite transaction as reservation. Keep the rich legacy
+                # envelope, adding only stable child identity links.
+                parent = db.execute('SELECT intent FROM operations WHERE id=?', (intent.parent_intent_id,)).fetchone()
+                if not parent: raise ValueError('Missing parent journal')
+                envelope = json.loads(parent[0])
+                children = envelope.setdefault('canonical_intents', [])
+                if intent.intent_id not in children: children.append(intent.intent_id)
+                envelope['correlation_id'] = intent.correlation_id
+                db.execute('UPDATE operations SET intent=? WHERE id=?', (json.dumps(envelope), intent.parent_intent_id))
             db.execute("INSERT OR IGNORE INTO policies VALUES(?,?)", (digest(self.risk.policy), encoded(self.risk.policy)))
             db.execute("DELETE FROM grants WHERE id=?", (intent.intent_id,))
             self._event(db, intent, "MARKET_SNAPSHOT", market, now)
@@ -185,7 +209,7 @@ class ExecutionGateway:
 
     def _settle(self, intent, before, report):
         now = self.clock()
-        receipt = reconcile(intent, before, report, now)
+        receipt = (report.receipt if report is not None else self._unknown(intent, now)) if intent.version == 2 else reconcile(intent, before, report, now)
         with self.store.transaction() as db:
             row = db.execute("SELECT status,receipt FROM intents WHERE id=? AND scope=?", (intent.intent_id, scope_key(intent.scope))).fetchone()
             if not row: raise ValueError("No durable intent")
@@ -195,10 +219,11 @@ class ExecutionGateway:
             if current != before: receipt = self._unknown(intent, now)
             if receipt.status != "UNKNOWN":
                 self.store.publish_portfolio_in(db, report.after, intent.correlation_id)
-            kind = {"FILLED": "ORDER_FILLED", "PARTIAL": "ORDER_PARTIALLY_FILLED", "REJECTED": "ORDER_REJECTED", "UNKNOWN": "EXECUTION_UNKNOWN"}[receipt.status]
+            kind = {"FILLED": "ORDER_FILLED", "PARTIAL": "ORDER_PARTIALLY_FILLED", "REJECTED": "ORDER_REJECTED", "UNKNOWN": "EXECUTION_UNKNOWN", "CONFIGURED": "LEVERAGE_CONFIGURED"}[receipt.status]
             # Repeated UNKNOWN queries must not collide with the original timestamp.
             if receipt.status != "UNKNOWN" or row["status"] != "UNKNOWN": self._event(db, intent, kind, receipt, now)
-            if receipt.status in {"FILLED", "PARTIAL"}: self._event(db, intent, "POSITION_OPENED", receipt, now)
+            if receipt.status in {"FILLED", "PARTIAL"}:
+                self._event(db, intent, {'OPEN':'POSITION_OPENED','ADD':'POSITION_INCREASED','REDUCE':'POSITION_REDUCED','CLOSE':'POSITION_CLOSED' if receipt.status == 'FILLED' else 'POSITION_REDUCED'}[intent.action], receipt, now)
             db.execute("UPDATE intents SET status=?,receipt=? WHERE id=?", (receipt.status, encoded(receipt), intent.intent_id))
         return receipt
 

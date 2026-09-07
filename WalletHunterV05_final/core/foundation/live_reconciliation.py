@@ -33,7 +33,7 @@ def reconcile_order(intent, before, after, client, *, now_ms, max_age_ms):
                 or intent.execution_mode != "LIVE" or client.network != intent.scope.network
                 or client.address.lower() != intent.scope.account or before.scope != intent.scope or after.scope != intent.scope
                 or before.evidence != "EXCHANGE" or after.evidence != "EXCHANGE"
-                or before.completeness != "COMPLETE" or after.completeness != "COMPLETE"
+                or (intent.action not in {'REDUCE','CLOSE'} and (before.completeness != "COMPLETE" or after.completeness != "COMPLETE"))
                 or before.exchange_ms is None or after.exchange_ms is None
                 or not 0 <= now_ms-after.received_ms <= max_age_ms
                 or not 0 <= now_ms-after.exchange_ms <= max_age_ms

@@ -33,6 +33,8 @@ class RiskGateway:
     def evaluate(self, intent, market, ledger, now, *, authorized=False, unresolved=False):
         intent = OrderIntent.model_validate_json(intent.model_dump_json())
         market = MarketSnapshot.model_validate_json(market.model_dump_json())
+        if intent.version == 2:
+            return self._copy(intent, market, ledger, now, authorized, unresolved)
         p, snapshot = self.policy, ledger.portfolio
         reasons = []
         def require(condition, reason):
@@ -80,3 +82,52 @@ class RiskGateway:
             outcome="REJECTED" if reasons else "APPROVED", reasons=tuple(dict.fromkeys(reasons)),
             approved_size=0. if reasons else intent.size, approved_limit=0. if reasons else intent.limit_price,
             portfolio_revision=snapshot.revision, created_ms=now)
+
+    def _copy(self, intent, market, ledger, now, authorized, unresolved):
+        p, s = self.policy, ledger.portfolio
+        reasons = []
+        def check(ok, code):
+            if not ok: reasons.append(code)
+        reducing = intent.action in {'REDUCE', 'CLOSE'}
+        check(intent.scope == p.scope == s.scope and intent.instrument == p.instrument == market.instrument, 'SCOPE_MISMATCH')
+        check(authorized is True and intent.authorization == 'COPY_POLICY' and intent.execution_mode == 'LIVE', 'AUTHORIZATION_REQUIRED')
+        check(p.enabled, 'ACCOUNT_DISABLED')
+        check(not unresolved, 'UNRESOLVED_EXECUTION')
+        check(intent.created_ms <= now < intent.expires_ms and now-intent.created_ms <= p.max_intent_age_ms, 'INTENT_EXPIRED')
+        check(s.evidence == 'EXCHANGE' and s.exchange_ms is not None
+            and 0 <= now-s.exchange_ms <= p.max_portfolio_age_ms
+            and 0 <= now-s.received_ms <= p.max_portfolio_age_ms, 'ACCOUNT_STALE')
+        check(market.price is not None and market.freshness == 'FRESH'
+            and 0 <= now-market.received_ms <= p.max_market_age_ms, 'PRICE_STALE')
+        check(intent.slippage_pct <= p.max_slippage_pct, 'SLIPPAGE_LIMIT')
+        try:
+            b = next((x for x in s.positions if x.instrument == intent.instrument), None)
+            if b is not None: check(ledger.owns(intent), 'OWNERSHIP_UNPROVEN')
+            if reducing:
+                check(b is not None and (b.side == 'LONG') != (intent.side == 'BUY') and intent.size <= b.size, 'REDUCTION_SCOPE')
+                if intent.action == 'CLOSE': check(b is not None and intent.size == b.size, 'CLOSE_SCOPE')
+            else:
+                check(s.completeness == 'COMPLETE' and s.collateral_dex == intent.instrument.dex, 'COLLATERAL_UNKNOWN')
+                check(not ledger.errors and ledger.permits(intent, market.price), 'SOURCE_CAPACITY')
+                check(not any(not o.reduce_only for o in s.orders), 'OPEN_ORDERS_UNRESOLVED')
+                check(intent.leverage <= p.max_leverage, 'LEVERAGE_LIMIT')
+                current = b.size if b else 0.
+                target = current if intent.action == 'LEVERAGE_UPDATE' else current+intent.size
+                added = 0. if intent.action == 'LEVERAGE_UPDATE' else intent.size*market.price
+                margin = max(0., target*market.price/intent.leverage - (b.notional/b.leverage if b else 0.))
+                reserved = math.fsum(x.reserved_margin for x in ledger.book.accounts.values()) if ledger.book else float('inf')
+                required = margin + added*(.001 + intent.slippage_pct/100)
+                check(math.isfinite(required) and s.available_collateral is not None
+                    and required <= max(0., s.available_collateral-reserved)+1e-9, 'ACCOUNT_CAPACITY')
+                if intent.action != 'LEVERAGE_UPDATE':
+                    check(intent.size*market.price >= p.min_notional, 'MIN_NOTIONAL')
+                check(target*market.price <= p.max_symbol_notional+1e-9, 'EXPOSURE_LIMIT')
+            if intent.action != 'LEVERAGE_UPDATE':
+                check(Decimal(str(intent.size)) % Decimal(str(p.size_step)) == 0, 'SIZE_NOT_NORMALIZED')
+            check(abs(intent.limit_price/market.price-1)*100 <= intent.slippage_pct+1e-8, 'PRICE_BOUNDARY')
+        except (ValueError, ArithmeticError, TypeError, AttributeError):
+            reasons.append('FINANCIAL_EVIDENCE_INVALID')
+        return RiskDecision(intent_id=intent.intent_id, intent_hash=digest(intent), policy_hash=digest(p), market_hash=digest(market),
+            outcome='REJECTED' if reasons else 'APPROVED', reasons=tuple(dict.fromkeys(reasons)),
+            approved_size=0. if reasons else intent.size, approved_limit=0. if reasons else intent.limit_price,
+            portfolio_revision=s.revision, created_ms=now)

@@ -32,7 +32,7 @@ from core.ai_position_observer import AiPositionObserver, position_notice, posit
 from core.ai_user_orders import AiUserOrders
 from core.ai_entry_observer import AiEntryObserver, entry_notice
 from core.profile_mutation import save_profile_guarded, legacy_trading_callback
-from integrations.hyperliquid import HyperliquidAccount
+from integrations.hyperliquid import HyperliquidAccount, verify_account_control
 
 S = load()
 # Versioned URL makes Telegram reopen the current Mini App build after deployments.
@@ -412,7 +412,9 @@ async def message(event):
         if task == "account":
             parts = [x.strip() for x in text.split("|")]
             if len(parts) != 3 or not ADDRESS.fullmatch(parts[1]): raise ValueError("Формат: Название | 0xACCOUNT_ADDRESS | API_PRIVATE_KEY")
-            p["account"] = {"id": f"a{uuid.uuid4().hex[:12]}", "name": parts[0][:40] or "My Hyperliquid", "address": parts[1], "private_key": store.encrypt(parts[2])}
+            control = await asyncio.to_thread(verify_account_control, parts[1], parts[2], reader._info)
+            p["account"] = {"id": f"a{uuid.uuid4().hex[:12]}", "name": parts[0][:40] or "My Hyperliquid", "address": parts[1].lower(), "private_key": store.encrypt(parts[2]),
+                            "control": dict(control, verified_network=S.hl_mode, verified_ms=int(time.time()*1000))}
             p["copy_enabled"] = False; clients.pop(str(event.sender_id), None)
             await save_profile(event.sender_id, p)
             await event.respond("✅ Hyperliquid-аккаунт сохранён. Добавьте кошельки и включите копирование.", buttons=menu_button())

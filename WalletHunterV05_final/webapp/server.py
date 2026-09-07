@@ -41,7 +41,7 @@ from core.ai_policy import ReviewPolicy
 from core.fill_history import HistoryIncomplete
 from core.capital_snapshot import UnsupportedCapitalMode
 from fastapi.responses import JSONResponse
-from integrations.hyperliquid import HyperliquidAccount
+from integrations.hyperliquid import HyperliquidAccount, verify_account_control
 
 settings = load()
 storage = Storage(ROOT, settings.master_key)
@@ -468,6 +468,10 @@ def set_account(payload: AccountInput, x_telegram_init_data: str | None = Header
         if any(uid != str(user["id"]) and (p.get("account") or {}).get("address", "").lower() == new_address
                for uid,p in data["profiles"].items()):
             raise HTTPException(409, "This Hyperliquid account is already linked to another profile")
+        try:
+            control = verify_account_control(new_address, payload.private_key.strip(), lambda query: reader._info(query))
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from None
         if existing_account and not same_account:
             if safe_positions(existing_account["address"]) and not payload.confirm_open_positions:
                 raise HTTPException(409, "Existing account has open positions; confirm before replacing it")
@@ -480,6 +484,7 @@ def set_account(payload: AccountInput, x_telegram_init_data: str | None = Header
             "name": payload.name.strip()[:40] or "My Hyperliquid",
             "address": new_address,
             "private_key": storage.encrypt(payload.private_key.strip()),
+            "control": dict(control, verified_network=settings.hl_mode, verified_ms=int(time.time()*1000)),
         }
         profile["copy_enabled"] = False
         data["profiles"][str(user["id"])] = profile

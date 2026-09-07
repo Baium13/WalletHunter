@@ -19,6 +19,9 @@ class ApiRaceTests(unittest.TestCase):
         self.fixture.setUp()
         self.server, self.store = self.fixture.server, self.fixture.store
         self.request = self.fixture.request
+        # Race tests use synthetic credentials; authority has its own crypto tests.
+        authority = patch.object(self.server, "verify_account_control", return_value={"account_type": "SYNTHETIC_TEST"})
+        authority.start(); self.addCleanup(authority.stop)
         _, p = self.store.profile(1)
         p["leaders"] = fixtures.LEADERS[:2]
         self.store.update_profile(1, p)

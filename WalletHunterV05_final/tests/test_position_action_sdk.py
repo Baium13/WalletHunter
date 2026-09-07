@@ -64,6 +64,34 @@ class ExactExchange:
 
 
 class PositionActionSdkTests(unittest.TestCase):
+    def test_account_control_is_derived_or_exchange_delegated_without_trading(self):
+        from eth_account import Account
+        from integrations.hyperliquid import verify_account_control
+        wallet = Account.create()
+        calls = []
+        def info(query):
+            calls.append(query)
+            return {"role": "agent", "data": {"user": ACCOUNT}}
+        direct = verify_account_control(wallet.address, wallet.key, info)
+        self.assertEqual(direct["account_type"], "DIRECT")
+        self.assertEqual(calls, [])
+        delegated = verify_account_control(ACCOUNT, wallet.key, info)
+        self.assertEqual(delegated["account_type"], "API_AGENT")
+        self.assertEqual(calls[0]["user"], wallet.address.lower())
+        for role in ({"role": "user"}, {"role": "vault"},
+                     {"role": "agent", "data": {"user": "0x"+"b"*40}},
+                     {"role": "subAccount", "data": {"master": ACCOUNT}}, None):
+            with self.subTest(role=role), self.assertRaises(ValueError):
+                verify_account_control(ACCOUNT, wallet.key, lambda query: role)
+        secret = "invalid-credential-must-not-appear"
+        with self.assertRaises(ValueError) as error:
+            verify_account_control(ACCOUNT, secret, info)
+        self.assertNotIn(secret, str(error.exception))
+        def unavailable(query): raise RuntimeError(secret)
+        with self.assertRaises(ValueError) as error:
+            verify_account_control(ACCOUNT, wallet.key, unavailable)
+        self.assertNotIn(secret, str(error.exception))
+
     def setUp(self):
         network = patch("requests.sessions.Session.request", side_effect=AssertionError("Network forbidden"))
         network.start(); self.addCleanup(network.stop)

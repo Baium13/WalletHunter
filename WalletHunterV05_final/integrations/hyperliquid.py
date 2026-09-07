@@ -16,6 +16,30 @@ from core.capital_snapshot import read_capital_snapshot, available_margin_usdc, 
 class Snapshot:
     account_value:float; withdrawable:float
 
+def verify_account_control(address, private_key, info):
+    """Derive the signer locally; verify delegated authority without a trade.
+
+    Vault/subaccount routing is not supported by this account-binding contract.
+    Do not confuse an API signer with the account whose collateral is traded.
+    """
+    try:
+        if not isinstance(address, str) or not re.fullmatch(r"0x[0-9a-fA-F]{40}", address):
+            raise ValueError()
+        signer = Account.from_key(private_key).address.lower()
+    except Exception:
+        raise ValueError("Invalid signing credential or account address") from None
+    target = address.lower()
+    if signer == target:
+        return {"signer_address": signer, "trading_address": target, "account_type": "DIRECT"}
+    try:
+        role = info({"type": "userRole", "user": signer})
+        if (isinstance(role, dict) and role.get("role") == "agent" and
+                str((role.get("data") or {}).get("user", "")).lower() == target):
+            return {"signer_address": signer, "trading_address": target, "account_type": "API_AGENT"}
+    except Exception:
+        raise ValueError("Account authority verification unavailable") from None
+    raise ValueError("Signer does not control this account; vault/subaccount routing is unsupported")
+
 class HyperliquidAccount:
     def __init__(self, address, private_key, mode="MAINNET"):
         self.address=address.strip(); self.base=constants.TESTNET_API_URL if mode=="TESTNET" else constants.MAINNET_API_URL

@@ -220,6 +220,16 @@ class RiskTests(unittest.TestCase):
 class PipelineTests(unittest.TestCase):
     setUp = StoreTests.setUp
 
+    def test_proven_unfilled_terminal_order_is_not_unknown(self):
+        gateway, exchange = self.pipeline()
+        exchange.behavior = "REJECTED"
+        gateway.authorize_fake(intent())
+        self.assertEqual(gateway.execute(intent(), market()).reconciliation, "REJECTED")
+        self.assertEqual(self.store.portfolio(scope()).positions, ())
+        self.assertEqual(self.store.replay(scope())[-1][1].event_type, "ORDER_REJECTED")
+        self.assertEqual(gateway.recover(intent()).status, "REJECTED")
+        self.assertEqual(exchange.calls, 1)
+
     def test_parallel_same_intent_submits_at_most_once(self):
         from concurrent.futures import ThreadPoolExecutor
         gateway, exchange = self.pipeline()

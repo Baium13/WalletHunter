@@ -214,7 +214,7 @@ Payload = MarketSnapshot | PortfolioSnapshot | OrderIntent | RiskDecision | Exec
 class DomainEvent(Contract):
     event_id: Name
     event_type: Literal["MARKET_SNAPSHOT", "PORTFOLIO_SNAPSHOT", "LEADER_EVENT", "ORDER_INTENT_CREATED",
-        "RISK_APPROVED", "RISK_REJECTED", "ORDER_SUBMITTED", "ORDER_PARTIALLY_FILLED", "ORDER_FILLED",
+        "RISK_APPROVED", "RISK_REJECTED", "ORDER_SUBMITTED", "ORDER_PARTIALLY_FILLED", "ORDER_FILLED", "ORDER_REJECTED",
         "EXECUTION_UNKNOWN", "POSITION_OPENED", "POSITION_CHANGED", "POSITION_CLOSED", "RECONCILIATION_REQUIRED"]
     correlation_id: Name
     scope: Scope

@@ -195,7 +195,7 @@ class ExecutionGateway:
             if current != before: receipt = self._unknown(intent, now)
             if receipt.status != "UNKNOWN":
                 self.store.publish_portfolio_in(db, report.after, intent.correlation_id)
-            kind = {"FILLED": "ORDER_FILLED", "PARTIAL": "ORDER_PARTIALLY_FILLED", "REJECTED": "RECONCILIATION_REQUIRED", "UNKNOWN": "EXECUTION_UNKNOWN"}[receipt.status]
+            kind = {"FILLED": "ORDER_FILLED", "PARTIAL": "ORDER_PARTIALLY_FILLED", "REJECTED": "ORDER_REJECTED", "UNKNOWN": "EXECUTION_UNKNOWN"}[receipt.status]
             # Repeated UNKNOWN queries must not collide with the original timestamp.
             if receipt.status != "UNKNOWN" or row["status"] != "UNKNOWN": self._event(db, intent, kind, receipt, now)
             if receipt.status in {"FILLED", "PARTIAL"}: self._event(db, intent, "POSITION_OPENED", receipt, now)

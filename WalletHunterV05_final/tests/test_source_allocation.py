@@ -273,7 +273,8 @@ class SourceAllocationEngineTests(unittest.TestCase):
         self.client.leverages[CopyEngine._key(row["coin"], row.get("dex"))] = row["leverage"]
         _, profile = self.store.profile(1)
         self.runtime(managed=sorted(set(profile["runtime"].get("managed", [])) | {market(row)}))
-        op = self.engine.journal.prepare(ACCOUNT, market(row), {"action": "OFFLINE_SOURCE_FIXTURE"})
+        op = self.engine.journal.prepare(ACCOUNT, market(row), {
+            "action": "OFFLINE_SOURCE_FIXTURE", "network": self.client.network})
         self.engine.journal.finish(op, {"ok": True}, ownership(row, sources))
 
     def margin(self):

@@ -35,6 +35,7 @@ def snapshot(wallet=SOURCE_A, positions=None):
 
 
 class Reader:
+    network = "TESTNET"
     def market_context(self, coin, dex=""):
         return {"funding_bps_hour": 0., "open_interest": 1000.}
     def _info(self, payload):
@@ -45,6 +46,7 @@ class Reader:
 
 class ExchangeBoundary:
     exchange = object()
+    network = "TESTNET"
 
     def __init__(self):
         self.rows = {}
@@ -252,7 +254,8 @@ class EngineSafetyTests(unittest.TestCase):
         # These tests exercise execution/collateral behavior for known ownership.
         # Missing/unsafe attribution is covered separately in source-allocation tests.
         market = CopyEngine._runtime_key(CopyEngine._key(row["coin"], row.get("dex")))
-        operation = self.engine.journal.prepare(ACCOUNT, market, {"action": "OFFLINE_TEST_FIXTURE"})
+        operation = self.engine.journal.prepare(ACCOUNT, market, {
+            "action": "OFFLINE_TEST_FIXTURE", "network": self.client.network})
         self.engine.journal.finish(operation, {"ok": True}, {
             "managed": True, "position": deepcopy(row), "size": row["size"], "side": row["side"],
             "source_targets": [{"wallet": SOURCE_A, "margin": row["margin_used"],

@@ -34,6 +34,11 @@ def main():
     manifest["protected_source_manifest_sha256"] = digest(manifest["protected_source_manifest"])
     manifest["test_baseline_sha256"] = digest(manifest["test_baseline"])
     manifest["generation"] = "Deterministic from clean source; not evidence of a production deployment"
+    if (ROOT / "docs/phase1-validation.json").is_file():
+        manifest["current_stabilization"] = {"phase": "P1.3-P1.10",
+            "validation_sha256": digest("docs/phase1-validation.json"),
+            "protected_manifest_sha256": digest("docs/protected-source-phase1.json"),
+            "production_deployed": False}
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     print(json.dumps({"manifest": str(args.output), "commit": manifest["git_commit"]}))

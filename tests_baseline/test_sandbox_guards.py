@@ -24,11 +24,11 @@ class SandboxGuards(unittest.TestCase):
         root = Path(os.environ["WALLETHUNTER_BASELINE_APP"])
         files = json.loads(Path(os.environ["WALLETHUNTER_BASELINE_MANIFEST"]).read_text())
         phase = os.environ["WALLETHUNTER_BASELINE_PHASE"]
-        self.assertIn(phase, {"0", "1.1", "1.2"})
-        self.assertEqual(len(list((root/"tests").glob("test_*.py"))), {"0": 46, "1.1": 47, "1.2": 48}[phase])
-        if phase in {"1.1", "1.2"}:
+        self.assertIn(phase, {"0", "1.1", "1.2", "1"})
+        self.assertEqual(len(list((root/"tests").glob("test_*.py"))), {"0": 46, "1.1": 47, "1.2": 48, "1": 48}[phase])
+        if phase in {"1.1", "1.2", "1"}:
             self.assertIn("tests/test_ownership_history_cache.py", files)
-        if phase == "1.2":
+        if phase in {"1.2", "1"}:
             self.assertIn("tests/test_source_allocation.py", files)
         self.assertEqual(len(list((root/"tests").glob("*.cjs"))), 6)
         for name in files:

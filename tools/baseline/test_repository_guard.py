@@ -483,5 +483,36 @@ class Phase12ToolGuards(unittest.TestCase):
         self.assertEqual(env["AUTO_TRADING"], "false")
 
 
+class SprintTransitionTests(unittest.TestCase):
+    def test_sprint_requires_exact_paths_hashes_and_immutable_parent(self):
+        previous = {name: "0"*64 for name in protected.SPRINT_PATHS}
+        value = {"phase": "1", "parent_manifest_sha256": protected.SPRINT_PARENT,
+                 "files": {name: {"previous_sha256": "0"*64, "reviewed_sha256": "1"*64} for name in previous}}
+        self.assertEqual(protected.reviewed_sprint_transition(previous, value, protected.SPRINT_PARENT), value["files"])
+        import copy
+        for fault in ("parent", "extra", "missing", "previous", "digest", "unchanged", "phase"):
+            changed = copy.deepcopy(value)
+            name = next(iter(previous))
+            if fault == "parent": changed["parent_manifest_sha256"] = "2"*64
+            if fault == "extra": changed["files"][protected.P11_REGRESSION_PATH] = changed["files"][name]
+            if fault == "missing": changed["files"].pop(name)
+            if fault == "previous": changed["files"][name]["previous_sha256"] = None
+            if fault == "digest": changed["files"][name]["reviewed_sha256"] = "*"
+            if fault == "unchanged": changed["files"][name]["reviewed_sha256"] = "0"*64
+            if fault == "phase": changed["phase"] = "2"
+            with self.subTest(fault=fault), self.assertRaises(ValueError):
+                protected.reviewed_sprint_transition(previous, changed, protected.SPRINT_PARENT)
+
+    def test_sprint_cannot_overwrite_historical_reports(self):
+        for filename in ("baseline-tests.json", "baseline-guards.json", "p1.1-validation.json", "p1.2-validation.json"):
+            args = runner.argument_parser().parse_args(["--phase", "1", "--report", str(runner.REPOSITORY/"docs"/filename)])
+            with self.assertRaises(ValueError): runner.validate_options(args, runner.REPOSITORY/"WalletHunterV05_final")
+
+    def test_sprint_transition_cannot_modify_prior_regressions_or_fixed_thirds_module(self):
+        self.assertNotIn(protected.P11_REGRESSION_PATH, protected.SPRINT_PATHS)
+        self.assertNotIn(protected.P12_NEW_PATH, protected.SPRINT_PATHS)
+        self.assertNotIn("WalletHunterV05_final/tests/test_source_allocation.py", protected.SPRINT_PATHS)
+
+
 if __name__ == "__main__":
     unittest.main()

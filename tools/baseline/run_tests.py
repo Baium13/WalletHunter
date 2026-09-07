@@ -147,7 +147,7 @@ def argument_parser():
     parser.add_argument("--python",default=sys.executable)
     parser.add_argument("--node",default="node")
     parser.add_argument("--report",type=Path)
-    parser.add_argument("--phase",choices=("0", "1.1", "1.2"),default="0")
+    parser.add_argument("--phase",choices=("0", "1.1", "1.2", "1"),default="0")
     parser.add_argument("--python-module",action="append",default=[])
     parser.add_argument("--guards-only",action="store_true")
     parser.add_argument("--child",choices=("python","guards"))
@@ -160,12 +160,13 @@ def validate_options(args, source):
         raise ValueError("Selected modules require --phase 1.1 or 1.2; Phase 0 remains a full baseline")
     if args.guards_only and args.python_module:
         raise ValueError("--guards-only cannot be combined with Python test selection")
-    if args.phase in {"1.1", "1.2"}:
+    if args.phase in {"1.1", "1.2", "1"}:
         if args.report is None:
             raise ValueError("Phase " + args.phase + " requires an explicit --report path")
         historical = {REPOSITORY / "docs" / "baseline-tests.json", REPOSITORY / "docs" / "baseline-guards.json"}
-        if args.phase == "1.2":
+        if args.phase in {"1.2", "1"}:
             historical.add(REPOSITORY / "docs" / "p1.1-validation.json")
+        if args.phase == "1": historical.add(REPOSITORY / "docs" / "p1.2-validation.json")
         if args.report.resolve() in {path.resolve() for path in historical}:
             raise ValueError("Phase " + args.phase + " cannot overwrite historical phase reports")
     return selected_modules(source / "tests", args.python_module)
@@ -198,7 +199,8 @@ def main():
             "existing":{},"guards":{}}
     if args.phase != "0":
         report.update(evidence_label=("P1.1 authorized ownership-history cache validation" if args.phase == "1.1"
-                                     else "P1.2 authorized per-source allocation validation"),
+                                     else "P1.2 authorized per-source allocation validation" if args.phase == "1.2"
+                                     else "P1.3-P1.10 authorized stabilization validation"),
             historical_phase0_baseline=False,
             test_scope="GUARDS_ONLY" if args.guards_only else ("SELECTED_PYTHON_AND_ALL_JAVASCRIPT" if modules else "ALL_COPIED_PYTHON_AND_JAVASCRIPT"),
             selected_python_modules=modules)

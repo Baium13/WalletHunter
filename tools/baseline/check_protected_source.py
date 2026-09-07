@@ -16,6 +16,33 @@ P12_BASELINE_SHA256 = "6f37f3758c3848ad02e58680fb3c6e75b991a5903c276ab1eb90f279e
 P12_PARENT_SHA256 = "7e302162316f26082b1b3ef91efb7386e2029a92e7304d71446be9844dfc99e3"
 P11_REGRESSION_PATH = "WalletHunterV05_final/tests/test_ownership_history_cache.py"
 P11_REGRESSION_SHA256 = "059ec37273dd9d72f3d6afa49eb785e70581f862f20c24e2c1ebc7d3b62a135f"
+SPRINT_FILE = "docs/protected-source-phase1.json"
+SPRINT_PARENT = "af06edabf7c302caf86ade2211ef5338559b8221009910b41ba019cc8d2590b9"
+SPRINT_PATHS = {"WalletHunterV05_final/" + name for name in (
+    "core/ai_position_actions.py", "core/ai_user_orders.py", "core/execution_journal.py",
+    "core/hyperliquid.py", "core/settings.py", "core/trading_engine.py", "desktop/main.py",
+    "integrations/hyperliquid.py", "scripts/backup_runtime.py", "tests/test_ai_user_orders.py",
+    "tests/test_analysis_persistence.py", "tests/test_api_races.py", "tests/test_api_safety.py",
+    "tests/test_backup_runtime.py", "tests/test_confirmation_scheduler.py", "tests/test_engine_safety.py",
+    "tests/test_execution_journal.py", "tests/test_position_action_sdk.py", "webapp/server.py")}
+
+
+def reviewed_sprint_transition(previous, document, parent_digest):
+    if (not isinstance(document, dict) or set(document) != {"phase", "parent_manifest_sha256", "files"}
+            or document["phase"] != "1" or parent_digest != SPRINT_PARENT
+            or document["parent_manifest_sha256"] != parent_digest):
+        raise ValueError("invalid_sprint_parent_or_schema")
+    rows = document["files"]
+    if not isinstance(rows, dict) or set(rows) != SPRINT_PATHS:
+        raise ValueError("sprint_requires_exact_reviewed_paths")
+    for name, row in rows.items():
+        if (not isinstance(row, dict) or set(row) != {"previous_sha256", "reviewed_sha256"}
+                or row["previous_sha256"] != previous.get(name) or name not in previous
+                or not isinstance(row["reviewed_sha256"], str)
+                or not re.fullmatch(r"[0-9a-f]{64}", row["reviewed_sha256"])
+                or row["reviewed_sha256"] == row["previous_sha256"]):
+            raise ValueError("invalid_sprint_hash_transition")
+    return rows
 
 
 def reviewed_transition(expected, document):
@@ -102,6 +129,20 @@ def check(root):
         report.update(phase="1.2", reviewed_transitions=rows,
             transition_chain=[{"phase": "1.1", "files": {TRANSITION_PATH: row}}, {"phase": "1.2", "files": rows}],
             effective_protected_files=len(effective))
+    sprint = root / SPRINT_FILE
+    if sprint.exists() or sprint.is_symlink():
+        try:
+            if sprint.is_symlink() or report["phase"] != "1.2":
+                raise ValueError("sprint_requires_regular_manifest_and_p12_parent")
+            rows = reviewed_sprint_transition(effective, json.loads(sprint.read_bytes()),
+                hashlib.sha256(phase12.read_bytes()).hexdigest())
+        except (ValueError, OSError) as exc:
+            report.update(status="FAIL", reason=str(exc))
+            return report
+        effective.update({name: row["reviewed_sha256"] for name, row in rows.items()})
+        effective["WalletHunterV05_final/tests/test_source_allocation.py"] = "3aa7d3c96d485a610e27e0fa69b03ab651d1ce48d4387b4a35acf83143e85cee"
+        report.update(phase="1", reviewed_transitions=rows, effective_protected_files=len(effective))
+        report["transition_chain"].append({"phase": "1", "files": rows})
     report["changed"] = [name for name, digest in effective.items()
                          if (root / name).is_symlink() or not (root / name).is_file()
                          or hashlib.sha256((root / name).read_bytes()).hexdigest() != digest]

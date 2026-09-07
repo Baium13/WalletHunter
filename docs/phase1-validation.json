@@ -1,0 +1,163 @@
+{
+  "phase": "P1.3-P1.10",
+  "status": "PASS",
+  "application_revision": "27e5137266f0467c9463358972f6c52a2d15c206",
+  "production_modified": false,
+  "autonomous_mainnet_ai_introduced": false,
+  "fixed_thirds_changed": false,
+  "python": {
+    "tests": 742,
+    "passed": 741,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 1,
+    "expected_failures": 0,
+    "unexpected_successes": 0,
+    "duration_seconds": 114.203
+  },
+  "javascript": {
+    "tests": 96,
+    "passed": 96
+  },
+  "safety": {
+    "sandbox_tests": 14,
+    "passed": 14,
+    "repository_guard_tests": 52,
+    "repository_guard_passed": 52
+  },
+  "p1.1": {
+    "tests": 18,
+    "passed": 18,
+    "source_test_unchanged": true
+  },
+  "p1.2": {
+    "tests": 48,
+    "passed": 48,
+    "source_test_unchanged": true,
+    "allocation_module_unchanged": true
+  },
+  "new_regression_tests": 19,
+  "expanded_analysis_regression": true,
+  "source_unchanged_during_final_run": true,
+  "prior_policy_ast_unchanged": [
+    "_plan",
+    "strategy",
+    "_OwnershipHistoryProof",
+    "ownership_history_cache_try"
+  ],
+  "protected_manifest_sha256": "201bd595c0d349149e228dbc261bbb8f713ea5a1a2e0b8018667a029b2db185e",
+  "full_local_report_sha256": "e1a6c93a03d5c1fcb2373c7423763344c97641f2fca4712ff993223a65af23bb",
+  "targeted": {
+    "p1.3-targeted": {
+      "success": true,
+      "python": {
+        "tests": 4,
+        "passed": 4,
+        "failed": 0,
+        "errors": 0,
+        "skipped": 0
+      }
+    },
+    "p1.4-targeted": {
+      "success": true,
+      "python": {
+        "tests": 126,
+        "passed": 126,
+        "failed": 0,
+        "errors": 0,
+        "skipped": 0
+      }
+    },
+    "p1.5-targeted": {
+      "success": true,
+      "python": {
+        "tests": 121,
+        "passed": 121,
+        "failed": 0,
+        "errors": 0,
+        "skipped": 0
+      }
+    },
+    "p1.6-targeted": {
+      "success": true,
+      "python": {
+        "tests": 27,
+        "passed": 27,
+        "failed": 0,
+        "errors": 0,
+        "skipped": 0
+      }
+    },
+    "p1.7-targeted": {
+      "success": true,
+      "python": {
+        "tests": 107,
+        "passed": 107,
+        "failed": 0,
+        "errors": 0,
+        "skipped": 0
+      }
+    },
+    "p1.8-targeted": {
+      "success": true,
+      "python": {
+        "tests": 70,
+        "passed": 70,
+        "failed": 0,
+        "errors": 0,
+        "skipped": 0
+      }
+    },
+    "p1.9-targeted": {
+      "success": true,
+      "python": {
+        "tests": 13,
+        "passed": 12,
+        "failed": 0,
+        "errors": 0,
+        "skipped": 1
+      }
+    },
+    "p1.10-targeted": {
+      "success": true,
+      "python": {
+        "tests": 144,
+        "passed": 144,
+        "failed": 0,
+        "errors": 0,
+        "skipped": 0
+      }
+    },
+    "phase1-adversarial": {
+      "success": true,
+      "python": {
+        "tests": 171,
+        "passed": 171,
+        "failed": 0,
+        "errors": 0,
+        "skipped": 0
+      }
+    },
+    "phase1-emergency-proof": {
+      "success": true,
+      "python": {
+        "tests": 43,
+        "passed": 43,
+        "failed": 0,
+        "errors": 0,
+        "skipped": 0
+      }
+    }
+  },
+  "warnings": [
+    "One POSIX permissions test skipped on Windows",
+    "Existing Starlette HTTPX deprecation; dependency versions unchanged",
+    "OS network namespace not attested on Windows; language guards and disposable synthetic environment active"
+  ],
+  "operational_limitations": [
+    "Backup encryption and key custody not introduced; archives contain secrets",
+    "Windows private ACL must be managed by operator",
+    "Hosted Linux CI and auxiliary isolated browser execution not newly verified"
+  ],
+  "no_production_or_exchange_validation": true
+}

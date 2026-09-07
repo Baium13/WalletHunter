@@ -78,11 +78,22 @@ class CopyLedger:
     ONLY from its own admission calculation. All other pending envelopes remain.
     The same operation is reserved durably by the gateway before submission.
     """
-    def __init__(self, portfolio, sources, journal, operation, spec):
+    def __init__(self, portfolio, sources, journal, operation, spec, *, allocation_limits=None,
+                 ownership_sources=None, ownership_strategy=None):
         self.portfolio, self.spec = portfolio, spec
         self.errors = []
         owned = journal.owned(portfolio.scope.account)
+        if ownership_sources is not None:
+            allowed = {str(source).lower() for source in ownership_sources}
+            owned = {
+                market: record for market, record in owned.items()
+                if isinstance(record, dict) and any(
+                    isinstance(target, dict) and str(target.get('wallet', '')).lower() in allowed
+                    for target in (record.get('source_targets') or ())
+                ) and (ownership_strategy is None or record.get('strategy') == ownership_strategy)
+            }
         self.owned = owned
+        self.ownership_strategy = ownership_strategy
         actual = {p.instrument.market_key: dict(side=p.side, size=p.size, entry_price=p.entry_price,
             position_value=p.notional, leverage=p.leverage, margin_used=p.margin)
             for p in portfolio.positions}
@@ -103,7 +114,8 @@ class CopyLedger:
             self.errors.append('NETWORK_UNKNOWN')
         try:
             self.book = SourceAllocationBook(portfolio.sizing_capital, list(sources), actual, owned,
-                {k for k, v in owned.items() if v.get('managed') and v.get('network') == portfolio.scope.network}, pending)
+                {k for k, v in owned.items() if v.get('managed') and v.get('network') == portfolio.scope.network}, pending,
+                allocation_limits=allocation_limits)
             self.errors.extend(self.book.errors)
         except Exception:
             self.book = None
@@ -126,6 +138,7 @@ class CopyLedger:
         row = next((p for p in self.portfolio.positions if p.instrument == intent.instrument), None)
         saved = self.owned.get(intent.instrument.market_key, {})
         return bool(row and saved.get('managed') and saved.get('network') == intent.scope.network
+            and (self.ownership_strategy is None or saved.get('strategy') == self.ownership_strategy)
             and saved.get('side') == row.side
             and math.isclose(float((saved.get('position') or {}).get('entry_price', -1)), row.entry_price, rel_tol=1e-8, abs_tol=0.)
             and math.isclose(float(saved.get('size', -1)), row.size, rel_tol=1e-8, abs_tol=0.))

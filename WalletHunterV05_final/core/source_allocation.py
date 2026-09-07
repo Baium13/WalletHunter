@@ -106,7 +106,7 @@ class SourceAllocationBook:
     independently owned positions, never source-owned manual/AI HOLD positions.
     """
 
-    def __init__(self, balance, sources, actual, owned, managed, pending, excluded=(), uncertain=()):
+    def __init__(self, balance, sources, actual, owned, managed, pending, excluded=(), uncertain=(), allocation_limits=None):
         self.balance = _number(balance, "sizing balance")
         if not isinstance(sources, list) or len(sources) > 3:
             raise AllocationError("At most three configured source wallets required")
@@ -116,6 +116,17 @@ class SourceAllocationBook:
         if not all(isinstance(rows, dict) for rows in (actual, owned, pending)):
             raise AllocationError("Position, ownership and pending mappings required")
         self._configured = set(wallets)
+        if allocation_limits is not None:
+            if not isinstance(allocation_limits, dict):
+                raise AllocationError("Allocation limits mapping required")
+            self._allocation_limits = {}
+            for wallet, limit in allocation_limits.items():
+                normalized = _wallet(wallet)
+                self._allocation_limits[normalized] = _number(limit, "allocation limit")
+                if normalized not in self._configured:
+                    raise AllocationError("Allocation limit for unconfigured source")
+        else:
+            self._allocation_limits = None
         self._known = set(wallets)
         self._actual = deepcopy(actual)
         self._owned = deepcopy(owned)
@@ -152,7 +163,8 @@ class SourceAllocationBook:
         for wallet in self._known:
             committed = _total((rows.get(wallet, 0.) for rows in self._charges.values()), "source committed margin")
             reserved = _total((rows.get(wallet, 0.) for rows in self._reservations.values()), "source reserved margin")
-            limit = self.balance / 3 if wallet in self._configured else 0.
+            limit = (self._allocation_limits.get(wallet, 0.) if self._allocation_limits is not None
+                     else self.balance / 3) if wallet in self._configured else 0.
             self.accounts[wallet] = SourceAccount(limit, committed, reserved, max(0., limit - committed - reserved))
 
     def _error(self, market, reason):

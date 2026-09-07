@@ -115,9 +115,15 @@ def execute_copy(engine, account, client, operation, action, size, buy, spec, be
         authorization='COPY_POLICY', execution_mode='LIVE', created_ms=now, expires_ms=now+30000)
     market = MarketSnapshot(instrument=instrument, exchange_ms=None, received_ms=now, price=price,
         bid=None, ask=None, completeness='UNKNOWN', freshness='FRESH', source='REST', source_version='copy-mid')
-    sources = tuple(dict.fromkeys(account.get('_sources', ()) + tuple(x.source for x in contributions)))
-    ledger = CopyLedger(before, sources, engine.journal, operation, spec)
-    policy = RiskPolicy(scope=scope, instrument=instrument, sources=sources, enabled=bool(engine.settings.auto_trading),
+    allocation_sources = tuple(dict.fromkeys(tuple(spec.get('_allocation_sources') or account.get('_sources', ()))
+                                           + tuple(x.source for x in contributions)))
+    allocation_limits = spec.get('_allocation_limits')
+    ownership_sources = spec.get('_ownership_sources')
+    ownership_strategy = spec.get('_ownership_strategy')
+    ledger = CopyLedger(before, allocation_sources, engine.journal, operation, spec,
+                        allocation_limits=allocation_limits, ownership_sources=ownership_sources,
+                        ownership_strategy=ownership_strategy)
+    policy = RiskPolicy(scope=scope, instrument=instrument, sources=allocation_sources, enabled=bool(engine.settings.auto_trading),
         max_leverage=int(engine.settings.max_leverage), min_notional=float(engine.MIN_ORDER_NOTIONAL_USD),
         max_notional=float(engine.settings.max_total_exposure_usd), max_symbol_notional=float(engine.settings.max_total_exposure_usd),
         max_total_notional=float(engine.settings.max_total_exposure_usd), max_slippage_pct=slippage,

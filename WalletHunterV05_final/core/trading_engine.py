@@ -3,6 +3,7 @@ import time
 import os
 import math
 import uuid
+import logging
 from dataclasses import asdict
 from core.execution_journal import ExecutionJournal
 from core.source_allocation import SourceAllocationBook
@@ -14,6 +15,8 @@ from core.ai_review import account_guard, market_key
 from core.state_snapshot import snapshot, plain
 from datetime import datetime, time as clock_time
 from dataclasses import dataclass
+
+log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -221,6 +224,14 @@ class CopyEngine:
             raise ValueError("Reader/signing network mismatch; reconciliation required")
         account = dict(profile["account"], _tenant=str(user_id), _sources=tuple(profile.get('leaders', [])))
         live = self.settings.auto_trading and client.exchange is not None
+        recovered_this_cycle = set()
+        if live and self.journal:
+            from core.foundation.copy_execution import recover_pending_copy
+            try:
+                recovered_this_cycle = await asyncio.to_thread(recover_pending_copy, self, account, client)
+            except Exception:
+                # Query failure does not release a reservation or authorize retry.
+                log.warning('Copy recovery unavailable; pending executions remain HOLD')
         target_balance = await asyncio.to_thread(client.balance)
         if not math.isfinite(float(target_balance)) or target_balance < 0:
             raise ValueError("Invalid follower equity; copying was not attempted")
@@ -347,7 +358,7 @@ class CopyEngine:
                 ai_user_holds.update(self.ai_position_actions.reserved_markets(None, account["address"]))
         owned = self.journal.owned(account["address"]) if live and self.journal else {}
         pending_before_recovery = self.journal.pending(account["address"]) if live and self.journal else set()
-        recovery_holds = set()
+        recovery_holds = set(recovered_this_cycle)
         if live and self.journal and network:
             for encoded, intent in self.journal.pending_intents(account["address"]).items():
                 if intent.get("network") != network: recovery_holds.add(encoded)
@@ -1026,12 +1037,14 @@ class CopyEngine:
 
     async def emergency_stop(self, user_id, profile, client, close_managed=False):
         """Pause execution, cancel resting orders, optionally close bot-owned positions."""
-        account = profile["account"]
+        account = dict(profile["account"], _tenant=str(user_id), _sources=tuple(profile.get('leaders', [])))
         results = []
         live = self.settings.auto_trading and client.exchange is not None
         runtime = self._mode_runtime(profile, account, live)
         try:
             if live:
+                if validated_network(client.network) != validated_network(self.reader.network):
+                    raise ValueError('Emergency account/network scope mismatch')
                 responses = await asyncio.to_thread(client.cancel_open_orders)
                 for response in responses:
                     error = client.response_error(response)

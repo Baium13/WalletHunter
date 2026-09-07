@@ -48,7 +48,7 @@ class HyperliquidExecutionAdapter:
     def query(self, intent):
         self.validate_scope(intent)
         c, before = self.__client, self.before
-        after = account_snapshot(c, intent.scope, before.revision+1, self.clock, dex=intent.instrument.dex,
+        after = account_snapshot(c, intent.scope, getattr(self, 'next_revision', before.revision+1), self.clock, dex=intent.instrument.dex,
             require_collateral=intent.action not in {'REDUCE','CLOSE'})
         now = self.clock()
         if intent.action == 'LEVERAGE_UPDATE':
@@ -94,6 +94,8 @@ def execute_copy(engine, account, client, operation, action, size, buy, spec, be
     limit = client.round_price(coin, raw, dex)
     if (limit > raw if buy else limit < raw): limit = client.round_price(coin, price, dex)
     weights = spec.get('sources') or engine.journal.owned(scope.account).get(instrument.market_key, {}).get('source_targets', [])
+    if action in {'OPEN','ADD','REDUCE'}:
+        size = client.round_size(coin, size, dex)
     contributions = tuple(SourceContribution(source=x['wallet'].lower(), target_notional=abs(float(x['signed_notional'])),
         target_margin=float(x['margin'])) for x in weights)
     now = clock()
@@ -121,3 +123,30 @@ def execute_copy(engine, account, client, operation, action, size, buy, spec, be
     if receipt.status not in {'FILLED','PARTIAL','CONFIGURED'}:
         raise ValueError('Copy '+receipt.status+'; execution reconciliation required')
     return receipt
+
+
+def recover_pending_copy(engine, account, client):
+    """Bounded query-only restart recovery; never mints authority or submits.
+
+    A terminal partial close remains HOLD under the pre-existing close policy.
+    Full order proof may restore the already executed journal projection.
+    """
+    from .execution import ExecutionGateway
+    from .contracts import PortfolioSnapshot
+    from .store import scope_key
+    scope = Scope(tenant=str(account['_tenant']), account=account['address'].lower(), network=client.network)
+    store = Store(engine.journal.path)
+    with store.transaction() as db:
+        rows = db.execute("SELECT i.body,p.body AS pre,r.body AS policy FROM intents i JOIN intent_prestate p ON p.id=i.id JOIN policies r ON r.hash=json_extract(i.decision,'$.policy_hash') WHERE i.scope=? AND i.status IN ('UNKNOWN','SUBMITTING') LIMIT 3", (scope_key(scope),)).fetchall()
+    recovered = set()
+    for row in rows:
+        intent = OrderIntent.model_validate_json(row['body'])
+        if intent.version != 2: continue
+        before = PortfolioSnapshot.model_validate_json(row['pre'])
+        clock = lambda: int(time.time()*1000)
+        adapter = HyperliquidExecutionAdapter(client, scope, clock, before)
+        gateway = ExecutionGateway(store, RiskGateway(RiskPolicy.model_validate_json(row['policy'])), adapter, clock)
+        receipt = gateway.recover(intent)
+        if receipt.status == 'FILLED' and engine.journal.resolve_canonical_copy(intent.intent_id):
+            recovered.add(intent.instrument.market_key)
+    return recovered

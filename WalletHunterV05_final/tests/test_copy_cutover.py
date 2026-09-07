@@ -128,3 +128,80 @@ class CopyCutoverTests(TestCase):
         cancellations = [n for n in ast.walk(tree) if isinstance(n, ast.AsyncFunctionDef)
             and any(isinstance(x, ast.Attribute) and x.attr == 'cancel_open_orders' for x in ast.walk(n))]
         self.assertEqual([n.name for n in cancellations], ['emergency_stop'])
+
+    def test_restart_recovers_same_identity_query_only(self):
+        original = self.client.submit_copy_ioc
+        def lost(*args, **kwargs):
+            original(*args, **kwargs)
+            raise TimeoutError('Synthetic acknowledgement loss')
+        with patch.object(self.client, 'submit_copy_ioc', side_effect=lost): self.run_cycle()
+        with closing(self.engine.journal.connect()) as db:
+            old_id = db.execute('SELECT id FROM intents').fetchone()[0]
+        self.engine = fixture.CopyEngine(fixture.Reader(), self.store, self.settings)
+        with patch.object(self.client, 'submit_copy_ioc') as submit:
+            self.run_cycle()
+            submit.assert_not_called()
+        with closing(self.engine.journal.connect()) as db:
+            row = db.execute('SELECT id,status FROM intents').fetchone()
+            self.assertEqual(tuple(row), (old_id, 'FILLED'))
+        self.assertFalse(self.engine.journal.pending(ACCOUNT))
+        self.assertEqual(self.engine.journal.owned(ACCOUNT)['BTC|']['execution_evidence']['intent_id'], old_id)
+
+    def test_nonterminal_partial_keeps_reservation(self):
+        self.client.fill_fraction = .5
+        original = self.client.query_order_by_cloid
+        def resting(cloid):
+            result = original(cloid)
+            result['order']['status'] = 'open'
+            return result
+        with patch.object(self.client, 'query_order_by_cloid', side_effect=resting):
+            self.run_cycle()
+            self.run_cycle()
+        self.assertIn('BTC|', self.engine.journal.pending(ACCOUNT))
+        with closing(self.engine.journal.connect()) as db:
+            row = db.execute('SELECT status,reservation FROM intents').fetchone()
+            self.assertEqual(row[0], 'UNKNOWN')
+            self.assertGreater(json.loads(row[1])['margin'], 0)
+
+    def test_stale_account_prevents_sdk(self):
+        self.client.user_state = lambda *args: {'time': 1}
+        with patch.object(self.client, 'submit_copy_ioc') as submit:
+            self.run_cycle()
+            submit.assert_not_called()
+
+    def test_external_concurrent_change_does_not_create_ownership(self):
+        original = self.client.submit_copy_ioc
+        def external(*args, **kwargs):
+            response = original(*args, **kwargs)
+            self.client.rows[('BTC','')]['size'] += 1.
+            return response
+        with patch.object(self.client, 'submit_copy_ioc', side_effect=external): self.run_cycle()
+        self.assertNotIn('BTC|', self.engine.journal.owned(ACCOUNT))
+        self.assertIn('BTC|', self.engine.journal.pending(ACCOUNT))
+
+    def test_dex_capacity_identity(self):
+        self.run_cycle([snapshot(positions=[position('xyz:INTC', 1000, dex='xyz')])])
+        with closing(self.engine.journal.connect()) as db:
+            row = db.execute('SELECT body FROM intent_prestate').fetchone()
+        self.assertEqual(json.loads(row[0])['collateral_dex'], 'xyz')
+
+    def test_invalid_collateral_does_not_become_zero(self):
+        self.client.capital_snapshot = lambda: fixture.SimpleNamespace(sizing_base_usdc=float('nan'))
+        with patch.object(self.client, 'submit_copy_ioc') as submit:
+            self.run_cycle()
+            submit.assert_not_called()
+
+    def test_exception_secret_not_in_public_events(self):
+        with patch.object(self.client, 'submit_copy_ioc', side_effect=RuntimeError('SYNTHETIC_PRIVATE_SENTINEL')):
+            result = self.run_cycle()
+        with closing(self.engine.journal.connect()) as db:
+            bodies = str([tuple(r) for r in db.execute('SELECT body FROM events')])
+        self.assertNotIn('SYNTHETIC_PRIVATE_SENTINEL', bodies+str(result))
+
+    def test_fractional_delta_is_normalized_before_risk(self):
+        self.managed(position(notional=10))
+        self.run_cycle([snapshot(positions=[position(notional=300)])])
+        with closing(self.engine.journal.connect()) as db:
+            row = db.execute('SELECT body,status FROM intents').fetchone()
+        self.assertEqual(json.loads(row[0])['size'], .2)
+        self.assertEqual(row[1], 'FILLED')

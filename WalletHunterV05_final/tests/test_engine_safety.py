@@ -85,7 +85,7 @@ class ExchangeBoundary:
             response = self._trade('reduce' if reduce_only else 'open', coin, buy, size*self.fill_fraction, dex)
         after = self.rows.get(key)
         signed = lambda p: 0. if not p else p['size']*(1 if p['side']=='LONG' else -1)
-        filled = abs(signed(after)-signed(before))
+        filled = self.round_size(coin, abs(signed(after)-signed(before)), dex)
         oid = len(self.orders)+1
         self.orders[cloid] = {'status':'order','order': {'status':'filled' if filled == size else 'iocCancel',
             'statusTimestamp':stamp, 'order': {'oid':oid,'cloid':cloid,'coin':key[0], 'side':'B' if buy else 'A',

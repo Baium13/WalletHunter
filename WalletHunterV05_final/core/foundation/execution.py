@@ -216,7 +216,9 @@ class ExecutionGateway:
             if row["status"] not in {"SUBMITTING", "UNKNOWN"}:
                 return ExecutionReceipt.model_validate_json(row["receipt"])
             current = self.store.portfolio_in(db, intent.scope)
-            if current != before: receipt = self._unknown(intent, now)
+            if current != before and intent.version == 1: receipt = self._unknown(intent, now)
+            if intent.version == 2 and report is not None and report.after.revision <= current.revision:
+                receipt = self._unknown(intent, now)
             if receipt.status != "UNKNOWN":
                 self.store.publish_portfolio_in(db, report.after, intent.correlation_id)
             kind = {"FILLED": "ORDER_FILLED", "PARTIAL": "ORDER_PARTIALLY_FILLED", "REJECTED": "ORDER_REJECTED", "UNKNOWN": "EXECUTION_UNKNOWN", "CONFIGURED": "LEVERAGE_CONFIGURED"}[receipt.status]
@@ -236,6 +238,9 @@ class ExecutionGateway:
             prestate = db.execute("SELECT body FROM intent_prestate WHERE id=?", (intent.intent_id,)).fetchone()
             if not prestate: raise ValueError("Missing pre-execution evidence; no retry")
             before = PortfolioSnapshot.model_validate_json(prestate[0])
+            if intent.version == 2:
+                self.__exchange.before = before
+                self.__exchange.next_revision = self.store.portfolio_in(db, intent.scope).revision+1
         try: report = self.__exchange.query(intent)
         except Exception: report = None
         return self._settle(intent, before, report)

@@ -102,6 +102,9 @@ class RiskGateway:
         check(intent.slippage_pct <= p.max_slippage_pct, 'SLIPPAGE_LIMIT')
         try:
             b = next((x for x in s.positions if x.instrument == intent.instrument), None)
+            if intent.action == 'OPEN': check(b is None, 'OPEN_SCOPE')
+            if intent.action == 'ADD': check(b is not None and (b.side == 'LONG') == (intent.side == 'BUY'), 'ADD_SCOPE')
+            if intent.action == 'LEVERAGE_UPDATE': check(b is not None and b.size == intent.size, 'LEVERAGE_SCOPE')
             if b is not None: check(ledger.owns(intent), 'OWNERSHIP_UNPROVEN')
             if reducing:
                 check(b is not None and (b.side == 'LONG') != (intent.side == 'BUY') and intent.size <= b.size, 'REDUCTION_SCOPE')
@@ -122,6 +125,7 @@ class RiskGateway:
                 if intent.action != 'LEVERAGE_UPDATE':
                     check(intent.size*market.price >= p.min_notional, 'MIN_NOTIONAL')
                 check(target*market.price <= p.max_symbol_notional+1e-9, 'EXPOSURE_LIMIT')
+                check(math.fsum(x.notional for x in s.positions)+added <= p.max_total_notional+1e-9, 'TOTAL_EXPOSURE_LIMIT')
             if intent.action != 'LEVERAGE_UPDATE':
                 check(Decimal(str(intent.size)) % Decimal(str(p.size_step)) == 0, 'SIZE_NOT_NORMALIZED')
             check(abs(intent.limit_price/market.price-1)*100 <= intent.slippage_pct+1e-8, 'PRICE_BOUNDARY')

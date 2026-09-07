@@ -127,4 +127,5 @@ class CopyLedger:
         saved = self.owned.get(intent.instrument.market_key, {})
         return bool(row and saved.get('managed') and saved.get('network') == intent.scope.network
             and saved.get('side') == row.side
+            and math.isclose(float((saved.get('position') or {}).get('entry_price', -1)), row.entry_price, rel_tol=1e-8, abs_tol=0.)
             and math.isclose(float(saved.get('size', -1)), row.size, rel_tol=1e-8, abs_tol=0.))

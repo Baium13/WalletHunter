@@ -515,6 +515,22 @@ class SprintTransitionTests(unittest.TestCase):
 
 
 class Block1TransitionTests(unittest.TestCase):
+    def test_readthrough_cannot_override_prior_core_or_strategy(self):
+        import copy
+        previous = {name: "0"*64 for name in protected.BLOCK1_PATHS}
+        document = {"phase": "block1-readthrough", "parent_manifest_sha256": protected.READTHROUGH_PARENT,
+            "files": {name: "1"*64 for name in protected.READTHROUGH_PATHS}}
+        self.assertEqual(protected.reviewed_readthrough(previous, document, protected.READTHROUGH_PARENT), document["files"])
+        for fault in ("parent", "override", "missing", "digest"):
+            changed = copy.deepcopy(document)
+            name = next(iter(changed["files"]))
+            if fault == "parent": changed["parent_manifest_sha256"] = "0"*64
+            if fault == "override": changed["files"][protected.TRANSITION_PATH] = "1"*64
+            if fault == "missing": changed["files"].pop(name)
+            if fault == "digest": changed["files"][name] = "*"
+            with self.subTest(fault=fault), self.assertRaises(ValueError):
+                protected.reviewed_readthrough(previous, changed, protected.READTHROUGH_PARENT)
+
     def test_only_additive_core_paths_are_allowed(self):
         import copy
         previous = {protected.TRANSITION_PATH: "0"*64}

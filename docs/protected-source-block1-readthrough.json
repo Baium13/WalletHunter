@@ -1,0 +1,9 @@
+{
+  "phase": "block1-readthrough",
+  "parent_manifest_sha256": "1c5467be2f29f3760ea1e2828a2f709f476c3744a24a34033c71f9aa9c36bd91",
+  "files": {
+    "WalletHunterV05_final/core/foundation/journal_bridge.py": "5fabb3355189d3224c26cd41ffddee5a5ca9f86cbd7012dea8f4ccc23e91d469",
+    "WalletHunterV05_final/core/foundation/live_reconciliation.py": "93278ff1eb6569b750c8d93c51773ba53a63a70e7b1e314d626f47e82008d823",
+    "WalletHunterV05_final/tests/test_journal_bridge.py": "22ab4eff92f470025abb4f41a1e3bbbab5b8107e0961c139f459f213b818a784"
+  }
+}

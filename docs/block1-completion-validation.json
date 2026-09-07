@@ -1,0 +1,26 @@
+{
+  "block": "1 completion",
+  "status": "PARTIAL",
+  "application_revision": "4e636ca599efa9917406fe4796ed58e9034f4e3a",
+  "python": {"discovered": 800, "passed": 799, "failed": 0, "errors": 0, "skipped": 1, "duration_seconds": 120.64},
+  "javascript": {"passed": 96, "tests": 96},
+  "safety": {"sandbox_passed": 14, "repository_passed": 55, "total_passed": 69},
+  "core_targeted": {"passed": 58, "tests": 58, "new_readthrough_and_reconciliation_tests": 26},
+  "phase1_regression": "PASS",
+  "prior_protected_source_unchanged": true,
+  "source_unchanged_during_full_run": true,
+  "full_report_sha256": "27016c8d5199216bccd71a07255c56c515a4a549cae27bedbedf7dda3c5c445b",
+  "routes_migrated": [],
+  "live_signing_adapter_enabled": false,
+  "production_orders_executed": false,
+  "production_state_changed": false,
+  "autonomous_mainnet_ai_introduced": false,
+  "remaining_work": "BLOCK1_COMPLETION_STATUS.md",
+  "warnings": [
+    "One existing POSIX permission test skipped on Windows",
+    "Existing Starlette HTTPX deprecation warning",
+    "Local isolation is disposable language-guarded Windows, not an attested OS network namespace",
+    "Helpers are tested but not wired into live routes; completion acceptance criteria are not met"
+  ],
+  "ready_for_block2": false
+}

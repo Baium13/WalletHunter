@@ -19,6 +19,10 @@ P11_REGRESSION_SHA256 = "059ec37273dd9d72f3d6afa49eb785e70581f862f20c24e2c1ebc7d
 SPRINT_FILE = "docs/protected-source-phase1.json"
 BLOCK1_FILE = "docs/protected-source-block1.json"
 BLOCK1_PARENT = "201bd595c0d349149e228dbc261bbb8f713ea5a1a2e0b8018667a029b2db185e"
+READTHROUGH_FILE = "docs/protected-source-block1-readthrough.json"
+READTHROUGH_PARENT = "1c5467be2f29f3760ea1e2828a2f709f476c3744a24a34033c71f9aa9c36bd91"
+READTHROUGH_PATHS = {"WalletHunterV05_final/core/foundation/journal_bridge.py",
+    "WalletHunterV05_final/core/foundation/live_reconciliation.py", "WalletHunterV05_final/tests/test_journal_bridge.py"}
 BLOCK1_PATHS = {"WalletHunterV05_final/core/foundation/" + name + ".py" for name in
                 ("__init__", "contracts", "ledger", "store", "data", "risk", "execution")} | {"WalletHunterV05_final/tests/test_foundation.py"}
 
@@ -33,6 +37,19 @@ def reviewed_block1(previous, document, parent_digest):
         raise ValueError("block1_must_only_add_reviewed_paths")
     if any(not isinstance(d, str) or not re.fullmatch(r"[a-f0-9]{64}", d) for d in rows.values()):
         raise ValueError("invalid_block1_digest")
+    return rows
+
+
+def reviewed_readthrough(previous, document, parent_digest):
+    if (not isinstance(document, dict) or set(document) != {"phase", "parent_manifest_sha256", "files"}
+            or document["phase"] != "block1-readthrough" or parent_digest != READTHROUGH_PARENT
+            or document["parent_manifest_sha256"] != parent_digest):
+        raise ValueError("invalid_readthrough_parent_or_schema")
+    rows = document["files"]
+    if not isinstance(rows, dict) or set(rows) != READTHROUGH_PATHS or set(rows) & set(previous):
+        raise ValueError("readthrough_must_only_add_reviewed_paths")
+    if any(not isinstance(d, str) or not re.fullmatch(r"[a-f0-9]{64}", d) for d in rows.values()):
+        raise ValueError("invalid_readthrough_digest")
     return rows
 SPRINT_PARENT = "af06edabf7c302caf86ade2211ef5338559b8221009910b41ba019cc8d2590b9"
 SPRINT_PATHS = {"WalletHunterV05_final/" + name for name in (
@@ -171,6 +188,17 @@ def check(root):
         effective.update(rows)
         report.update(phase="block1", effective_protected_files=len(effective))
         report["transition_chain"].append({"phase": "block1", "files": rows})
+    readthrough = root / READTHROUGH_FILE
+    if readthrough.exists() or readthrough.is_symlink():
+        try:
+            if readthrough.is_symlink() or report["phase"] != "block1": raise ValueError("readthrough_requires_block1_parent")
+            rows = reviewed_readthrough(effective, json.loads(readthrough.read_bytes()), hashlib.sha256(block1.read_bytes()).hexdigest())
+        except (ValueError, OSError) as exc:
+            report.update(status="FAIL", reason=str(exc))
+            return report
+        effective.update(rows)
+        report.update(effective_protected_files=len(effective))
+        report["transition_chain"].append({"phase": "block1-readthrough", "files": rows})
     report["changed"] = [name for name, digest in effective.items()
                          if (root / name).is_symlink() or not (root / name).is_file()
                          or hashlib.sha256((root / name).read_bytes()).hexdigest() != digest]

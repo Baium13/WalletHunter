@@ -7,8 +7,8 @@ and durable intent/hold persistence. No background execution or retry exists.
 
 Public client contract: address, capital_snapshot(), available_margin(dex),
 positions(True,True), frontend_open_orders(dex), meta(), mid(coin,dex).
-Signing client: submit_user_ioc(coin,is_buy,size,limit_price,leverage,cloid).
-That wrapper must verify the leverage acknowledgement before submitting IOC.
+Normal execution is delegated to the canonical Risk/ExecutionGateway; an
+explicit legacy executor is accepted only by isolated compatibility fixtures.
 persist_runtime is a zero-argument closure committing profile['runtime'].
 """
 from contextlib import closing
@@ -159,8 +159,12 @@ def _orders(client, coin):
 
 
 class AiUserOrders:
-    def __init__(self, root, *, monotonic=time.monotonic):
+    def __init__(self, root, *, monotonic=time.monotonic, legacy_test_executor=None):
         self.monotonic = monotonic
+        # Only isolated legacy fixtures may inject this callable.  Production
+        # callers must provide canonical context; otherwise execution fails
+        # closed and no signing client is constructed.
+        self.legacy_test_executor = legacy_test_executor
         self.journal = ExecutionJournal(root)
         self.path = os.path.join(root, "data", "ai_user_orders.sqlite3")
         os.makedirs(os.path.dirname(self.path), mode=0o700, exist_ok=True)
@@ -630,7 +634,7 @@ class AiUserOrders:
             persist_runtime()  # MUST succeed before constructing a signing client.
             if now + max(0, int((self.monotonic()-started)*1000)) >= proposal["expires_ms"]:
                 raise ValueError("proposal_expired_before_submission")
-            from core.confirmed_execution_adapter import confirmed_ai_order, execute_confirmed_ai
+            from core.confirmed_execution_adapter import execute_confirmed_ai
             if canonical_context is not None:
                 route_context = canonical_context(payload) if callable(canonical_context) else canonical_context
                 response = execute_confirmed_ai(route_context, coin=payload['coin'], dex=payload.get('dex',''),
@@ -641,14 +645,17 @@ class AiUserOrders:
                     'filled_size': sum(getattr(fill, 'size', 0) for fill in getattr(response, 'fills', ())),
                     'average_price': (sum(fill.size*fill.price for fill in getattr(response, 'fills', ())) /
                         max(sum(fill.size for fill in getattr(response, 'fills', ())), 1e-12)) if getattr(response, 'fills', ()) else None}
-            else:
+            elif callable(self.legacy_test_executor):
+                # Explicitly injected by legacy unit fixtures only.
                 signing_client = signing_factory()
                 if str(getattr(signing_client, "address", "")).lower() != address or _network(signing_client) != payload["network"]:
                     raise ValueError("signing_account_or_network_mismatch")
                 if now + max(0, int((self.monotonic()-started)*1000)) >= proposal["expires_ms"]:
                     raise ValueError("proposal_expired_before_submission")
-                response = confirmed_ai_order(signing_client, payload, proposal["expires_ms"])
+                response = self.legacy_test_executor(signing_client, payload, proposal["expires_ms"])
                 status, result = self._verify(public_client, payload, response)
+            else:
+                raise ValueError("canonical_execution_context_required")
         except Exception:
             status, result = "UNKNOWN", {"reason": "submission_or_verification_unconfirmed_no_retry"}
         # SQL result first: JSON persistence cannot erase evidence of a fill.

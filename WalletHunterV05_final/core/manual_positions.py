@@ -27,12 +27,18 @@ def _number(value, label):
 
 class ManualPositions:
     def __init__(self, client, runtime, persist, *, attempts=3, delay=0.2,
-                 sleep=time.sleep, now=time.time, canonical_context=None):
+                 sleep=time.sleep, now=time.time, canonical_context=None,
+                 legacy_test_executor=None):
         if not callable(persist):
             raise ValueError("A persistent runtime callback is required")
         self.client, self.runtime, self.persist = client, runtime, persist
         self.attempts, self.delay = max(1, attempts), max(0, delay)
-        self.sleep, self.now, self.canonical_context = sleep, now, canonical_context
+        self.sleep, self.now = sleep, now
+        self.canonical_context = canonical_context
+        # Legacy execution is dependency-injected only by isolated fixtures.
+        # Normal application construction leaves this unset and therefore
+        # fails closed when canonical account evidence is unavailable.
+        self.legacy_test_executor = legacy_test_executor
 
     @staticmethod
     def _market(coin, dex):
@@ -235,13 +241,17 @@ class ManualPositions:
         self._begin(key, "close", position=deepcopy(position))
         try:
             if position:
-                from core.confirmed_execution_adapter import execute_manual_request, manual_close
+                from core.confirmed_execution_adapter import execute_manual_request
                 if self.canonical_context is not None:
                     response = execute_manual_request(self.canonical_context, coin=coin, dex=dex,
                         side='SELL' if position.get('side') == 'LONG' else 'BUY', size=abs(float(position['size'])),
                         price=float(position.get('entry_price') or position.get('price')), action='CLOSE', source='manual')
+                elif callable(self.legacy_test_executor):
+                    response = self.legacy_test_executor(self.client, coin, dex)
                 else:
-                    response = manual_close(self.client, coin, dex)
+                    raise ManualActionError(
+                        "Canonical execution context unavailable; no order submitted"
+                    )
                 remaining, flat = self._wait(lambda: self._position(key), lambda p: p is None)
                 if not flat:
                     self._record(key, status="incomplete", remaining=remaining,

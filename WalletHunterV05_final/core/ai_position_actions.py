@@ -77,8 +77,12 @@ def _all_positions(client):
 
 
 class AiPositionActions:
-    def __init__(self, root, *, monotonic=time.monotonic):
+    def __init__(self, root, *, monotonic=time.monotonic, legacy_test_executor=None):
         self.monotonic = monotonic
+        # A direct signer can only be injected by isolated legacy fixtures.
+        # Normal production callers must provide canonical context and fail
+        # closed when it is unavailable.
+        self.legacy_test_executor = legacy_test_executor
         self.journal = ExecutionJournal(root)
         self.path = os.path.join(root, "data", "ai_position_actions.sqlite3")
         os.makedirs(os.path.dirname(self.path), mode=0o700, exist_ok=True)
@@ -556,7 +560,7 @@ class AiPositionActions:
             persist_runtime()
             if now+max(0,int((self.monotonic()-started)*1000)) >= row["expires_ms"]:
                 raise ValueError("signer_mismatch_or_expiry")
-            from core.confirmed_execution_adapter import confirmed_ai_position, execute_confirmed_ai
+            from core.confirmed_execution_adapter import execute_confirmed_ai
             if canonical_context is not None:
                 route_context = canonical_context(payload) if callable(canonical_context) else canonical_context
                 response = execute_confirmed_ai(route_context, coin=payload['coin'], dex=payload.get('dex',''),
@@ -567,14 +571,17 @@ class AiPositionActions:
                     'filled_size': sum(getattr(fill, 'size', 0) for fill in getattr(response, 'fills', ())),
                     'average_price': (sum(fill.size*fill.price for fill in getattr(response, 'fills', ())) /
                         max(sum(fill.size for fill in getattr(response, 'fills', ())), 1e-12)) if getattr(response, 'fills', ()) else None}
-            else:
+            elif callable(self.legacy_test_executor):
                 signer = signing_factory()
                 if str(getattr(signer, "address", "")).lower() != row["account"] or _network(signer) != payload["network"]:
                     raise ValueError("signer_mismatch")
                 if now+max(0,int((self.monotonic()-started)*1000)) >= row["expires_ms"]:
                     raise ValueError("proposal_expired_before_submission")
-                response = confirmed_ai_position(signer, {**payload, 'expected_position': _identity(payload['position_before'])}, row['expires_ms'])
+                response = self.legacy_test_executor(signer,
+                    {**payload, 'expected_position': _identity(payload['position_before'])}, row['expires_ms'])
                 status, result = self._verify(public_client, payload, response, lambda: now+max(0,int((self.monotonic()-started)*1000)))
+            else:
+                raise ValueError("canonical_execution_context_required")
         except Exception:
             status, result = "UNKNOWN", {"reason": "intervention_unconfirmed_no_retry", "copy_on_hold": True}
         completed = now+max(0,int((self.monotonic()-started)*1000))

@@ -7,6 +7,7 @@ import unittest
 from types import SimpleNamespace
 
 from core.ai_user_orders import AiUserOrders
+from core.legacy_route_calls import ai_order as legacy_ai_order
 from core.order_precision import normalize_perp_size
 
 
@@ -118,7 +119,8 @@ class AiUserOrderTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
-        self.service = AiUserOrders(self.temp.name, monotonic=lambda: 0)
+        self.service = AiUserOrders(self.temp.name, monotonic=lambda: 0,
+                                    legacy_test_executor=legacy_ai_order)
         self.profile = profile()
         self.public = Public()
         self.signer = Signer(self.public)
@@ -258,7 +260,7 @@ class AiUserOrderTests(unittest.TestCase):
         p = self.proposal()
         result = self.decide(p)
         self.assertEqual(result["status"], "UNKNOWN")
-        self.service = AiUserOrders(self.temp.name)
+        self.service = AiUserOrders(self.temp.name, legacy_test_executor=legacy_ai_order)
         self.assertIn("BTC|", self.service.reserved_markets(None, ADDRESS))
         self.assertIn("BTC|", self.service.journal.pending(ADDRESS))
         self.assertEqual(self.decide(p)["status"], "UNKNOWN")
@@ -268,7 +270,7 @@ class AiUserOrderTests(unittest.TestCase):
     def test_unexpected_resting_or_position_mismatch_remains_unknown(self):
         for behavior in ("resting", "mismatch"):
             with tempfile.TemporaryDirectory() as root:
-                service = AiUserOrders(root); public = Public(); signer = Signer(public); signer.behavior = behavior
+                service = AiUserOrders(root, legacy_test_executor=legacy_ai_order); public = Public(); signer = Signer(public); signer.behavior = behavior
                 prof = profile()
                 p = service.prepare("139", prof, public, None, learning(), NOW)["pending"][0]
                 result = service.decide("139", p["id"], True, prof, public, lambda: signer, lambda: None, NOW+1000)
@@ -302,7 +304,7 @@ class AiUserOrderTests(unittest.TestCase):
     def test_fresh_price_balance_capacity_metadata_account_or_slot_changes_invalidate(self):
         for change in ("price", "balance", "capacity", "digits", "mode", "slot", "network", "new_position"):
             with tempfile.TemporaryDirectory() as root:
-                service = AiUserOrders(root); public = Public(); prof = profile(); signer = Signer(public)
+                service = AiUserOrders(root, legacy_test_executor=legacy_ai_order); public = Public(); prof = profile(); signer = Signer(public)
                 p = service.prepare("139", prof, public, None, learning(), NOW)["pending"][0]
                 if change == "price": public.price *= 1.01
                 if change == "balance": public.balance = 2000
@@ -384,7 +386,7 @@ class AiUserOrderTests(unittest.TestCase):
         for stage in ("reads", "factory"):
             with tempfile.TemporaryDirectory() as root:
                 clock = [0.]
-                service = AiUserOrders(root, monotonic=lambda: clock[0])
+                service = AiUserOrders(root, monotonic=lambda: clock[0], legacy_test_executor=legacy_ai_order)
                 public, prof = Public(), profile()
                 signer = Signer(public)
                 p = service.prepare("139", prof, public, None, learning(), NOW)["pending"][0]
@@ -437,6 +439,15 @@ class AiUserOrderTests(unittest.TestCase):
         self.assertEqual(len(result["pending"]), 1)
         old = self.service.summary("139", self.profile, later)
         self.assertEqual(old["history"][0]["status"], "EXPIRED")
+
+    def test_missing_canonical_context_fails_closed_without_legacy_or_signer(self):
+        proposal = self.proposal()
+        strict = AiUserOrders(self.temp.name)
+        result = strict.decide("139", proposal["id"], True, self.profile, self.public,
+                               self.factory, self.persist, NOW + 1000)
+        self.assertEqual(result["status"], "UNKNOWN")
+        self.assertEqual(self.factories, 0)
+        self.assertEqual(self.signer.calls, [])
 
 
 if __name__ == "__main__":

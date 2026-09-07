@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from core.ai_position_actions import AiPositionActions, BAR, COOLDOWN
+from core.legacy_route_calls import ai_position as legacy_ai_position
 
 
 NOW = 20000*86400000 + 12*3600000 + 1000
@@ -91,7 +92,8 @@ class PositionActionTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(); self.addCleanup(self.temp.cleanup)
         self.clock = [0.]
-        self.service = AiPositionActions(self.temp.name, monotonic=lambda: self.clock[0])
+        self.service = AiPositionActions(self.temp.name, monotonic=lambda: self.clock[0],
+                                         legacy_test_executor=legacy_ai_position)
         self.public = Public(); self.signer = Signer(self.public)
         self.profile = {"account": {"address": ACCOUNT}, "leaders": [SOURCE], "ai_review_enabled": True,
                         "max_leverage": 20, "runtime": {"managed": ["ETH|"]}}
@@ -220,7 +222,7 @@ class PositionActionTests(unittest.TestCase):
         self.assertEqual(owned["source_targets"][0]["wallet"], SOURCE)
         self.assertAlmostEqual(owned["position"]["size"], .0141)
         self.assertIn("ETH|", self.service.reserved_markets(None, ACCOUNT))
-        restarted = AiPositionActions(self.temp.name)
+        restarted = AiPositionActions(self.temp.name, legacy_test_executor=legacy_ai_position)
         self.assertIn("ETH|", restarted.reserved_markets(None, ACCOUNT))
         self.assertEqual(self.decide(p)["status"], "FILLED")
         self.assertEqual(len(self.signer.calls), 1)
@@ -242,6 +244,15 @@ class PositionActionTests(unittest.TestCase):
         self.assertNotEqual(result["result"]["position_after"]["size"], p["payload"]["expected_after"]["size"])
         self.decide(p)
         self.assertEqual(len(self.signer.calls), 1)
+
+    def test_missing_canonical_context_fails_closed_without_legacy_or_signer(self):
+        proposal = self.proposal()
+        strict = AiPositionActions(self.temp.name)
+        result = strict.decide("139", proposal["id"], True, self.profile, self.public,
+                               self.factory, self.persist, NOW + 1000)
+        self.assertEqual(result["status"], "UNKNOWN")
+        self.assertEqual(self.factory_calls, 0)
+        self.assertEqual(self.signer.calls, [])
 
     def test_timeout_is_durable_unknown_never_retry_or_resume(self):
         self.signer.behavior = "timeout"

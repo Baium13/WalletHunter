@@ -1,7 +1,9 @@
-"""Isolated compatibility calls for pre-canonical test/migration fixtures.
+"""Explicit legacy/test fixture calls; never a production execution path.
 
-Production composition always supplies canonical context before this module can
-be reached. It is intentionally not imported by gateway code.
+This module is intentionally kept separate from the canonical adapter.  It is
+only suitable for dependency injection by isolated legacy tests that model an
+old signer/client.  Normal application construction has no reference to these
+functions and fails closed without canonical context.
 """
 def manual_close(client, coin, dex): return client.market_close(coin, dex)
 def ai_order(signer, payload, expires_ms):

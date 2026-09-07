@@ -225,12 +225,13 @@ class ApiSafetyTests(unittest.TestCase):
         self.assertIn("BTC|", self.store.profile(1)[1]["runtime"]["manual_stops"])
         self.assertEqual(len(self.accounts[ACCOUNT_A].orders), 1)
 
-    def test_full_manual_close_persists_hold_without_touching_other_account(self):
+    def test_manual_close_missing_canonical_context_fails_closed_without_touching_other_account(self):
         result = self.request("POST", "/api/position/close", body={"coin": "BTC"})
-        self.assertEqual(result.status_code, 200, result.text)
-        self.assertEqual(self.accounts[ACCOUNT_A].rows, [])
+        self.assertEqual(result.status_code, 409, result.text)
+        self.assertEqual(len(self.accounts[ACCOUNT_A].rows), 1)
         self.assertIn("BTC|", self.store.profile(1)[1]["runtime"]["manual_hold_keys"])
         self.assertEqual(self.accounts[ACCOUNT_B].calls, [])
+        self.assertEqual(self.accounts[ACCOUNT_A].calls, [])
 
     def test_manual_read_failure_is_503_and_submits_nothing(self):
         self.accounts[ACCOUNT_A].failure = True

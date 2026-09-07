@@ -1,14 +1,17 @@
 """Canonical route bridge for explicitly authorized manual/AI actions.
 
-When a gateway context is supplied, all actions are represented as immutable
-OrderIntent records and dispatched through RiskGateway/ExecutionGateway. The
-small compatibility branch is retained for old isolated unit fixtures only;
-normal application callers must provide ``context``.
+Every production caller must provide a complete canonical context.  There is
+deliberately no runtime fallback to the legacy SDK writers: missing evidence
+or context is a hard failure and the caller remains unresolved/held.
 """
 
 import time
 import math
 from core.foundation.contracts import Scope, InstrumentId, OrderIntent
+
+
+class CanonicalContextRequired(ValueError):
+    """Raised when a normal execution route lacks canonical context."""
 
 
 def _intent(context, *, action, coin, dex, side, size, price, authorization='USER_CONFIRMED', source='manual'):
@@ -65,23 +68,19 @@ def manual_close(client, coin, dex, *, gateway=None, intent=None, market=None):
     if gateway is not None:
         if intent is None or market is None: raise ValueError('Canonical manual intent required')
         return gateway.execute(intent, market)
-    # Isolated legacy fixtures only. Production callers pass gateway + intent.
-    from core.legacy_route_calls import manual_close as legacy
-    return legacy(client, coin, dex)
+    raise CanonicalContextRequired('Canonical manual execution context required')
 
 def confirmed_ai_order(signer, payload, expires_ms, *, gateway=None, intent=None, market=None):
     if gateway is not None:
         if intent is None or market is None: raise ValueError('Canonical AI intent required')
         return gateway.execute(intent, market)
-    from core.legacy_route_calls import ai_order as legacy
-    return legacy(signer, payload, expires_ms)
+    raise CanonicalContextRequired('Canonical AI execution context required')
 
 def confirmed_ai_position(signer, payload, expires_ms, *, gateway=None, intent=None, market=None):
     if gateway is not None:
         if intent is None or market is None: raise ValueError('Canonical AI intent required')
         return gateway.execute(intent, market)
-    from core.legacy_route_calls import ai_position as legacy
-    return legacy(signer, payload, expires_ms)
+    raise CanonicalContextRequired('Canonical AI execution context required')
 
 
 def execute_manual_request(context, *, coin, dex='', side='SELL', size, price, action='CLOSE', source='manual'):

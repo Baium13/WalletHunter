@@ -3,6 +3,7 @@ from copy import deepcopy
 import unittest
 
 from core.manual_positions import ManualActionError, ManualPositions
+from core.legacy_route_calls import manual_close as legacy_manual_close
 
 
 def accepted(oid):
@@ -76,7 +77,8 @@ class ManualPositionTests(unittest.TestCase):
             cloned = deepcopy(self.runtime)
             self.runtime.clear()
             self.runtime.update(cloned)
-        self.service = ManualPositions(self.exchange, self.runtime, persist, delay=0)
+        self.service = ManualPositions(self.exchange, self.runtime, persist, delay=0,
+                                       legacy_test_executor=legacy_manual_close)
 
     def test_replacement_verifies_new_before_cancelling_old(self):
         result = self.service.set_stop_loss("INTC", "xyz", 90.123)
@@ -182,8 +184,15 @@ class ManualPositionTests(unittest.TestCase):
     def test_no_order_if_initial_persistence_fails(self):
         def failure():
             raise IOError("No disk space")
-        service = ManualPositions(self.exchange, self.runtime, failure)
+        service = ManualPositions(self.exchange, self.runtime, failure,
+                                  legacy_test_executor=legacy_manual_close)
         with self.assertRaises(IOError):
+            service.close_position("INTC", "xyz")
+        self.assertEqual(self.exchange.calls, [])
+
+    def test_missing_canonical_context_fails_closed_without_legacy_writer(self):
+        service = ManualPositions(self.exchange, self.runtime, lambda: None, delay=0)
+        with self.assertRaises(ManualActionError):
             service.close_position("INTC", "xyz")
         self.assertEqual(self.exchange.calls, [])
 

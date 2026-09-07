@@ -213,6 +213,8 @@ class IntelligenceTests(unittest.TestCase):
             tree=ast.parse(path.read_text(encoding='utf-8'))
             for node in ast.walk(tree):
                 if isinstance(node,ast.ImportFrom): self.assertNotIn(node.module,forbidden)
+                if isinstance(node,ast.Import):
+                    for alias in node.names: self.assertNotIn(alias.name,forbidden)
             self.assertNotIn('private_key',path.read_text(encoding='utf-8'))
     def test_research_http_authentication_and_bounds(self):
         from fastapi import FastAPI, HTTPException
@@ -259,3 +261,14 @@ class IntelligenceTests(unittest.TestCase):
         self.assertIn('event: research',output)
         self.assertIn('WALLET_DISCOVERED',output)
         self.assertNotIn('private_key',output)
+    def test_research_records_are_immutable_and_causally_linked(self):
+        import sqlite3,json
+        from core.intelligence.models import LeaderScore
+        analysis=self.activate(); event=self.signal()
+        self.worker.research(event,LeaderScore.model_validate(analysis['score']),self.reader._info,NOW+1000)
+        with self.worker.store.transaction() as db:
+            canonical=[json.loads(r[0]) for r in db.execute('SELECT body FROM events')]
+        self.assertEqual(len([r for r in canonical if r['correlation_id']==event.event_id]),2)
+        for sql in ('UPDATE intelligence_records SET kind=kind','DELETE FROM intelligence_records'):
+            with self.assertRaises(sqlite3.IntegrityError):
+                with self.worker.store.transaction() as db: db.execute(sql)

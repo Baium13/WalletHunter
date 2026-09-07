@@ -8,13 +8,14 @@ from contextlib import closing
 from pathlib import Path
 from fastapi import APIRouter, Header, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
-from core.settings import validated_network
+from pydantic import TypeAdapter
+from core.foundation.contracts import Network
 
 
 class ResearchView:
     def __init__(self,path,network):
         self.path=Path(path)
-        self.network=validated_network(network)
+        self.network=TypeAdapter(Network).validate_python(network)
 
     def read(self,after=0,limit=20):
         if type(after) is not int or after<0 or type(limit) is not int or not 1<=limit<=50:

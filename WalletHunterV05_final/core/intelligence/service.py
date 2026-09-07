@@ -110,6 +110,8 @@ class WalletDiscoveryEngine:
                 CREATE TABLE IF NOT EXISTS observed_fills(network TEXT,wallet TEXT,fill_id TEXT,event_id TEXT,
                     PRIMARY KEY(network,wallet,fill_id));
                 CREATE TABLE IF NOT EXISTS watch_epochs(network TEXT,wallet TEXT,started INTEGER,PRIMARY KEY(network,wallet));
+                CREATE TRIGGER IF NOT EXISTS research_no_update BEFORE UPDATE ON intelligence_records BEGIN SELECT RAISE(ABORT,'append only'); END;
+                CREATE TRIGGER IF NOT EXISTS research_no_delete BEFORE DELETE ON intelligence_records BEGIN SELECT RAISE(ABORT,'append only'); END;
             ''')
 
     def _record(self,db,kind,body,now,instrument=None):
@@ -121,9 +123,10 @@ class WalletDiscoveryEngine:
         if db.execute('SELECT COUNT(*) FROM intelligence_records').fetchone()[0]>=100000:
             raise ValueError('EVENT_STORAGE_BUDGET_ARCHIVE_REQUIRED')
         db.execute('INSERT INTO intelligence_records VALUES(?,?,?,?,?)',(record_id,self.network,kind,now,packed(body)))
+        correlation=body.get('event_id') or body.get('event',{}).get('event_id') or record_id
         reference=AnalysisResult(instrument=instrument or InstrumentId(network=self.network,symbol='BTC'),
-            correlation_id=record_id,created_ms=now,evidence_ids=(record_id,),conclusion='RESEARCH_ONLY')
-        self.store.append_in(db,DomainEvent(event_id=record_id,event_type='LEADER_EVENT',correlation_id=record_id,
+            correlation_id=correlation,created_ms=now,evidence_ids=(record_id,),conclusion='RESEARCH_ONLY')
+        self.store.append_in(db,DomainEvent(event_id=record_id,event_type='LEADER_EVENT',correlation_id=correlation,
             scope=self.scope,event_ms=now,received_ms=now,payload=reference))
         return record_id
 

@@ -1,0 +1,24 @@
+{
+  "scope": "Public OBSERVE research and authenticated read-only API checkpoint; NOT complete Block 2/3",
+  "baseline_commit": "9065014",
+  "checkpoints": ["8b4a973", "dde9c9b"],
+  "runner": "tools/baseline/run_tests.py --phase block1",
+  "python": {"discovered": 865, "passed": 864, "failed": 0, "errors": 0, "skipped": 1, "duration_seconds": 148.343},
+  "javascript": {"passed": 96, "total": 96},
+  "safety": {"repository_tests": 57, "sandbox_guards": 14, "passed": 71},
+  "new_research_tests": {"passed": 33, "total": 33},
+  "protected_source": "PASS; original copy and Phase 1 files unchanged except narrowly reviewed read-only API registration",
+  "secret_scan": "PASS; pattern scanning is not a proof against every possible secret",
+  "fixed_during_validation": [
+    "SQLite read-only connection closure on Windows",
+    "Router dependency on settings stub missing validated_network; replaced with canonical Network type",
+    "FastAPI included-router test traversal corrected"
+  ],
+  "known_environment_skip": "Existing Windows/POSIX skip unchanged",
+  "real_orders_executed": false,
+  "production_financial_state_changed": false,
+  "worker_deployed_or_started_against_exchange": false,
+  "autonomous_paper_or_shadow_validated": false,
+  "manual_and_confirmed_ai_migrated": false,
+  "product_complete": false
+}

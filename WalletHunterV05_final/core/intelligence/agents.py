@@ -19,6 +19,7 @@ def evaluate(event, leader, candles, book, now, policy):
         times = [c['T'] for c in candles]
         if any(type(t) is not int for t in times) or times != sorted(set(times)) or times[-1] > now or now-times[-1] > 900000:
             raise ValueError('Stale candles')
+        if any(b-a!=900000 for a,b in zip(times,times[1:])): raise ValueError('Candle gap')
         closes=[number(c['c']) for c in candles]
         highs=[number(c['h']) for c in candles]
         lows=[number(c['l']) for c in candles]
@@ -46,6 +47,7 @@ def evaluate(event, leader, candles, book, now, policy):
         if bid_prices!=sorted(set(bid_prices),reverse=True) or ask_prices!=sorted(set(ask_prices)):
             raise ValueError('Unordered depth')
         bid,ask=number(bids[0]['px']),number(asks[0]['px'])
+        if not math.isfinite(bid+ask): raise ValueError('Price arithmetic overflow')
         depth=min(sum(number(x['px'])*number(x['sz']) for x in side[:5]) for side in (bids,asks))
         if not math.isfinite(depth): raise ValueError('Depth overflow')
         spread=(ask-bid)/((ask+bid)/2)*10000

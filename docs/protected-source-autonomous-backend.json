@@ -4,15 +4,19 @@
   "files": {
     "WalletHunterV05_final/core/foundation/contracts.py": {
       "previous_sha256": "b9c36db6feb1edb042d360e892c9dcd408783ceb9ca6940fea254af80acf2977",
-      "reviewed_sha256": "e68cac4d841f7097034bfa138b764ffc98d1390ff9ef2f1bec9263adfdc20244"
+      "reviewed_sha256": "703f38ebc4fd9781c84226bbc199c2e429e6082e24f5da4750b7a9d8f2657c12"
     },
     "WalletHunterV05_final/core/foundation/execution.py": {
       "previous_sha256": "89830cd8fee0a0306b2b8db2c648bc91f38fca576d52984c1bf880cc31760631",
-      "reviewed_sha256": "5393c09926d57dd192161b76ccb9aaeb26fcdecae901e9c98e31e6f709ad0f3d"
+      "reviewed_sha256": "adc42c9cf74c3a1c4acfc6da6d860452ebab5c482dedb32b02c3d1e7c7e94180"
     },
     "WalletHunterV05_final/core/foundation/risk.py": {
       "previous_sha256": "b3b1e9e5fc82019f9aba69c61cebdc00197db3a29c2d9170e5d5bbf1f3e010f0",
-      "reviewed_sha256": "daada3963ff315aaed463ba7aeac30cf38dadc524ca961e52f3338b087a2642c"
+      "reviewed_sha256": "0cb3871e1a7aa469c6cc6074dbf20591b226cfbc23e6338cd0d4eea00fe76572"
+    },
+    "WalletHunterV05_final/core/foundation/copy_execution.py": {
+      "previous_sha256": "4d802333c3784237b003d07c11680f7640b60eb218a89718427ae4aa112b72fd",
+      "reviewed_sha256": "10f1b8c31147fb74e021ecdf2f32202c1cb26bfd47cbcb5d26446f2824d4eff8"
     }
   }
 }

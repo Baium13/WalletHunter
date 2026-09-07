@@ -155,7 +155,7 @@ class SourceContribution(Contract):
 
 
 class OrderIntent(Contract):
-    version: Literal[1, 2] = 1
+    version: Literal[1, 2, 3] = 1
     intent_id: Name
     scope: Scope
     instrument: InstrumentId
@@ -179,7 +179,7 @@ class OrderIntent(Contract):
     @field_validator("version", mode="before")
     @classmethod
     def exact_version(cls, value):
-        if type(value) is not int or value not in (1, 2):
+        if type(value) is not int or value not in (1, 2, 3):
             raise ValueError("Unsupported intent schema version")
         return value
 
@@ -200,6 +200,11 @@ class OrderIntent(Contract):
         if self.version == 1:
             if self.source_contributions or self.parent_intent_id is not None or self.configure_leverage or self.action == "LEVERAGE_UPDATE" or self.order_type != "IOC":
                 raise ValueError("Copy extensions require intent version 2")
+        elif self.version == 3:
+            if (self.authorization != 'USER_CONFIRMED' or self.execution_mode != 'LIVE'
+                    or self.action != 'OPEN' or self.order_type != 'IOC'
+                    or self.source_contributions or self.parent_intent_id is not None):
+                raise ValueError('Version 3 requires explicitly confirmed live entry')
         else:
             if self.authorization != "COPY_POLICY" or not self.source_contributions or self.parent_intent_id is None:
                 raise ValueError("Version 2 requires copy authority, parent and explicit sources")

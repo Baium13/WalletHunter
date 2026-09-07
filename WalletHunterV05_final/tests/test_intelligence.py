@@ -111,6 +111,75 @@ class IntelligenceTests(unittest.TestCase):
         self.assertEqual(backend.exchange.calls,0)
         self.assertEqual(backend.store.portfolio(backend.auth_policy.scope).positions,())
         self.assertEqual(backend.process(record),result)
+
+    def live_backend(self):
+        from types import SimpleNamespace
+        from core.autonomous import AutonomousBackend
+        from core.foundation.copy_execution import HyperliquidExecutionAdapter
+        from core.foundation.store import Store
+        paper,record=self.paper_backend()
+        before=paper.store.portfolio(paper.auth_policy.scope).model_copy(update={'evidence':'EXCHANGE','collateral_dex':''})
+        store=Store(Path(self.temp.name)/'live-fixture.sqlite'); store.publish_portfolio(before,'test-live')
+        client=SimpleNamespace(network='TESTNET',address=ADDRESS)
+        adapter=HyperliquidExecutionAdapter(client,before.scope,paper.clock,before)
+        backend=AutonomousBackend(store,adapter,paper.allocation_policy,
+            paper.auth_policy.model_copy(update={'mode':'LIVE_CONFIRM'}),paper.risk.policy,paper.clock)
+        return backend,record,before
+
+    def test_live_confirmation_reaches_gateway_only_after_explicit_action(self):
+        from core.foundation.copy_execution import HyperliquidExecutionAdapter
+        backend,record,before=self.live_backend()
+        with patch.object(HyperliquidExecutionAdapter,'submit',side_effect=TimeoutError('synthetic')) as submit:
+            result=backend.process(record)
+            self.assertEqual(result['status'],'CONFIRMATION_REQUIRED'); submit.assert_not_called()
+            key=result['authorization']['decision_id']
+            with self.assertRaises(ValueError): backend.confirm(key,authenticated_user='another')
+            submit.assert_not_called()
+            fresh=before.model_copy(update={'revision':2})
+            with patch.object(HyperliquidExecutionAdapter,'refresh',return_value=fresh):
+                result=backend.confirm(key,authenticated_user='7')
+            self.assertEqual(result['risk']['outcome'],'APPROVED')
+            self.assertEqual(result['status'],'UNKNOWN'); self.assertEqual(submit.call_count,1)
+            with patch.object(HyperliquidExecutionAdapter,'query',return_value=None):
+                backend.confirm(key,authenticated_user='7')
+            self.assertEqual(submit.call_count,1)
+            with backend.store.transaction() as db:
+                reservation=json.loads(db.execute('SELECT reservation FROM intents WHERE id=?',(key,)).fetchone()[0])
+            self.assertGreater(reservation['margin'],0)
+
+    def test_live_confirmation_stale_market_blocks_submission(self):
+        from core.foundation.copy_execution import HyperliquidExecutionAdapter
+        backend,record,before=self.live_backend(); result=backend.process(record)
+        backend.clock=backend.gateway.clock=lambda:NOW+32000
+        fresh=before.model_copy(update={'revision':2,'received_ms':NOW+32000,'exchange_ms':NOW+32000})
+        with patch.object(HyperliquidExecutionAdapter,'refresh',return_value=fresh), patch.object(HyperliquidExecutionAdapter,'submit') as submit:
+            result=backend.confirm(result['authorization']['decision_id'],authenticated_user='7')
+            self.assertEqual(result['status'],'REJECTED'); submit.assert_not_called()
+
+    def test_live_confirmed_fill_commits_proven_source(self):
+        from core.foundation.copy_execution import HyperliquidExecutionAdapter,LiveReport
+        from core.foundation.contracts import Position,Fill,ExecutionReceipt
+        backend,record,before=self.live_backend(); result=backend.process(record)
+        fresh=before.model_copy(update={'revision':2})
+        def filled(adapter,intent,snapshot,now):
+            with backend.store.transaction() as db:
+                row=db.execute('SELECT status,reservation FROM intents WHERE id=?',(intent.intent_id,)).fetchone()
+                self.assertEqual(row['status'],'SUBMITTING'); self.assertGreater(json.loads(row['reservation'])['margin'],0)
+            value=intent.size*intent.limit_price
+            position=Position(instrument=intent.instrument,side='LONG',size=intent.size,entry_price=intent.limit_price,
+                notional=value,margin=value/intent.leverage,leverage=intent.leverage,evidence='EXTERNAL')
+            after=snapshot.model_copy(update={'revision':3,'positions':(position,),
+                'available_collateral':snapshot.available_collateral-value/intent.leverage})
+            fill=Fill(intent_id=intent.intent_id,instrument=intent.instrument,order_id='123',trade_id='456',
+                side=intent.side,size=intent.size,price=intent.limit_price,exchange_ms=now)
+            receipt=ExecutionReceipt(intent_id=intent.intent_id,scope=intent.scope,status='FILLED',order_ids=('123',),
+                fills=(fill,),reconciliation='CONFIRMED',received_ms=now,provenance='EXCHANGE')
+            return LiveReport(receipt,after)
+        with patch.object(HyperliquidExecutionAdapter,'refresh',return_value=fresh), patch.object(HyperliquidExecutionAdapter,'submit',filled):
+            result=backend.confirm(result['authorization']['decision_id'],authenticated_user='7')
+        self.assertEqual(result['status'],'FILLED')
+        position=backend.store.portfolio(backend.auth_policy.scope).positions[0]
+        self.assertEqual(position.evidence,'VERIFIED'); self.assertEqual(position.contributions[0].source,'intelligence')
     def test_shadow_and_paper_cannot_share_performance_state(self):
         from core.autonomous import AutonomousBackend
         backend,_=self.paper_backend('SHADOW')

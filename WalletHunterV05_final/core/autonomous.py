@@ -17,7 +17,9 @@ from core.foundation.store import scope_key,encoded,digest
 
 class AutonomousBackend:
     def __init__(self,store,exchange,allocation_policy,authorization_policy,risk_policy,clock):
-        if type(exchange) is not FakeExchange: raise ValueError('PAPER adapter required')
+        from core.foundation.copy_execution import HyperliquidExecutionAdapter
+        expected = HyperliquidExecutionAdapter if authorization_policy.mode=='LIVE_CONFIRM' else FakeExchange
+        if type(exchange) is not expected: raise ValueError('Mode-specific controlled adapter required')
         if allocation_policy.scope!=authorization_policy.scope or risk_policy.scope!=authorization_policy.scope:
             raise ValueError('Scope mismatch')
         self.store,self.exchange,self.allocation_policy,self.auth_policy=store,exchange,allocation_policy,authorization_policy
@@ -83,14 +85,18 @@ class AutonomousBackend:
         auth=self.authorization.decide(self.auth_policy,event,result,now)
         body={'event':event.model_dump(mode='json'),'agents':[a.model_dump(mode='json') for a in agents],
             'consensus':result.model_dump(mode='json'),'authorization':auth.model_dump(mode='json'),
-            'mode':auth.mode,'status':auth.outcome,'correlation_id':event.event_id}
+            'mode':auth.mode,'status':auth.outcome,'correlation_id':event.event_id,
+            'market':market.model_dump(mode='json')}
         intent=None
-        if (auth.outcome=='AUTHORIZED' and auth.execution_mode=='PAPER') or auth.outcome=='HYPOTHETICAL':
+        if (auth.outcome=='AUTHORIZED' and auth.execution_mode=='PAPER') or auth.outcome in {'HYPOTHETICAL','CONFIRMATION_REQUIRED'}:
             size=ledger.size(limit,leverage,self.risk.policy.size_step,leader.confidence,result.confidence)
             if size>0:
-                intent=OrderIntent(intent_id=auth.decision_id,scope=scope,instrument=event.instrument,source=self.allocation_policy.source,
+                live=auth.mode=='LIVE_CONFIRM'
+                intent=OrderIntent(version=3 if live else 1,intent_id=auth.decision_id,scope=scope,instrument=event.instrument,source=self.allocation_policy.source,
                     action=event.action,side=event.side,size=size,limit_price=limit,leverage=leverage,slippage_pct=self.risk.policy.max_slippage_pct,
-                    authorization='PAPER_POLICY',execution_mode='PAPER',correlation_id=event.event_id,created_ms=auth.created_ms,expires_ms=auth.expires_ms)
+                    authorization='USER_CONFIRMED' if live else 'PAPER_POLICY',execution_mode='LIVE' if live else 'PAPER',
+                    configure_leverage=live,correlation_id=event.event_id,created_ms=auth.created_ms,expires_ms=auth.expires_ms)
+                if live: body['proposal']=intent.model_dump(mode='json')
             else: body['status']='ZERO_SIZE'
         if intent is not None and auth.mode=='SHADOW':
             risk=self.risk.evaluate(intent,market,ledger,now,authorized=self.authorization.verify(auth,now),unresolved=bool(pending))
@@ -103,7 +109,7 @@ class AutonomousBackend:
             if previous: return json.loads(previous[0])
             db.execute('INSERT INTO autonomous_decisions VALUES(?,?,?,?,?)',(auth.decision_id,scope_key(scope),event.event_id,
                 json.dumps(body,allow_nan=False),encoded(intent) if intent else None))
-        if intent is not None and auth.mode!='SHADOW':
+        if intent is not None and auth.mode=='PAPER_AUTO':
             self.gateway.authorize_paper(intent,auth)
             receipt=self.gateway.execute(intent,market,autonomous_ledger=ledger)
             body['receipt']=receipt.model_dump(mode='json'); body['status']=receipt.status
@@ -111,6 +117,42 @@ class AutonomousBackend:
                 row=db.execute('SELECT decision FROM intents WHERE id=?',(intent.intent_id,)).fetchone()
                 body['risk']=json.loads(row[0])
                 db.execute('UPDATE autonomous_decisions SET body=? WHERE id=?',(json.dumps(body,allow_nan=False),auth.decision_id))
+        return body
+
+    def confirm(self, decision_id, *, authenticated_user):
+        """Explicit controller action. Refresh account before deterministic risk.
+
+        The proposal price bound is immutable. If its market evidence expired,
+        confirmation rejects rather than silently repricing the user's order.
+        """
+        if self.auth_policy.mode != 'LIVE_CONFIRM': raise ValueError('Live confirmation mode required')
+        scope=self.auth_policy.scope
+        if str(authenticated_user)!=scope.tenant: raise ValueError('Confirmation tenant mismatch')
+        with self.store.transaction() as db:
+            row=db.execute('SELECT body,intent FROM autonomous_decisions WHERE id=? AND scope=?',
+                (decision_id,scope_key(scope))).fetchone()
+            if not row or not row['intent']: raise ValueError('Proposal unavailable')
+            existing=db.execute('SELECT body FROM intents WHERE id=? AND scope=?',(decision_id,scope_key(scope))).fetchone()
+            body=json.loads(row['body'])
+            proposal=OrderIntent.model_validate_json(row['intent'])
+            revision=self.store.portfolio_in(db,scope).revision+1
+        if existing:
+            # Query-only recovery even when the acknowledgement was lost.
+            receipt=self.gateway.recover(OrderIntent.model_validate_json(existing[0]))
+            body.update(receipt=receipt.model_dump(mode='json'),status=receipt.status)
+            return body
+        auth=self.authorization.confirm(decision_id,scope,self.clock(),authenticated_user=authenticated_user)
+        before=self.exchange.refresh(revision,proposal.instrument.dex)
+        self.store.publish_portfolio(before,proposal.correlation_id)
+        intent=proposal.model_copy(update={'created_ms':self.clock()})
+        ledger=AutonomousLedger(before,self.allocation_policy)
+        self.gateway.authorize_live(intent,auth)
+        receipt=self.gateway.execute(intent,MarketSnapshot.model_validate(body['market']),autonomous_ledger=ledger)
+        body.update(authorization=auth.model_dump(mode='json'),receipt=receipt.model_dump(mode='json'),status=receipt.status)
+        with self.store.transaction() as db:
+            risk=db.execute('SELECT decision FROM intents WHERE id=?',(decision_id,)).fetchone()
+            body['risk']=json.loads(risk[0])
+            db.execute('UPDATE autonomous_decisions SET body=? WHERE id=?',(json.dumps(body,allow_nan=False),decision_id))
         return body
 
 

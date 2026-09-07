@@ -44,14 +44,17 @@ class RiskGateway:
         require(authorized is True, "AUTHORIZATION_REQUIRED")
         # No production execution adapter is enabled in this additive block.
         require((intent.execution_mode in {"FAKE", "PAPER"} and intent.authorization == "PAPER_TEST")
-            or (intent.execution_mode == 'PAPER' and intent.authorization == 'PAPER_POLICY'), "LIVE_ROUTE_NOT_MIGRATED")
+            or (intent.execution_mode == 'PAPER' and intent.authorization == 'PAPER_POLICY')
+            or (intent.version == 3 and intent.execution_mode == 'LIVE' and intent.authorization == 'USER_CONFIRMED'), "LIVE_ROUTE_NOT_MIGRATED")
         require(intent.action == "OPEN", "ACTION_NOT_MIGRATED")
         require(not unresolved, "UNRESOLVED_EXECUTION")
         require(type(now) is int and intent.created_ms <= now < intent.expires_ms
             and 0 <= now-intent.created_ms <= p.max_intent_age_ms, "INTENT_EXPIRED")
-        require(snapshot.completeness == "COMPLETE" and snapshot.evidence == "FAKE"
+        require(snapshot.completeness == "COMPLETE" and snapshot.evidence == ('EXCHANGE' if intent.version == 3 else 'FAKE')
             and snapshot.exchange_ms is not None and 0 <= now-snapshot.exchange_ms <= p.max_portfolio_age_ms
             and 0 <= now-snapshot.received_ms <= p.max_portfolio_age_ms, "PORTFOLIO_STALE_OR_UNKNOWN")
+        if intent.version == 3:
+            require(snapshot.collateral_dex == intent.instrument.dex, 'COLLATERAL_POOL_MISMATCH')
         require(market.completeness == "COMPLETE" and market.freshness == "FRESH" and market.exchange_ms is not None
             and 0 <= now-market.exchange_ms <= p.max_market_age_ms and 0 <= now-market.received_ms <= p.max_market_age_ms,
             "MARKET_STALE_OR_UNKNOWN")

@@ -177,6 +177,37 @@ class ExecutionGateway:
             if old and old[0]!=digest(intent): raise ValueError('Grant identity collision')
             db.execute('INSERT OR IGNORE INTO grants VALUES(?,?,?)',(intent.intent_id,scope_key(intent.scope),digest(intent)))
 
+    def authorize_live(self, intent, authorization):
+        """Durable, tenant-confirmed proposal; never an agent-produced grant."""
+        from .authorization import AuthorizationService
+        from .copy_execution import HyperliquidExecutionAdapter
+        if type(self.__exchange) is not HyperliquidExecutionAdapter or intent.version != 3:
+            raise ValueError('Confirmed live adapter required')
+        self.__exchange.validate_scope(intent)
+        if (authorization.execution_mode != 'LIVE' or authorization.scope != intent.scope
+                or authorization.event_id != intent.correlation_id or authorization.decision_id != intent.intent_id
+                or intent.expires_ms > authorization.expires_ms
+                or not AuthorizationService(self.store).verify(authorization, self.clock())):
+            raise ValueError('Durable live confirmation required')
+        with self.store.transaction() as db:
+            row = db.execute('SELECT consensus,event FROM authorization_requests WHERE id=?', (intent.intent_id,)).fetchone()
+            proposal = db.execute('SELECT intent FROM autonomous_decisions WHERE id=? AND scope=?',
+                (intent.intent_id, scope_key(intent.scope))).fetchone()
+            if not row or not proposal or not proposal[0]: raise ValueError('Confirmed proposal unavailable')
+            expected = OrderIntent.model_validate_json(proposal[0])
+            # Only the dispatch timestamp can change at confirmation. Exact size,
+            # limit, instrument and configuration remain those shown in proposal.
+            if expected.model_copy(update={'created_ms': intent.created_ms}) != intent:
+                raise ValueError('Confirmed proposal changed')
+            event = json.loads(row['event'])
+            if (event.get('instrument') != intent.instrument.model_dump(mode='json') or event.get('action') != intent.action
+                    or json.loads(row['consensus'])['decision'] != ('COPY_LONG' if intent.side == 'BUY' else 'COPY_SHORT')):
+                raise ValueError('Confirmed event mismatch')
+            self.store.bind(db, intent.scope)
+            old = db.execute('SELECT intent_hash FROM grants WHERE id=?', (intent.intent_id,)).fetchone()
+            if old and old[0] != digest(intent): raise ValueError('Grant identity collision')
+            db.execute('INSERT OR IGNORE INTO grants VALUES(?,?,?)', (intent.intent_id, scope_key(intent.scope), digest(intent)))
+
     def execute(self, intent, market, *, copy_ledger=None, autonomous_ledger=None):
         intent = OrderIntent.model_validate_json(intent.model_dump_json())
         with self.store.transaction() as db:
@@ -188,12 +219,14 @@ class ExecutionGateway:
                 return ExecutionReceipt.model_validate_json(old["receipt"]) if old["receipt"] else self._unknown(intent, now, "SUBMITTING")
             before = self.store.portfolio_in(db, intent.scope)
             pending = db.execute("SELECT reservation FROM intents WHERE scope=? AND status IN ('SUBMITTING','UNKNOWN')", (scope_key(intent.scope),)).fetchall()
-            reservations = [Reservation(**json.loads(r[0])) for r in pending] if intent.version == 1 else []
+            reservations = [Reservation(**json.loads(r[0])) for r in pending] if intent.version != 2 else []
             grant = db.execute("SELECT intent_hash FROM grants WHERE id=? AND scope=?", (intent.intent_id, scope_key(intent.scope))).fetchone()
             ledger = Ledger(before, self.risk.policy.sources, reservations) if intent.version == 1 else copy_ledger
             if autonomous_ledger is not None:
                 from .autonomous_allocation import AutonomousLedger
-                if type(autonomous_ledger) is not AutonomousLedger or intent.authorization!='PAPER_POLICY' or intent.version!=1:
+                if type(autonomous_ledger) is not AutonomousLedger or not (
+                        (intent.authorization=='PAPER_POLICY' and intent.version==1)
+                        or (intent.authorization=='USER_CONFIRMED' and intent.version==3)):
                     raise ValueError('Autonomous ledger scope invalid')
                 # Rebuild from durable pending reservations inside the same
                 # transaction; caller cannot omit a concurrent UNKNOWN intent.
@@ -236,7 +269,7 @@ class ExecutionGateway:
 
     def _settle(self, intent, before, report):
         now = self.clock()
-        receipt = (report.receipt if report is not None else self._unknown(intent, now)) if intent.version == 2 else reconcile(intent, before, report, now)
+        receipt = (report.receipt if report is not None else self._unknown(intent, now)) if intent.version in (2,3) else reconcile(intent, before, report, now)
         with self.store.transaction() as db:
             row = db.execute("SELECT status,receipt FROM intents WHERE id=? AND scope=?", (intent.intent_id, scope_key(intent.scope))).fetchone()
             if not row: raise ValueError("No durable intent")
@@ -244,10 +277,18 @@ class ExecutionGateway:
                 return ExecutionReceipt.model_validate_json(row["receipt"])
             current = self.store.portfolio_in(db, intent.scope)
             if current != before and intent.version == 1: receipt = self._unknown(intent, now)
-            if intent.version == 2 and report is not None and report.after.revision <= current.revision:
+            if intent.version in (2,3) and report is not None and report.after.revision <= current.revision:
                 receipt = self._unknown(intent, now)
+            if intent.version == 3 and current != before: receipt = self._unknown(intent, now)
             if receipt.status != "UNKNOWN":
-                self.store.publish_portfolio_in(db, report.after, intent.correlation_id)
+                after = report.after
+                if intent.version == 3 and receipt.status in {'FILLED','PARTIAL'}:
+                    # Order/fill/delta proof, not address similarity, grants ownership.
+                    after = after.model_copy(update={'positions': tuple(
+                        p.model_copy(update={'evidence':'VERIFIED','order_ids':receipt.order_ids,
+                            'contributions':(Contribution(source=intent.source,notional=p.notional),)})
+                        if p.instrument == intent.instrument else p for p in after.positions)})
+                self.store.publish_portfolio_in(db, after, intent.correlation_id)
             kind = {"FILLED": "ORDER_FILLED", "PARTIAL": "ORDER_PARTIALLY_FILLED", "REJECTED": "ORDER_REJECTED", "UNKNOWN": "EXECUTION_UNKNOWN", "CONFIGURED": "LEVERAGE_CONFIGURED"}[receipt.status]
             # Repeated UNKNOWN queries must not collide with the original timestamp.
             if receipt.status != "UNKNOWN" or row["status"] != "UNKNOWN": self._event(db, intent, kind, receipt, now)
@@ -265,7 +306,7 @@ class ExecutionGateway:
             prestate = db.execute("SELECT body FROM intent_prestate WHERE id=?", (intent.intent_id,)).fetchone()
             if not prestate: raise ValueError("Missing pre-execution evidence; no retry")
             before = PortfolioSnapshot.model_validate_json(prestate[0])
-            if intent.version == 2:
+            if intent.version in (2,3):
                 self.__exchange.before = before
                 self.__exchange.next_revision = self.store.portfolio_in(db, intent.scope).revision+1
         try: report = self.__exchange.query(intent)

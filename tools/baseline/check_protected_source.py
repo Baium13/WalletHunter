@@ -27,7 +27,7 @@ RESEARCH_PARENT = 'f110f04c79e4ae72023217c95799a4c85303cb0ef8f0b36395e82d1142389
 RESEARCH_PATHS = {'WalletHunterV05_final/webapp/server.py','WalletHunterV05_final/webapp/intelligence_api.py'}
 BACKEND_FILE = 'docs/protected-source-autonomous-backend.json'
 BACKEND_PARENT = '5856b7af82876faccce508c86e7f9e539557b3562d887faf25f3493f96397118'
-BACKEND_PATHS = {'WalletHunterV05_final/core/foundation/'+name+'.py' for name in ('contracts','execution','risk')}
+BACKEND_PATHS = {'WalletHunterV05_final/core/foundation/'+name+'.py' for name in ('contracts','execution','risk','copy_execution')}
 CUTOVER_PARENT = '61462cdc2660a634250496d0f8a983eab58ee34ff6da03b7fca85189d2d5027f'
 CUTOVER_PATHS = {'WalletHunterV05_final/' + p for p in (
     'core/execution_journal.py', 'core/trading_engine.py', 'core/foundation/contracts.py',

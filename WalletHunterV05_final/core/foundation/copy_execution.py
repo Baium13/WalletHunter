@@ -29,7 +29,8 @@ class HyperliquidExecutionAdapter:
         c = self.__client
         if intent.scope != self.scope or c.network != self.scope.network or c.address.lower() != self.scope.account:
             raise ValueError('Account/network mismatch')
-        if intent.execution_mode != 'LIVE' or intent.authorization != 'COPY_POLICY':
+        if intent.execution_mode != 'LIVE' or not (intent.authorization == 'COPY_POLICY' or
+                (intent.version == 3 and intent.authorization == 'USER_CONFIRMED')):
             raise ValueError('Copy authorization required')
 
     def submit(self, intent, before, now):
@@ -71,6 +72,13 @@ class HyperliquidExecutionAdapter:
                 proof(self.response, intent.instrument.market_key.split('|')[0], intent.instrument.dex,
                     legacy(before), legacy(after), intent.created_ms)
         return LiveReport(receipt, after)
+
+    def refresh(self, revision, dex=''):
+        """Read-only fresh bound account evidence for a confirmed proposal."""
+        c = self.__client
+        if c.network != self.scope.network or c.address.lower() != self.scope.account:
+            raise ValueError('Account/network mismatch')
+        return account_snapshot(c, self.scope, revision, self.clock, dex=dex)
 
 
 def execute_copy(engine, account, client, operation, action, size, buy, spec, before_position, *, configure=False):

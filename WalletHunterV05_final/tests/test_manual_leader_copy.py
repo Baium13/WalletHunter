@@ -81,6 +81,13 @@ class ManualLeaderCopyTests(unittest.TestCase):
             second = ManualLeaderEventBook(path)
             self.assertFalse(second.accept('leader-event-1'))
 
+    def test_event_identity_isolated_by_scope(self):
+        from core.manual_leader_copy import ManualLeaderEventBook
+        book = ManualLeaderEventBook()
+        self.assertTrue(book.accept('same-exchange-id', scope=self.scope))
+        other = self.scope.model_copy(update={'tenant': 'u2'})
+        self.assertTrue(book.accept('same-exchange-id', scope=other))
+
     def test_copy_actions_are_proportional_and_provenanced(self):
         import test_engine_safety as fixture
         from core.manual_leader_copy import execute_manual_leader

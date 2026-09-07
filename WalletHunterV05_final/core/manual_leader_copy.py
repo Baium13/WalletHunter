@@ -122,10 +122,11 @@ class ManualLeaderEventBook:
                            'event_hash TEXT PRIMARY KEY,event_id TEXT NOT NULL,created_ms INTEGER NOT NULL)')
                 db.commit()
 
-    def accept(self, event_id: str) -> bool:
+    def accept(self, event_id: str, *, scope=None) -> bool:
         if not isinstance(event_id, str) or not event_id or len(event_id) > 128:
             raise ValueError('Invalid leader event identity')
-        key = hashlib.sha256(event_id.encode()).hexdigest()
+        scope_token = scope.model_dump_json() if hasattr(scope, 'model_dump_json') else str(scope or '')
+        key = hashlib.sha256((scope_token + '|' + event_id).encode()).hexdigest()
         if self.path is not None:
             try:
                 with closing(sqlite3.connect(self.path, timeout=10)) as db:
@@ -325,7 +326,7 @@ def execute_manual_leader(*, engine, account, client, operation, event_id, actio
             max(1.0, float(before_position.get('leverage', spec.get('leverage', 1)))))
     now = int(time.time() * 1000)
     book = event_book or ManualLeaderEventBook(engine.journal.path if engine and engine.journal else None)
-    if not book.accept(event_id):
+    if not book.accept(event_id, scope=policy.scope):
         return {'event_id': event_id, 'status': 'DUPLICATE', 'action': action}
     plan = planner.plan_event(event_id, action, leader_margin=leader_margin,
         leader_capital=leader_capital, allocatable_capital=allocatable_capital,

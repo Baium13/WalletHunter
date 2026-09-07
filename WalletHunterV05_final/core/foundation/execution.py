@@ -42,6 +42,14 @@ def reconcile(intent, before, report, now):
                or f.side != intent.side or not intent.created_ms <= f.exchange_ms < intent.expires_ms
                or (f.price > intent.limit_price if intent.side == "BUY" else f.price < intent.limit_price) for f in fills):
             return unknown()
+        if intent.action in {'ADD','REDUCE','CLOSE'}:
+            from .paper_effect import effect
+            if report.after != effect(intent,before,fills,report.after.received_ms) or report.after.received_ms>now:
+                return unknown()
+            filled=math.fsum(f.size for f in fills)
+            status='REJECTED' if not filled else 'PARTIAL' if filled<intent.size else 'FILLED'
+            return ExecutionReceipt(intent_id=intent.intent_id,scope=intent.scope,status=status,order_ids=(report.order_id,),
+                fills=fills,reconciliation='CONFIRMED' if status=='FILLED' else status,received_ms=now,provenance='FAKE_EXCHANGE')
         before_other = tuple(p for p in before.positions if p.instrument != intent.instrument)
         after_other = tuple(p for p in report.after.positions if p.instrument != intent.instrument)
         if before_other != after_other or any(p.instrument == intent.instrument for p in before.positions): return unknown()
@@ -106,8 +114,14 @@ class FakeExchange:
                     size=size+(1 if self.behavior == "EXTERNAL_CHANGE" else 0), entry_price=intent.limit_price,
                     notional=notional, margin=margin, leverage=intent.leverage, evidence="VERIFIED", order_ids=(oid,),
                     contributions=(Contribution(source=intent.source, notional=notional),)),)
-            after = PortfolioSnapshot.model_validate(dict(before.model_dump(), positions=positions,
-                available_collateral=before.available_collateral-margin, revision=before.revision+1, received_ms=now, exchange_ms=now))
+            if intent.action in {'ADD','REDUCE','CLOSE'}:
+                from .paper_effect import effect
+                after=effect(intent,before,fills,now)
+                if self.behavior=='EXTERNAL_CHANGE':
+                    after=after.model_copy(update={'available_collateral':after.available_collateral+1})
+            else:
+                after = PortfolioSnapshot.model_validate(dict(before.model_dump(), positions=positions,
+                    available_collateral=before.available_collateral-margin, revision=before.revision+1, received_ms=now, exchange_ms=now))
             report = ExchangeReport(intent_hash=digest(intent), scope=intent.scope, order_id=oid, terminal=True, fills=fills, after=after)
             db.execute("INSERT INTO fake_orders VALUES(?,?,?)", (intent.intent_id, encoded(intent), encoded(report)))
         if self.behavior == "ACK_LOSS": raise TimeoutError("Synthetic acknowledgement loss")

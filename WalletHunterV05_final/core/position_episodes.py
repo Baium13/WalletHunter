@@ -46,14 +46,26 @@ class EpisodeService:
             return
         db.execute('INSERT INTO autonomous_predictions VALUES(?,?,?)',(intent.intent_id,scope_key(intent.scope),original))
         event=body['event']
-        episode=PositionEpisode(episode_id=intent.intent_id,scope=intent.scope,mode=body['mode'],
+        previous=self.active_in(db,intent.scope,body['mode'],event['wallet'],intent.instrument)
+        if intent.action!='OPEN':
+            if previous is None: raise ValueError('Position episode unavailable')
+            episode=previous
+        else:
+            episode=PositionEpisode(episode_id=intent.intent_id,scope=intent.scope,mode=body['mode'],
             leader=event['wallet'],instrument=intent.instrument,first_event_id=intent.correlation_id,
             created_ms=intent.created_ms,state='PROPOSED')
-        db.execute('INSERT INTO position_episodes VALUES(?,?,?)',(episode.episode_id,scope_key(intent.scope),encoded(episode)))
+            db.execute('INSERT INTO position_episodes VALUES(?,?,?)',(episode.episode_id,scope_key(intent.scope),encoded(episode)))
         db.execute('INSERT INTO episode_actions VALUES(?,?)',(intent.intent_id,episode.episode_id))
         self.transition_in(db,episode,intent.intent_id,'PROPOSED',{'prediction_id':intent.intent_id})
         if body['authorization']['outcome']=='AUTHORIZED':
             self.transition_in(db,episode,intent.intent_id,'AUTHORIZED',body['authorization'])
+
+    def active_in(self,db,scope,mode,leader,instrument):
+        rows=db.execute('SELECT body FROM position_episodes WHERE scope=?',(scope_key(scope),)).fetchall()
+        matches=[e for r in rows if (e:=PositionEpisode.model_validate_json(r[0])).mode==mode and e.leader==leader
+            and e.instrument==instrument and e.state not in {'CLOSED','REJECTED'}]
+        if len(matches)>1: raise ValueError('Ambiguous position episode')
+        return matches[0] if matches else None
 
     def transition_in(self,db,episode,action_id,state,evidence):
         key=action_id+'-'+state

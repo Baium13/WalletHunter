@@ -68,20 +68,33 @@ def evaluate(event, leader, candles, book, now, policy, *, context=None, actiona
     return tuple(output)
 
 
-def consensus(event, agents, now, policy):
+def consensus(event, agents, now, policy, *, position=None):
     by_id={a.agent_id:a for a in agents}
     blockers=[]
     if len(by_id)!=len(agents): blockers.append('DUPLICATE_AGENT')
     if any(a.instrument!=event.instrument or a.created_ms>now or now-a.created_ms>policy.max_market_age_ms for a in agents):
         blockers.append('AGENT_SCOPE_OR_AGE')
     if not 0<=now-event.exchange_ms<=policy.max_signal_age_ms: blockers.append('STALE_SIGNAL')
-    if event.action in {'REDUCE','CLOSE','REVERSE'}:
+    reducing=event.action in {'REDUCE','CLOSE'}
+    if reducing and position is not None:
+        if (position.instrument!=event.instrument or position.evidence!='VERIFIED' or
+                (position.side=='LONG')==(event.side=='BUY')):
+            blockers.append('REDUCTION_OWNERSHIP_OR_SIDE')
+    elif event.action in {'REDUCE','CLOSE','REVERSE'}:
         # Directional entry research cannot authorize an exit or interpret a
         # reducing SELL as a new SHORT. Position-aware lifecycle is required.
         blockers.append('POSITION_LIFECYCLE_REQUIRED')
     for key in ('liquidity','risk_context','leader','volatility'):
         a=by_id.get(key)
         if a is None or a.freshness!='FRESH' or a.direction in {'WAIT','CAUTION','BLOCK'}: blockers.append(key+'_UNAVAILABLE_OR_BLOCKING')
+    if reducing and position is not None:
+        # A reducing SELL is not a SHORT entry. Entry trend votes cannot turn
+        # a proven exit into new exposure; fresh contextual checks still apply.
+        confidence=min((by_id[k].confidence for k in ('leader','risk_context','liquidity') if k in by_id),default=0.)
+        return ConsensusDecision(event_id=event.event_id,policy_id=policy.policy_id,created_ms=now,
+            decision='WAIT' if blockers else ('COPY_LONG' if event.side=='BUY' else 'COPY_SHORT'),
+            score=confidence*(1 if event.side=='BUY' else -1),confidence=confidence,
+            participants=tuple(sorted(by_id)),blockers=tuple(blockers),supporting=('leader','risk_context','liquidity'),opposing=())
     # Correlated structure/momentum form ONE trend group, not independent votes.
     trend=[a for a in agents if a.agent_id in {'structure','momentum'} and a.freshness=='FRESH']
     trend_score=sum(a.score*a.confidence for a in trend)/max(sum(a.confidence for a in trend),1e-12)

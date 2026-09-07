@@ -109,7 +109,8 @@ class IntelligenceTests(unittest.TestCase):
         self.assertGreater(result['hypothetical_intent']['size'],0)
         self.assertNotIn('receipt',result)
         self.assertEqual(backend.exchange.calls,0)
-        self.assertEqual(backend.store.portfolio(backend.auth_policy.scope).positions,())
+        self.assertEqual(len(backend.store.portfolio(backend.auth_policy.scope).positions),1)
+        self.assertEqual(result['episode']['state'],'OPEN')
         self.assertEqual(backend.process(record),result)
 
     def live_backend(self):
@@ -229,6 +230,40 @@ class IntelligenceTests(unittest.TestCase):
         self.assertEqual(len(backend.store.portfolio(backend.auth_policy.scope).positions),0)
         self.assertEqual(backend.process(record),result)
         self.assertEqual(backend.exchange.calls,1)
+
+    def followup(self,record,action,before,after,side='SELL',suffix='next'):
+        from copy import deepcopy
+        import hashlib
+        row=deepcopy(record)
+        child=hashlib.sha256((record['event']['event_id']+'|'+suffix).encode()).hexdigest()[:48]
+        row['event'].update(event_id=child,action=action,side=side,
+            before_size=float(before),after_size=float(after),size=float(abs(after-before)))
+        return row
+
+    def test_paper_followup_add_reduce_close_uses_same_episode(self):
+        backend,record=self.paper_backend(); first=backend.process(record)
+        added=backend.process(self.followup(record,'ADD',1,2,'BUY','add'))
+        self.assertEqual(added['status'],'FILLED')
+        reduced=backend.process(self.followup(record,'REDUCE',2,1,suffix='reduce'))
+        self.assertEqual(reduced['status'],'FILLED')
+        closed=backend.process(self.followup(record,'CLOSE',1,0,suffix='close'))
+        self.assertEqual(closed['status'],'FILLED'); self.assertEqual(closed['episode']['state'],'CLOSED')
+        self.assertEqual(closed['episode']['episode_id'],first['episode']['episode_id'])
+        self.assertEqual(backend.exchange.calls,4)
+        self.assertEqual(backend.store.portfolio(backend.auth_policy.scope).positions,())
+
+    def test_shadow_close_never_submits(self):
+        backend,record=self.paper_backend('SHADOW'); backend.process(record)
+        closed=backend.process(self.followup(record,'CLOSE',1,0))
+        self.assertEqual(closed['status'],'SHADOW_APPROVED'); self.assertEqual(closed['episode']['state'],'CLOSED')
+        self.assertEqual(backend.exchange.calls,0); self.assertNotIn('receipt',closed)
+
+    def test_reverse_unknown_close_never_opens(self):
+        backend,record=self.paper_backend(); backend.process(record); backend.exchange.behavior='ACK_LOSS'
+        reverse=self.followup(record,'REVERSE',1,-1)
+        result=backend.process(reverse)
+        self.assertEqual(result['status'],'REVERSE_CLOSE_UNRESOLVED'); self.assertEqual(backend.exchange.calls,2)
+        backend.process(reverse); self.assertEqual(backend.exchange.calls,2)
     def test_worker_drain_consumes_actual_persisted_research_once(self):
         backend,record=self.paper_backend()
         for _ in range(4): backend.drain(self.worker)

@@ -4,6 +4,7 @@ No signing credentials or live client construction. All PAPER submissions use
 the existing canonical gateway, not the follower analytics simulator.
 """
 import json
+import hashlib
 from core.intelligence.models import LeaderTradeEvent,LeaderScore,IntelligencePolicy,RiskContextEvidence
 from core.intelligence.agents import evaluate,consensus
 from core.foundation.contracts import OrderIntent,MarketSnapshot
@@ -16,6 +17,9 @@ from core.foundation.store import scope_key,encoded,digest
 
 
 class AutonomousBackend:
+    @staticmethod
+    def _child_event_id(parent, suffix):
+        return hashlib.sha256((parent+'|'+suffix).encode()).hexdigest()[:48]
     def __init__(self,store,exchange,allocation_policy,authorization_policy,risk_policy,clock):
         from core.foundation.copy_execution import HyperliquidExecutionAdapter
         expected = HyperliquidExecutionAdapter if authorization_policy.mode=='LIVE_CONFIRM' else FakeExchange
@@ -52,6 +56,8 @@ class AutonomousBackend:
     def process(self,record):
         """Input is the actual WalletDiscoveryEngine DECISION body, not a signal shortcut."""
         event=LeaderTradeEvent.model_validate(record['event'])
+        if event.action=='REVERSE':
+            return self.reverse(record)
         leader=LeaderScore.model_validate(record['leader'])
         policy=IntelligencePolicy.model_validate(record['policy'])
         scope=self.auth_policy.scope
@@ -61,6 +67,7 @@ class AutonomousBackend:
             previous=db.execute('SELECT body,intent FROM autonomous_decisions WHERE scope=? AND event_id=?',(scope_key(scope),event.event_id)).fetchone()
             if previous: return json.loads(previous['body']) # No resubmission on re-delivery.
             before=self.store.portfolio_in(db,scope)
+            episode=self.episodes.active_in(db,scope,self.auth_policy.mode,event.wallet,event.instrument)
             pending=db.execute("SELECT reservation FROM intents WHERE scope=? AND status IN ('SUBMITTING','UNKNOWN')",(scope_key(scope),)).fetchall()
             if not pending and before.evidence=='FAKE' and now>before.received_ms:
                 # Local PAPER cash/positions are authoritative simulated state,
@@ -69,21 +76,24 @@ class AutonomousBackend:
                 self.store.publish_portfolio_in(db,before,event.event_id)
         reservations=[Reservation(**json.loads(r[0])) for r in pending]
         ledger=AutonomousLedger(before,self.allocation_policy,reservations)
+        position=next((p for p in before.positions if p.instrument==event.instrument),None) if episode else None
+        reducing=event.action in {'REDUCE','CLOSE'}
         book=record['book']
         bid=float(book['levels'][0][0]['px']); ask=float(book['levels'][1][0]['px'])
         market=MarketSnapshot(instrument=event.instrument,exchange_ms=book['time'],received_ms=record['consensus']['created_ms'],
             price=bid+(ask-bid)/2,bid=bid,ask=ask,completeness='COMPLETE',freshness='FRESH',source='REST',source_version='intelligence-book-v1')
         limit=ask if event.side=='BUY' else bid
         leverage=min(self.allocation_policy.max_leverage,self.risk.policy.max_leverage)
+        if position: leverage=int(position.leverage)
         context=None
         if not ledger.errors:
-            upper=ledger.size(limit,leverage,self.risk.policy.size_step,leader.confidence,1.)
+            upper=0. if reducing else ledger.size(limit,leverage,self.risk.policy.size_step,leader.confidence,1.)
             margin=upper*limit/leverage
             context=RiskContextEvidence(portfolio=before,market=market,allocation=ledger.allocation(self.allocation_policy.source),
                 unresolved=bool(pending),required_margin=margin,required_capacity=margin+upper*limit*self.risk.policy.fee_buffer_pct/100,
                 slippage_pct=self.risk.policy.max_slippage_pct,max_slippage_pct=self.risk.policy.max_slippage_pct)
         agents=evaluate(event,leader,record['candles'],book,now,policy,context=context,actionable=True)
-        result=consensus(event,agents,now,policy)
+        result=consensus(event,agents,now,policy,position=position)
         auth=self.authorization.decide(self.auth_policy,event,result,now)
         body={'event':event.model_dump(mode='json'),'agents':[a.model_dump(mode='json') for a in agents],
             'consensus':result.model_dump(mode='json'),'authorization':auth.model_dump(mode='json'),
@@ -93,7 +103,14 @@ class AutonomousBackend:
             'allocation_policy':self.allocation_policy.model_dump(mode='json')}
         intent=None
         if (auth.outcome=='AUTHORIZED' and auth.execution_mode=='PAPER') or auth.outcome in {'HYPOTHETICAL','CONFIRMATION_REQUIRED'}:
-            size=ledger.size(limit,leverage,self.risk.policy.size_step,leader.confidence,result.confidence)
+            if reducing:
+                from decimal import Decimal,ROUND_FLOOR
+                fraction=min(1.,event.size/abs(event.before_size)) if event.before_size else 0.
+                raw=position.size*(1. if event.action=='CLOSE' else fraction) if position else 0.
+                size=float((Decimal(str(raw))/Decimal(str(self.risk.policy.size_step))).to_integral_value(rounding=ROUND_FLOOR)*Decimal(str(self.risk.policy.size_step)))
+                if event.action=='CLOSE' and position: size=position.size
+            else:
+                size=ledger.size(limit,leverage,self.risk.policy.size_step,leader.confidence,result.confidence)
             if size>0:
                 live=auth.mode=='LIVE_CONFIRM'
                 intent=OrderIntent(version=3 if live else 1,intent_id=auth.decision_id,scope=scope,instrument=event.instrument,source=self.allocation_policy.source,
@@ -114,6 +131,19 @@ class AutonomousBackend:
             db.execute('INSERT INTO autonomous_decisions VALUES(?,?,?,?,?)',(auth.decision_id,scope_key(scope),event.event_id,
                 json.dumps(body,allow_nan=False),encoded(intent) if intent else None))
             self.episodes.prepare_in(db,body,intent)
+            if intent is not None and body['status']=='SHADOW_APPROVED':
+                from core.foundation.contracts import Fill
+                from core.foundation.paper_effect import effect
+                # Hypothetical position, not an exchange receipt or actual fill.
+                hypo_id='hypo-'+hashlib.sha256(intent.intent_id.encode()).hexdigest()[:48]
+                assumed=Fill(intent_id=intent.intent_id,instrument=intent.instrument,order_id=hypo_id,
+                    trade_id=hypo_id,side=intent.side,size=intent.size,price=limit,exchange_ms=now)
+                after=effect(intent,before,(assumed,),now)
+                self.store.publish_portfolio_in(db,after,event.event_id)
+                hypothetical_episode=self.episodes.active_in(db,scope,auth.mode,event.wallet,event.instrument)
+                state={'OPEN':'OPEN','ADD':'INCREASED','REDUCE':'REDUCED','CLOSE':'CLOSED'}[intent.action]
+                self.episodes.transition_in(db,hypothetical_episode,intent.intent_id,state,
+                    {'hypothetical':True,'assumptions':body['assumptions'],'intent_id':intent.intent_id})
         if intent is not None and auth.mode=='PAPER_AUTO':
             self.gateway.authorize_paper(intent,auth)
             receipt=self.gateway.execute(intent,market,autonomous_ledger=ledger)
@@ -128,6 +158,26 @@ class AutonomousBackend:
             with self.store.transaction() as db:
                 db.execute('UPDATE autonomous_decisions SET body=? WHERE id=?',(json.dumps(body,allow_nan=False),auth.decision_id))
         return body
+
+    def reverse(self,record):
+        """Derived legs retain original public fill evidence; each is re-evaluated.
+
+        No OPEN leg exists until the CLOSE is proven terminal. Stable derived
+        identities make redelivery query-only, including between the legs.
+        """
+        from copy import deepcopy
+        event=LeaderTradeEvent.model_validate(record['event'])
+        if event.before_size*event.after_size>=0: raise ValueError('Invalid reversal evidence')
+        close=deepcopy(record); close['parent_event']=event.model_dump(mode='json')
+        close['event']=event.model_copy(update={'event_id':self._child_event_id(event.event_id,'close'),'action':'CLOSE',
+            'size':abs(event.before_size),'after_size':0.}).model_dump(mode='json')
+        result=self.process(close)
+        if result.get('episode',{}).get('state')!='CLOSED':
+            return {'status':'REVERSE_CLOSE_UNRESOLVED','close':result,'correlation_id':event.event_id}
+        opening=deepcopy(record); opening['parent_event']=event.model_dump(mode='json')
+        opening['event']=event.model_copy(update={'event_id':self._child_event_id(event.event_id,'open'),'action':'OPEN',
+            'size':abs(event.after_size),'before_size':0.}).model_dump(mode='json')
+        return {'status':'REVERSE_EVALUATED','close':result,'open':self.process(opening),'correlation_id':event.event_id}
 
     def confirm(self, decision_id, *, authenticated_user):
         """Explicit controller action. Refresh account before deterministic risk.

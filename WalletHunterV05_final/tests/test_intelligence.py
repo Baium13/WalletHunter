@@ -56,6 +56,32 @@ class IntelligenceTests(unittest.TestCase):
         self.assertEqual(next(a for a in agents if a.agent_id=='order_flow').direction,'WAIT')
         self.assertEqual(consensus(event,agents,NOW+1000,self.worker.policy).decision,'COPY_LONG')
         for a in agents: self.assertEqual(a.model_validate_json(a.model_dump_json()),a)
+    def test_authorization_modes_require_durable_authority(self):
+        from core.foundation.authorization import AuthorizationPolicy,AuthorizationService
+        from core.foundation.contracts import Scope
+        event,e,run=self.actionable(); decision=consensus(event,run(),NOW+1000,self.worker.policy)
+        service=AuthorizationService(self.worker.store)
+        for i,mode in enumerate(('OBSERVE','PAPER_AUTO','SHADOW','LIVE_CONFIRM')):
+            scope=Scope(tenant=str(i),account='0x'+str(i+1)*40,network='TESTNET')
+            auth=service.decide(AuthorizationPolicy(scope=scope,mode=mode),event,decision,NOW+1000)
+            self.assertEqual(auth.execution_mode,'PAPER' if mode=='PAPER_AUTO' else 'NONE')
+            self.assertEqual(service.verify(auth,NOW+1001),mode in ('PAPER_AUTO','SHADOW'))
+            if mode=='LIVE_CONFIRM':
+                with self.assertRaises(ValueError): service.confirm(auth.decision_id,scope,NOW+1001,authenticated_user='another')
+                confirmed=service.confirm(auth.decision_id,scope,NOW+1001,authenticated_user=scope.tenant)
+                self.assertEqual(confirmed.execution_mode,'LIVE')
+                self.assertTrue(service.verify(confirmed,NOW+1001))
+                self.assertFalse(service.verify(confirmed,NOW+100000))
+    def test_authorization_policy_toggle_cannot_replay_event(self):
+        from core.foundation.authorization import AuthorizationPolicy,AuthorizationService
+        event,e,run=self.actionable(); result=consensus(event,run(),NOW+1000,self.worker.policy)
+        service=AuthorizationService(self.worker.store)
+        policy=AuthorizationPolicy(scope=e.portfolio.scope)
+        first=service.decide(policy,event,result,NOW+1000)
+        second=service.decide(policy.model_copy(update={'mode':'PAPER_AUTO'}),event,result,NOW+1001)
+        self.assertEqual(first,second)
+        self.assertFalse(service.verify(first.model_copy(update={'outcome':'AUTHORIZED','execution_mode':'PAPER'}),NOW+1001))
+        with self.assertRaises(ValueError): AuthorizationPolicy(scope=policy.scope,mode='LIVE_AUTO')
     def autonomous_ledger(self,positions=(),reservations=(),**changes):
         from core.foundation.autonomous_allocation import AutonomousAllocationPolicy,AutonomousLedger
         from core.foundation.contracts import Scope,PortfolioSnapshot

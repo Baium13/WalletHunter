@@ -7,6 +7,8 @@ const s={scope,account:{portfolio:{positions:[p]},actions:[{intent_id:'one',rece
 test('null is not zero',()=>{for(const v of [null,undefined,'',false,'0',NaN,Infinity,-Infinity])assert.equal(M.number(v),null);assert.equal(M.number(0),0);});
 test('no legacy paper substitution',()=>assert.deepEqual(M.positions({paper:{positions:[p]}},'PAPER_AUTO'),[]));
 test('PAPER and SHADOW are separate',()=>{assert.equal(M.positions(s,'PAPER_AUTO')[0].id,'paper');assert.equal(M.positions(s,'SHADOW')[0].id,'shadow');});
+test('display modes cannot disconnect shared public analysis or borrow financial state',()=>{const shared={agents:[{agent_id:'structure'}],execution_authority:false};const snap={...s,analysis:shared};for(const mode of ['OBSERVE','PAPER_AUTO','SHADOW','LIVE_CONFIRM','LIVE'])assert.equal(M.analysis(snap,mode),shared);assert.deepEqual(M.positions(snap,'OBSERVE'),[]);assert.equal(M.runtime(snap,'LIVE_CONFIRM'),null);});
+test('account-context analysis remains scoped to its actual runtime',()=>{const a={agents:[{agent_id:'risk_context'}]},snap={analysis:{agents:[]},runtimes:[{...a,mode:'PAPER_AUTO'}]};assert.equal(M.analysis(snap,'PAPER_AUTO'),snap.runtimes[0]);assert.equal(M.analysis(snap,'LIVE'),snap.analysis);});
 test('live exact order linkage excludes same-instrument external action',()=>assert.deepEqual(M.positions(s,'LIVE')[0].actions.map(a=>a.intent_id),['one']));
 test('live identity includes tenant',()=>assert.notEqual(M.liveId(scope,p),M.liveId({...scope,tenant:'8'},p)));
 test('live identity includes network',()=>assert.notEqual(M.liveId(scope,p),M.liveId({...scope,network:'MAINNET'},p)));

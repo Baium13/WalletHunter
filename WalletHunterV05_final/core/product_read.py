@@ -66,6 +66,44 @@ def agent_availability(agents):
         degraded=counts['DEGRADED'],offline=counts['OFFLINE'],unknown=counts['UNKNOWN'])
 
 
+AGENT_IDS=('structure','momentum','volatility','liquidity','order_flow','leader','risk_context')
+
+
+def analysis_projection(latest,worker,now):
+    """Separate loaded worker readiness from freshness of its last signal.
+
+    An idle loaded agent is not offline. Historical outputs are never refreshed
+    or passed back into trading. Shared heartbeat is explicitly labelled.
+    """
+    actual={a['agent_id']:a for a in (latest or {}).get('agents',[])}
+    heartbeat=worker.get('heartbeat_ms')
+    alive=type(heartbeat) is int and 0<=now-heartbeat<=90000
+    configured=worker.get('readiness_version')=='configured-worker-v1' and worker.get('status') in {'HEALTHY','DEGRADED','READY','ACTIVE'}
+    agents=[]
+    for name in AGENT_IDS:
+        a=actual.get(name);state=observed((a or {}).get('created_ms'),now)
+        ready=alive and configured and name in worker.get('ready_components',[])
+        if ready:state.update(readiness='READY',ready_observed_ms=heartbeat)
+        state['signal_status']='UNAVAILABLE' if a is None else 'FRESH' if state['fresh'] else 'STALE'
+        if ready and not state['fresh']:state.update(status='WAITING' if a else 'READY',activity='WAITING_FOR_EVENT')
+        if a and state['fresh'] and a['direction'] in {'WAIT','BLOCK'}:state['status']='WAITING' if a['direction']=='WAIT' else 'DEGRADED'
+        if not alive and type(heartbeat) is int:state['status']='OFFLINE'
+        if worker.get('status')=='UNHEALTHY':state['status']='DEGRADED'
+        missing=[]
+        if name=='order_flow':missing=['AGGRESSOR_TRADE_FLOW_UNAVAILABLE']
+        elif a and a.get('freshness')!='FRESH':missing=list(a.get('evidence',[]))
+        agents.append(dict(agent_id=name,**state,result=a,heartbeat_ms=heartbeat,
+            heartbeat_source='SHARED_ANALYSIS_WORKER',last_error=worker.get('error'),
+            current_instrument=a.get('instrument') if a else None,missing_inputs=missing,latency_ms=None))
+    c=(latest or {}).get('consensus');cs=observed((c or {}).get('created_ms'),now)
+    if alive and configured and 'consensus' in worker.get('ready_components',[]) and not cs['fresh']:
+        cs.update(status='READY',activity='WAITING_FOR_EVENT',ready_observed_ms=heartbeat)
+    if not alive and type(heartbeat) is int:cs['status']='OFFLINE'
+    if worker.get('status')=='UNHEALTHY':cs['status']='DEGRADED'
+    cs.update(heartbeat_ms=heartbeat,decision_fresh=cs['fresh'])
+    return dict(agents=agents,agent_summary=agent_availability(agents),consensus=c,consensus_health=cs,execution_authority=False)
+
+
 def runtime_risk_health(worker,risk,execution,now):
     """Worker readiness and last decision are different observations.
 
@@ -222,26 +260,45 @@ class ProductReadModel:
                 if outcome:detail['timeline'].append(dict(type='OUTCOME',timestamp=outcome['recorded_ms'],evidence=outcome,correlation_id=episode['first_event_id']))
                 episode_views.append(detail)
             latest=body(decisions[0]) if decisions else None
-            agents=[]
-            names=('structure','momentum','volatility','liquidity','order_flow','leader','risk_context')
-            actual={a['agent_id']:a for a in (latest or {}).get('agents',[])}
-            for name in names:
-                a=actual.get(name);state=observed((a or {}).get('created_ms'),now)
-                ready = (health.get('readiness_version')=='configured-worker-v1'
-                    and health.get('status')=='HEALTHY' and name in health.get('ready_components',[])
-                    and 0 <= now-health.get('heartbeat_ms',0) <= 90000)
-                if ready:state.update(readiness='READY',ready_observed_ms=health['heartbeat_ms'])
-                if ready and (a is None or not state['fresh']):state.update(status='READY',signal_status='STALE' if a else 'UNAVAILABLE')
-                if a and state['fresh'] and a['direction'] in {'WAIT','BLOCK'}:state['status']='WAITING' if a['direction']=='WAIT' else 'DEGRADED'
-                agents.append(dict(agent_id=name,**state,result=a,heartbeat_ms=None,latency_ms=None))
+            analysis=analysis_projection(latest,health,now)
             return clean(dict(mode=mode,runtime_mode=runtime,configured_mode=mode,last_transition_ms=None,worker=health,allocation=allocation,
                 portfolio=portfolio.model_dump(mode='json') if portfolio else None,episodes=episode_views,actions=actions,
-                latest_decision=latest,agents=agents,agent_summary=agent_availability(agents),consensus=(latest or {}).get('consensus'),
+                latest_decision=latest,**analysis,
                 risk=actions[0]['risk'] if actions else None,analytics=performance(outcomes),calibration=calibrations,
                 execution={'pending':sum(r['status']=='SUBMITTING' for r in pending),'unknown':sum(r['status']=='UNKNOWN' for r in pending),
                     'partial':sum(r['status']=='PARTIAL' for r in pending),'reconciliation_backlog':len(pending)+sum(e['unresolved'] and not any(a['status'] in {'SUBMITTING','PARTIAL','UNKNOWN'} for a in e['actions']) for e in episode_views),
                     'last_error':next(({'code':'EXECUTION_UNKNOWN','intent_id':a['intent_id'],'timestamp':(a['receipt'] or {}).get('received_ms')} for a in actions if a['status']=='UNKNOWN'),None),
                     'last_success_ms':max(((a['receipt'] or {}).get('received_ms',0) for a in actions if (a['receipt'] or {}).get('reconciliation')=='CONFIRMED'),default=None)}))
+
+    def shared_analysis(self,modes):
+        """Network-public research, independent of displayed financial mode."""
+        latest=None;worker={};flow={}
+        try:
+            with reader(self.research_path) as db:
+                row=db.execute("SELECT body FROM intelligence_records WHERE network=? AND kind='DECISION' ORDER BY rowid DESC LIMIT 1",(self.scope.network,)).fetchone()
+                latest=body(row)
+                row=db.execute("SELECT body FROM component_health WHERE network=? AND component='leader_detection'",(self.scope.network,)).fetchone()
+                observation=body(row) or {}
+                # Successful scan in this same process + prior seven outputs.
+                # No claim of seven independent services or subscriptions.
+                if latest and {a['agent_id'] for a in latest.get('agents',[])}==set(AGENT_IDS):
+                    worker=dict(observation,status='UNHEALTHY' if observation.get('error') else 'HEALTHY',
+                        readiness_version='configured-worker-v1',ready_components=[*AGENT_IDS,'consensus'])
+                tail=db.execute("SELECT MAX(rowid),MAX(created) FROM intelligence_records WHERE network=? AND kind='DECISION'",(self.scope.network,)).fetchone()
+                flow={'latest_decision_seq':tail[0],'last_research_ms':tail[1]}
+                if latest:
+                    book=latest.get('book') or {};candles=latest.get('candles') or []
+                    flow.update(event=latest.get('event'),candle_count=len(candles),last_closed_candle_ms=candles[-1].get('T') if candles else None,
+                        book_exchange_ms=book.get('time'),book_depth_levels=[len(x) for x in book.get('levels',[])],
+                        evidence_time='CAPTURED_FOR_LAST_ANALYSIS_NOT_CURRENT_MARKET',order_flow='AGGRESSOR_TRADE_FLOW_UNAVAILABLE')
+        except (OSError,ValueError,KeyError,TypeError,sqlite3.Error):worker={}
+        # Explicit configured worker observation supports readiness before its
+        # first signal too. Only heartbeat/capabilities cross this boundary.
+        for m in modes:
+            h=m.get('worker',{})
+            if h.get('readiness_version')=='configured-worker-v1' and h.get('heartbeat_ms',0)>worker.get('heartbeat_ms',0):worker=h
+        return clean(dict(**analysis_projection(latest,worker,self.clock()),scope=self.scope.model_dump(mode='json'),
+            analysis_scope='PUBLIC_RESEARCH',input_evidence=flow,shared_across_modes=['OBSERVE','PAPER_AUTO','SHADOW','LIVE_CONFIRM']))
 
     def discovery(self):
         result={'status':'UNKNOWN','counts':None,'leaders':[],'coverage':{'meaning':'CURRENTLY_OBSERVED_OR_SUBSCRIBED_MARKETS','instruments':None}}
@@ -436,6 +493,10 @@ class ProductReadModel:
                 if name=='risk':
                     signal=runtime_risk_health(worker,m.get('risk'),m.get('execution',{}),self.clock())
                     m['risk_health']=dict(signal,mode=m['mode'])
+                if name=='consensus':signal=m.get('consensus_health',signal)
+                if name=='agents' and m.get('agent_summary',{}).get('available')==7:
+                    signal.update(status='ACTIVE' if m['agent_summary']['active'] else 'READY',heartbeat_ms=heartbeat,
+                        available=7,reasons=['WAITING_FOR_EVENT'] if not m['agent_summary']['active'] else [])
                 if components[name]['status']!='UNHEALTHY':components[name]=signal
         try:
             with reader(self.root/'data/product.sqlite3') as db:
@@ -453,7 +514,7 @@ class ProductReadModel:
                     reasons=list(components[name].get('reasons',[]))+['MANUAL_COPY_QUARANTINED_UNKNOWN'])
             if status=='HEALTHY':status='DEGRADED'
         return clean({'version':'product-v1','scope':self.scope.model_dump(mode='json'),'checked_ms':self.clock(),'live_auto':False,
-            'runtimes':modes,'account':account,'manual_copy':manual,'discovery':discovery,'health':{'status':status,'components':components},
+            'runtimes':modes,'analysis':self.shared_analysis(modes),'account':account,'manual_copy':manual,'discovery':discovery,'health':{'status':status,'components':components},
             'history_limit':100,'legacy_paper_substitution':False})
 
     def episode(self,episode_id):

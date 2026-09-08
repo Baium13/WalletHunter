@@ -53,7 +53,9 @@ def router(authenticate,resolve,event_service,backend_factory,market_reader=None
         if section in {'risk','consensus'}:
             return {'scope':s['scope'],'readiness':s['health']['components'][section],
                 'modes':{m['mode']:{'decision':m.get(fields[section]),'current_state':'PRESENT' if m.get(fields[section]) else 'NO_CURRENT_DECISION',
-                    'execution_authority':False} for m in s['runtimes']}}
+                    'execution_authority':False} for m in s['runtimes']},
+                'analysis':s['analysis'] if section=='consensus' else None}
+        if section=='agents':return {'scope':s['scope'],'modes':{m['mode']:m.get('agents') for m in s['runtimes']},'analysis':s['analysis']}
         return {'scope':s['scope'],'modes':{m['mode']:m.get(fields[section]) for m in s['runtimes']}}
 
     @api.put('/api/product/notification-preferences')

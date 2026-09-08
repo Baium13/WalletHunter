@@ -4,6 +4,7 @@
  const number=v=>typeof v==='number'&&Number.isFinite(v)?v:null;
  const modes=['OBSERVE','PAPER_AUTO','SHADOW','LIVE_CONFIRM'];
  const runtime=(s,m)=>(s?.runtimes||[]).find(r=>r.mode===m)||null;
+ const analysis=(s,m)=>{const own=runtime(s,m==='LIVE'?'LIVE_CONFIRM':m);return own?.agents?.length?own:s?.analysis||null;};
  const scopeKey=s=>JSON.stringify([s?.tenant,s?.account,s?.network]);
  const liveId=(s,p)=>JSON.stringify([scopeKey(s),p.instrument,p.side,[...(p.order_ids||[])].sort()]);
  function positions(s,m){
@@ -37,5 +38,5 @@
    confidence:number(c.confidence),wallet:typeof wallet==='string'&&/^0x[0-9a-f]{40}$/i.test(wallet)?wallet:null,
    technical:{event_id:event.id,correlation_id:e.correlation_id||p.correlation_id,intent_id:p.intent_id,type,evidence:d}};
  }
- const api={number,modes,runtime,scopeKey,liveId,positions,isOpen,timeline,curve,mergeEvents,proposalValid,candles,markers,activityEvent};if(typeof module==='object')module.exports=api;else root.WHModel=api;
+ const api={number,modes,runtime,analysis,scopeKey,liveId,positions,isOpen,timeline,curve,mergeEvents,proposalValid,candles,markers,activityEvent};if(typeof module==='object')module.exports=api;else root.WHModel=api;
 })(typeof window==='object'?window:globalThis);

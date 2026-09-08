@@ -137,6 +137,34 @@ class ProductTests(unittest.TestCase):
                        {'status':'UNHEALTHY'},{'quarantine_count':0},{'ready_components':[]}):
             self.assertNotEqual(runtime_risk_health(dict(worker,**broken),risk,execution,200000)['status'],'READY')
 
+    def test_idle_agents_keep_readiness_without_refreshing_old_signals(self):
+        from core.product_read import analysis_projection,AGENT_IDS
+        latest={'agents':[{'agent_id':n,'created_ms':1,'direction':'WAIT','instrument':{'symbol':'BTC'},
+            'evidence':['INSUFFICIENT_EVIDENCE'],'freshness':'UNKNOWN'} for n in AGENT_IDS],
+            'consensus':{'created_ms':1,'decision':'WAIT'}}
+        worker={'heartbeat_ms':200000,'readiness_version':'configured-worker-v1','status':'DEGRADED',
+            'quarantined_jobs':3,'ready_components':[*AGENT_IDS,'consensus']}
+        p=analysis_projection(latest,worker,200000)
+        self.assertEqual(p['agent_summary']['available'],7);self.assertEqual(p['agent_summary']['waiting'],7)
+        self.assertTrue(all(a['signal_status']=='STALE' and a['result']['created_ms']==1 for a in p['agents']))
+        self.assertEqual(p['consensus_health']['status'],'READY');self.assertFalse(p['consensus_health']['decision_fresh'])
+        self.assertFalse(p['execution_authority']);self.assertTrue(p['agents'][4]['missing_inputs'])
+        self.assertEqual(analysis_projection(latest,worker,300001)['agent_summary']['offline'],7)
+        self.assertEqual(analysis_projection(latest,dict(worker,status='UNHEALTHY'),200000)['agent_summary']['available'],0)
+
+    def test_public_analysis_available_without_execution_runtime(self):
+        b,r,_,view=self.setup_view()
+        self.case.worker.health_observation('leader_detection',b.clock(),details={'watched':1,'scanned':1})
+        readonly=ProductReadModel(self.root,view.scope,[],b.clock,research_path=self.case.worker.store.path)
+        s=readonly.snapshot();a=s['analysis']
+        self.assertEqual(len(a['agents']),7);self.assertEqual(a['agent_summary']['available'],7)
+        self.assertEqual(a['analysis_scope'],'PUBLIC_RESEARCH');self.assertFalse(a['execution_authority'])
+        self.assertEqual(s['runtimes'],[]);self.assertEqual(b.exchange.calls,0)
+        self.assertEqual(a['shared_across_modes'],['OBSERVE','PAPER_AUTO','SHADOW','LIVE_CONFIRM'])
+        self.assertGreater(a['input_evidence']['candle_count'],0)
+        other=ProductReadModel(self.root,view.scope.model_copy(update={'network':'MAINNET' if view.scope.network=='TESTNET' else 'TESTNET'}),[],b.clock,research_path=self.case.worker.store.path)
+        self.assertEqual(other.snapshot()['analysis']['agent_summary']['available'],0)
+
     def test_notification_preferences_strict_scoped_authenticated(self):
         b,r,_,v=self.setup_view();client,events=self.api(v);url='/api/product/notification-preferences';h={'x-telegram-init-data':'valid'}
         self.assertEqual(client.put(url,json={'OPEN':False}).status_code,401)

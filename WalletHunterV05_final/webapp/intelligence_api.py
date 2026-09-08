@@ -73,15 +73,19 @@ class ResearchView:
                     events.append({'seq':row['seq'],'kind':row['kind'],'created':row['created'],'body':body})
             now=int(time.time()*1000)
             running=bool(health and health['last_attempt'] is not None and 0<=now-health['last_attempt']<120000)
-            healthy=bool(health and health['last_success'] is not None and 0<=now-health['last_success']<120000 and not health['error'])
+            error_text=str(health['error'] or '') if health else ''
+            fatal_public=any(token in error_text for token in ('PUBLIC_STREAM_UNAVAILABLE','DISCOVERY_UNAVAILABLE'))
+            public_active=bool(running and not fatal_public)
+            healthy=bool(public_active and not error_text)
             reason=health['error'] if health and health['error'] else ('READY_NO_CURRENT_EVENT' if running else 'WORKER_NOT_STARTED')
-            worker_status='ACTIVE' if healthy else 'DEGRADED' if running else 'WAITING'
+            worker_status='ACTIVE' if public_active else 'DEGRADED' if running else 'WAITING'
+            deep_status='DEGRADED' if any(token in error_text for token in ('HISTORY_INCOMPLETE','RESEARCH_DEFERRED')) else 'READY' if running else 'WAITING'
             agent_status={'status':'READY' if running else 'OFFLINE','ready':7 if running else 0,'active':0,'total':7}
             counts=dict(counts)
             counts.setdefault('OBSERVED',sum(counts.values()))
             components={'public_data':{'status':worker_status,'last_success':health['last_success'] if health else None,'reason':reason},
                 'discovery':{'status':worker_status,'last_success':health['last_success'] if health else None,'reason':reason},
-                'deep_analysis':{'status':'READY' if running else 'WAITING','last_success':health['last_success'] if health else None,'reason':'WAITING FOR CANDIDATE' if running else reason},
+                'deep_analysis':{'status':deep_status,'last_success':health['last_success'] if health else None,'reason':'WAITING FOR CANDIDATE' if running and deep_status == 'READY' else reason},
                 'watchlist':{'status':'READY' if running else 'WAITING','detail':f"{counts.get('ACTIVE',0)} ACTIVE"},
                 'leader_detection':{'status':'READY' if running else 'WAITING','detail':'WAITING FOR FRESH FILL' if running else reason},
                 'agents':agent_status,'consensus':{'status':'READY' if running else 'WAITING','detail':'NO CURRENT DECISION' if running else reason},

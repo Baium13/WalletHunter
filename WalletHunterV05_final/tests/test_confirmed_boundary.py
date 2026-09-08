@@ -153,7 +153,7 @@ class ConfirmedBoundaryTests(unittest.TestCase):
 
     def test_actual_ai_position_service_uses_gateway_and_preserves_fill_proof(self):
         from test_ai_position_actions import PositionActionTests, NOW
-        for action in ('REDUCE','AVERAGE'):
+        for action in ('REDUCE','AVERAGE','PARTIAL'):
             with self.subTest(action=action):
                 case=PositionActionTests();case.setUp()
                 try:
@@ -169,16 +169,18 @@ class ConfirmedBoundaryTests(unittest.TestCase):
                     saved=case.service.journal.owned(boundary.address)['ETH|']
                     op=case.service.journal.prepare(boundary.address,'ETH|',{'network':'TESTNET'})
                     case.service.journal.finish(op,{'ok':True},dict(saved,network='TESTNET'))
-                    proposal=case.proposal(action)
+                    proposal=case.proposal('AVERAGE' if action=='PARTIAL' else action)
+                    if action=='PARTIAL':boundary.fill_fraction=.5
                     def context(payload):
                         return build_context(boundary,tenant='139',coin='ETH',action=payload['action'],source=payload['source_wallet'],
                             settings=self.settings,profile=case.profile,journal=case.service.journal,request=payload)
                     with patch('time.time',lambda:(NOW+1000)/1000):
                         result=case.service.decide('139',proposal['id'],True,case.profile,case.public,lambda:boundary,
                             case.persist,NOW+1000,canonical_context=context)
-                    self.assertEqual(result['status'],'FILLED',result)
+                    self.assertEqual(result['status'],'PARTIAL' if action=='PARTIAL' else 'FILLED',result)
+                    self.assertEqual(bool(case.service.journal.pending(boundary.address)),action=='PARTIAL')
                     saved=case.service.journal.owned(boundary.address)['ETH|']
-                    self.assertEqual(saved['execution_evidence']['intent_id'],proposal['id']+('-add' if action=='AVERAGE' else '-reduce'))
+                    self.assertEqual(saved['execution_evidence']['intent_id'],proposal['id']+('-reduce' if action=='REDUCE' else '-add'))
                     self.assertTrue(saved['execution_evidence']['trade_ids'])
                     self.assertEqual(saved['source_targets'][0]['wallet'],proposal['payload']['source_wallet'])
                 finally:case.doCleanups()

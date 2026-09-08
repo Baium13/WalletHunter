@@ -314,6 +314,26 @@ class ManualCopyWorkerTests(unittest.TestCase):
         self.leaders[self.f.SOURCE_A]['BTC']=(5000.,'LONG',5);self.assert_action('REDUCE')
         self.leaders[self.f.SOURCE_A]={};self.assert_action('CLOSE')
         self.assertFalse(self.client.rows)
+    def test_actual_desktop_watcher_consumes_start_with_legacy_copy_disabled(self):
+        import ast
+        import asyncio
+        from pathlib import Path
+        source=Path(__file__).parents[1]/'desktop/main.py'
+        node=next(n for n in ast.parse(source.read_text(encoding='utf-8')).body
+            if isinstance(n,ast.AsyncFunctionDef) and n.name=='watcher_cycle')
+        messages=[]
+        env={'asyncio':asyncio,'engine':self.case.engine,'reader':self.reader,'store':self.case.store,
+             'account_client':lambda uid,profile:self.client,'print':lambda *args:messages.append(args)}
+        exec(compile(ast.Module(body=[node],type_ignores=[]),str(source),'exec'),env)
+        asyncio.run(env['watcher_cycle']())
+        self.assertFalse(messages,messages)
+        self.assertAlmostEqual(self.client.rows[('BTC','')]['margin_used'],8.)
+    def test_same_leader_other_instrument_keeps_consuming_allocation(self):
+        self.assert_action('OPEN')
+        self.leaders[self.f.SOURCE_A]['ETH']=(100000.,'LONG',5)
+        report=self.cycle()
+        self.assertEqual(report['results'][-1]['status'],'FILLED',report)
+        self.assertLessEqual(sum(p['margin_used'] for p in self.client.rows.values()),80.)
     def test_stop_holds_and_retains_monitoring(self):
         self.assert_action('OPEN');calls=len(self.client.calls)
         self.worker.service.stop(self.account,self.client);self.leaders[self.f.SOURCE_A]={}
@@ -355,6 +375,30 @@ class ManualCopyWorkerTests(unittest.TestCase):
         calls=len(self.client.calls);report=self.cycle()
         self.assertEqual(len(self.client.calls),calls)
         self.assertEqual(report['recovery'][0]['status'],'FILLED')
+    def test_restart_after_receipt_before_journal_projection(self):
+        from unittest.mock import patch
+        with patch.object(self.case.engine.journal,'finish',side_effect=RuntimeError('crash after receipt')):
+            self.cycle()
+        self.assertTrue(self.client.rows)
+        calls=len(self.client.calls)
+        report=self.cycle()
+        self.assertEqual(report['recovery'][0]['status'],'FILLED',report)
+        self.assertEqual(len(self.client.calls),calls)
+        self.assertFalse(self.case.engine.journal.pending(self.f.ACCOUNT))
+    def test_reverse_rejected_entry_preserves_proven_flat(self):
+        self.assert_action('OPEN')
+        self.leaders[self.f.SOURCE_A]['BTC']=(20000.,'SHORT',5)
+        original=self.client.market_close
+        def close(*args,**kwargs):
+            response=original(*args,**kwargs)
+            self.client.available_margin=lambda dex:0.
+            return response
+        self.client.market_close=close
+        report=self.cycle()
+        self.assertEqual(report['results'][0]['status'],'REJECTED',report)
+        self.assertFalse(self.client.rows)
+        self.assertFalse(self.case.engine.journal.pending(self.f.ACCOUNT))
+        self.assertFalse(self.case.engine.journal.owned(self.f.ACCOUNT)['BTC|']['managed'])
     def test_reverse_uses_new_target_after_verified_close(self):
         self.assert_action('OPEN');self.leaders[self.f.SOURCE_A]['BTC']=(20000.,'SHORT',5)
         self.assert_action('REVERSE')

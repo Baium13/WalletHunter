@@ -96,9 +96,16 @@ class ManualCopyWorker:
             leaders={config.leader}
             for r in manual.values():
                 leaders.update(x['wallet'] for x in r.get('source_targets',[]))
-            if len(leaders)>self.MAX_LEADERS:raise ValueError('LIFECYCLE_WATCH_LIMIT')
+            # Keep admission bounded and rotate old HOLD leaders, so adding
+            # retained sources cannot permanently starve later lifecycle reads.
+            old_leaders=sorted(leaders-{config.leader})
+            previous=self.diagnostics(scope) or {}
+            cursor=int(previous.get('lifecycle_cursor',0))%max(1,len(old_leaders))
+            rotated=old_leaders[cursor:]+old_leaders[:cursor]
+            leaders=[config.leader]+rotated[:self.MAX_LEADERS-1]
+            report['lifecycle_cursor']=(cursor+self.MAX_LEADERS-1)%max(1,len(old_leaders))
             evidence={}
-            for leader in sorted(leaders):
+            for leader in leaders:
                 try:
                     evidence[leader]=self.leader_snapshot(leader)
                     report['monitored'].append(dict(leader=leader,mode='ADMISSION' if config.enabled and leader==config.leader else 'POSITION_HOLD',

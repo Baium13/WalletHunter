@@ -615,7 +615,8 @@ class AiPositionActions:
                 if canonical_context is None and "signed" in ownership["source_targets"][0]:
                     ownership["source_targets"][0]["signed"] = _number(ownership["source_targets"][0]["signed"], "source_signed", -math.inf)*ratio
             try:
-                self.journal.finish(operation, {"ok": ownership is not None, "status": status, **result}, ownership)
+                self.journal.finish(operation, {"ok": status=='FILLED' if canonical_context is not None else ownership is not None,
+                    "status": status, **result}, ownership)
             except Exception:
                 pass  # Pending journal is a separate fail-closed exclusion.
         runtime.setdefault("ai_position_action_holds", {})[key] = {"proposal_id": proposal_id, "status": status, "operation_id": operation}

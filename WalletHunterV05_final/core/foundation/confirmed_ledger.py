@@ -39,6 +39,8 @@ class ConfirmedLedger:
                         and math.isclose(float(old.get('entry_price',-1)),p.entry_price,rel_tol=1e-8)):
                     self.errors.append('OWNERSHIP_UNPROVEN'); continue
                 weights = record.get('source_targets') or []
+                if any((signed_weight(x)>0)!=(p.side=='LONG') for x in weights):
+                    raise ValueError('attribution direction')
                 total = math.fsum(abs(signed_weight(x)) for x in weights)
                 share = math.fsum(abs(signed_weight(x)) for x in weights if x['wallet'] == source)
                 if not math.isfinite(total) or total <= 0 or p.margin is None: raise ValueError('attribution')

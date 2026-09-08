@@ -292,7 +292,7 @@ def _canonical_position(engine, scope, coin, dex):
     return {'coin': f"{dex+':' if dex else ''}{symbol}", 'dex': dex or '',
             'side': row.side, 'size': row.size, 'entry_price': row.entry_price,
             'position_value': row.notional, 'leverage': row.leverage,
-            'margin_used': row.margin}
+            'margin_used': row.margin, 'snapshot_started_ms': portfolio.received_ms}
 
 
 def _finish_manual(engine, operation, receipt, client, spec, coin, dex, *, finalize=True):
@@ -306,6 +306,13 @@ def _finish_manual(engine, operation, receipt, client, spec, coin, dex, *, final
     position = _canonical_position(engine, receipt.scope, coin, dex)
     managed = position is not None and float(position.get('size', 0) or 0) > 0
     if receipt.status == 'REJECTED':
+        # A reverse may have already proven its CLOSE before the opposite
+        # entry is rejected. Preserve that fill, rather than stranding stale
+        # ownership or pretending the whole reverse had an unknown outcome.
+        close=_canonical_receipt(engine,operation+'-close')
+        if (position is None and close is not None and close.scope==receipt.scope
+                and close.status=='FILLED' and close.provenance=='EXCHANGE' and close.fills):
+            return _finish_manual(engine,operation,close,client,dict(spec,action='CLOSE'),coin,dex)
         outcome = {'ok': False, 'action': spec.get('action', 'MANUAL_LEADER'),
                    'execution_evidence': {'intent_id': receipt.intent_id,
                                           'network': receipt.scope.network}}
@@ -491,7 +498,11 @@ def recover_pending_manual_leader(engine, account, client, *, limit=3):
             "FROM intents i JOIN intent_prestate p ON p.id=i.id JOIN policies r "
             "ON r.hash=json_extract(i.decision,'$.policy_hash') JOIN operations o "
             "ON o.id=json_extract(i.body,'$.parent_intent_id') "
-            "WHERE i.scope=? AND i.status IN ('SUBMITTING','UNKNOWN','PARTIAL') LIMIT ?",
+            "WHERE i.scope=? AND json_extract(o.intent,'$.strategy')='MANUAL_LEADER_COPY' "
+            "AND o.status IN ('PREPARED','UNKNOWN') AND (i.status IN ('SUBMITTING','UNKNOWN','PARTIAL') "
+            "OR (i.status IN ('FILLED','CONFIGURED','REJECTED') AND NOT EXISTS "
+            "(SELECT 1 FROM intents sibling WHERE json_extract(sibling.body,'$.parent_intent_id')=o.id "
+            "AND sibling.status IN ('SUBMITTING','UNKNOWN','PARTIAL')))) ORDER BY o.created,i.rowid DESC LIMIT ?",
             (scope_key(scope), limit)).fetchall()
     recovered = []
     for row in rows:

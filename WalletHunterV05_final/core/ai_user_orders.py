@@ -665,7 +665,7 @@ class AiUserOrders:
         self._write_result(proposal_id, status, result, now, operation)
         if operation:
             try:
-                self.journal.finish(operation, {"ok": status in ("FILLED", "PARTIAL", "REJECTED"),
+                self.journal.finish(operation, {"ok": status == 'FILLED' if canonical_context is not None else status in ("FILLED", "PARTIAL", "REJECTED"),
                     "status": status, "proposal_id": proposal_id, **result})  # No ordinary copy ownership.
             except Exception:
                 # Existing journal PREPARED/UNKNOWN remains a conservative hold.

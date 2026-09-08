@@ -634,6 +634,8 @@ def configure_manual_copy(payload: ManualCopyInput, x_telegram_init_data: str | 
             config = controller.configure(scoped, client, leader, allocation, alias=leader)
             if payload.action == "start": config = controller.start(scoped, client)
             elif payload.action == "stop": config, _ = controller.stop(scoped, client)
+    except OSError:
+        raise HTTPException(409, "Account action in progress; refresh before changing Manual Copy") from None
     except (ValueError, TypeError) as exc:
         raise HTTPException(400, str(exc)) from None
     return {"configured": True, "enabled": bool(config.enabled), "allocation_pct": config.allocation_pct,

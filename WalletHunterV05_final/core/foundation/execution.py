@@ -232,7 +232,7 @@ class ExecutionGateway:
                 if old["scope"] != scope_key(intent.scope) or old["body"] != encoded(intent): raise ValueError("Immutable intent collision")
                 return ExecutionReceipt.model_validate_json(old["receipt"]) if old["receipt"] else self._unknown(intent, now, "SUBMITTING")
             before = self.store.portfolio_in(db, intent.scope)
-            pending = db.execute("SELECT reservation FROM intents WHERE scope=? AND status IN ('SUBMITTING','UNKNOWN')", (scope_key(intent.scope),)).fetchall()
+            pending = db.execute("SELECT reservation FROM intents WHERE scope=? AND (status IN ('SUBMITTING','UNKNOWN') OR (status='PARTIAL' AND json_extract(body,'$.version')=4))", (scope_key(intent.scope),)).fetchall()
             reservations = [Reservation(**json.loads(r[0])) for r in pending] if intent.version != 2 else []
             grant = db.execute("SELECT intent_hash FROM grants WHERE id=? AND scope=?", (intent.intent_id, scope_key(intent.scope))).fetchone()
             ledger = Ledger(before, self.risk.policy.sources, reservations) if intent.version == 1 else copy_ledger

@@ -40,7 +40,7 @@ class ResearchView:
             with closing(sqlite3.connect(self.path.resolve().as_uri()+'?mode=ro',uri=True,timeout=.2)) as db:
                 db.row_factory=sqlite3.Row
                 db.execute('PRAGMA query_only=ON')
-                health=db.execute('SELECT last_success,error FROM intelligence_health WHERE network=?',(self.network,)).fetchone()
+                health=db.execute('SELECT last_success,last_attempt,error FROM intelligence_health WHERE network=?',(self.network,)).fetchone()
                 counts={r[0]:r[1] for r in db.execute('SELECT status,COUNT(*) FROM candidates WHERE network=? GROUP BY status',(self.network,))}
                 leaders=[]
                 for row in db.execute('SELECT wallet,status,score,confidence,last_seen,analysis FROM candidates WHERE network=? ORDER BY score DESC,wallet LIMIT 32',(self.network,)):

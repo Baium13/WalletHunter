@@ -104,6 +104,7 @@ class WalletDiscoveryEngine:
                     PRIMARY KEY(network,wallet));
                 CREATE TABLE IF NOT EXISTS intelligence_records(id TEXT PRIMARY KEY,network TEXT,kind TEXT,created INTEGER,body TEXT);
                 CREATE INDEX IF NOT EXISTS intelligence_created ON intelligence_records(network,created);
+                CREATE INDEX IF NOT EXISTS intelligence_actionable ON intelligence_records(network,kind);
                 CREATE TABLE IF NOT EXISTS intelligence_health(network TEXT PRIMARY KEY,last_success INTEGER,last_attempt INTEGER,error TEXT,errors INTEGER);
                 CREATE TABLE IF NOT EXISTS intelligence_lease(network TEXT PRIMARY KEY,owner TEXT,until_ms INTEGER);
                 CREATE TABLE IF NOT EXISTS decision_links(event_id TEXT PRIMARY KEY,record_id TEXT NOT NULL);

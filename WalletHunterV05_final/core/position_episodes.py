@@ -33,10 +33,15 @@ class EpisodeService:
                 CREATE TABLE IF NOT EXISTS episode_actions(id TEXT PRIMARY KEY,episode TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS autonomous_outcomes(id TEXT PRIMARY KEY,scope TEXT NOT NULL,mode TEXT NOT NULL,body TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS calibration_records(id TEXT PRIMARY KEY,scope TEXT NOT NULL,body TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS hypothetical_executions(id TEXT PRIMARY KEY,scope TEXT NOT NULL,body TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS episode_transitions(seq INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT UNIQUE NOT NULL,
                     episode TEXT NOT NULL,state TEXT NOT NULL,evidence TEXT NOT NULL);
                 CREATE TRIGGER IF NOT EXISTS episode_history_immutable BEFORE UPDATE ON episode_transitions BEGIN SELECT RAISE(ABORT,'immutable history'); END;
                 CREATE TRIGGER IF NOT EXISTS episode_history_retained BEFORE DELETE ON episode_transitions BEGIN SELECT RAISE(ABORT,'immutable history'); END;
+                CREATE TRIGGER IF NOT EXISTS outcome_immutable BEFORE UPDATE ON autonomous_outcomes BEGIN SELECT RAISE(ABORT,'immutable outcome'); END;
+                CREATE TRIGGER IF NOT EXISTS outcome_retained BEFORE DELETE ON autonomous_outcomes BEGIN SELECT RAISE(ABORT,'immutable outcome'); END;
+                CREATE TRIGGER IF NOT EXISTS calibration_immutable BEFORE UPDATE ON calibration_records BEGIN SELECT RAISE(ABORT,'immutable evaluation'); END;
+                CREATE TRIGGER IF NOT EXISTS calibration_retained BEFORE DELETE ON calibration_records BEGIN SELECT RAISE(ABORT,'immutable evaluation'); END;
             """)
 
     def prepare_in(self,db,body,intent):
@@ -76,7 +81,18 @@ class EpisodeService:
         if old: return # Projection is idempotent, never appends repeated UNKNOWN.
         db.execute('INSERT INTO episode_transitions(id,episode,state,evidence) VALUES(?,?,?,?)',
             (key,episode.episode_id,state,value))
-        updated=PositionEpisode.model_validate(dict(episode.model_dump(),state=state))
+        current=PositionEpisode.model_validate_json(db.execute('SELECT body FROM position_episodes WHERE id=?',(episode.episode_id,)).fetchone()[0])
+        # These are action stages/outcomes, not evidence that an existing
+        # position disappeared. Only reconciled effects change its lifecycle.
+        if action_id!=episode.episode_id and state in {'PROPOSED','AUTHORIZED','RESERVED','SUBMITTED','REJECTED'}:
+            if state=='REJECTED' and current.state in {'UNKNOWN','RECONCILIATION_REQUIRED'}:
+                stable=db.execute("SELECT state FROM episode_transitions WHERE episode=? AND id NOT LIKE ? AND state IN ('OPEN','INCREASED','REDUCED','PARTIAL') ORDER BY seq DESC LIMIT 1",
+                    (episode.episode_id,action_id+'-%')).fetchone()
+                if stable:
+                    db.execute('UPDATE position_episodes SET body=? WHERE id=?',
+                        (encoded(current.model_copy(update={'state':stable[0]})),episode.episode_id))
+            return
+        updated=PositionEpisode.model_validate(dict(current.model_dump(),state=state))
         db.execute('UPDATE position_episodes SET body=? WHERE id=?',(encoded(updated),episode.episode_id))
 
     def sync(self,decision_id,scope):
@@ -99,12 +115,6 @@ class EpisodeService:
             final=db.execute('SELECT body FROM position_episodes WHERE id=?',(episode.episode_id,)).fetchone()
             episode=PositionEpisode.model_validate_json(final[0])
             if episode.state=='CLOSED':
-                oid=episode.episode_id+'-outcome'
-                outcome={'episode_id':episode.episode_id,'mode':episode.mode,'state':'CLOSED',
-                    'decision_id':episode.episode_id,'recorded_ms':episode.created_ms,'evidence':'PAPER_OR_SHADOW'}
-                db.execute('INSERT OR IGNORE INTO autonomous_outcomes VALUES(?,?,?,?)',
-                    (oid,scope_key(scope),episode.mode,json.dumps(outcome,sort_keys=True,allow_nan=False)))
-                db.execute('INSERT OR IGNORE INTO calibration_records VALUES(?,?,?)',
-                    (oid,scope_key(scope),json.dumps({'outcome_id':oid,'version':'calibration-v1',
-                        'leader':episode.leader,'decision':episode.episode_id,'sample_count':1},sort_keys=True)))
+                from core.autonomous_outcomes import record_outcome
+                record_outcome(db,episode)
             return episode

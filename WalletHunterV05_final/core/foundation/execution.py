@@ -10,6 +10,7 @@ from typing import Literal
 from .contracts import Contract, Scope, Fill, PortfolioSnapshot, Position, Contribution, ExecutionReceipt, DomainEvent, OrderIntent
 from .ledger import Ledger, Reservation
 from .store import Store, encoded, digest, scope_key
+from .paper_costs import PaperCosts,costed_effect
 
 
 class ExchangeReport(Contract):
@@ -19,6 +20,7 @@ class ExchangeReport(Contract):
     terminal: bool
     fills: tuple[Fill, ...]
     after: PortfolioSnapshot
+    cost_model: PaperCosts | None = None
 
 
 def reconcile(intent, before, report, now):
@@ -42,6 +44,13 @@ def reconcile(intent, before, report, now):
                or f.side != intent.side or not intent.created_ms <= f.exchange_ms < intent.expires_ms
                or (f.price > intent.limit_price if intent.side == "BUY" else f.price < intent.limit_price) for f in fills):
             return unknown()
+        if report.cost_model is not None:
+            if report.after!=costed_effect(intent,before,fills,report.after.received_ms,report.cost_model) or report.after.received_ms>now:
+                return unknown()
+            filled=math.fsum(f.size for f in fills)
+            status='REJECTED' if not filled else 'PARTIAL' if filled<intent.size else 'FILLED'
+            return ExecutionReceipt(intent_id=intent.intent_id,scope=intent.scope,status=status,order_ids=(report.order_id,),
+                fills=fills,reconciliation='CONFIRMED' if status=='FILLED' else status,received_ms=now,provenance='FAKE_EXCHANGE')
         if intent.action in {'ADD','REDUCE','CLOSE'}:
             from .paper_effect import effect
             if report.after != effect(intent,before,fills,report.after.received_ms) or report.after.received_ms>now:
@@ -90,8 +99,20 @@ class FakeExchange:
         self.storage = Store(path)
         self.behavior = "FILLED"
         self.calls = 0
+        self.cost_model=None
         with self.storage.transaction() as db:
             db.execute("CREATE TABLE IF NOT EXISTS fake_orders(id TEXT PRIMARY KEY,intent TEXT,report TEXT)")
+            db.execute('CREATE TABLE IF NOT EXISTS fake_cost_model(id INTEGER PRIMARY KEY,body TEXT)')
+            saved=db.execute('SELECT body FROM fake_cost_model WHERE id=1').fetchone()
+            if saved:self.cost_model=PaperCosts.model_validate_json(saved[0])
+
+    def configure_costs(self,model):
+        model=PaperCosts.model_validate_json(model.model_dump_json())
+        with self.storage.transaction() as db:
+            old=db.execute('SELECT body FROM fake_cost_model WHERE id=1').fetchone()
+            if old and old[0]!=encoded(model):raise ValueError('New cost model requires a separate simulation namespace')
+            db.execute('INSERT OR IGNORE INTO fake_cost_model VALUES(1,?)',(encoded(model),))
+        self.cost_model=model
 
     def submit(self, intent, before, now):
         if intent.execution_mode not in {"FAKE", "PAPER"}: raise ValueError("Fake exchange only")
@@ -123,6 +144,10 @@ class FakeExchange:
                 after = PortfolioSnapshot.model_validate(dict(before.model_dump(), positions=positions,
                     available_collateral=before.available_collateral-margin, revision=before.revision+1, received_ms=now, exchange_ms=now))
             report = ExchangeReport(intent_hash=digest(intent), scope=intent.scope, order_id=oid, terminal=True, fills=fills, after=after)
+            if self.cost_model is not None:
+                after=costed_effect(intent,before,fills,now,self.cost_model)
+                if self.behavior=='EXTERNAL_CHANGE':after=after.model_copy(update={'available_collateral':after.available_collateral+1})
+                report=report.model_copy(update={'after':after,'cost_model':self.cost_model})
             db.execute("INSERT INTO fake_orders VALUES(?,?,?)", (intent.intent_id, encoded(intent), encoded(report)))
         if self.behavior == "ACK_LOSS": raise TimeoutError("Synthetic acknowledgement loss")
         return report
@@ -232,7 +257,7 @@ class ExecutionGateway:
                 if old["scope"] != scope_key(intent.scope) or old["body"] != encoded(intent): raise ValueError("Immutable intent collision")
                 return ExecutionReceipt.model_validate_json(old["receipt"]) if old["receipt"] else self._unknown(intent, now, "SUBMITTING")
             before = self.store.portfolio_in(db, intent.scope)
-            pending = db.execute("SELECT reservation FROM intents WHERE scope=? AND (status IN ('SUBMITTING','UNKNOWN') OR (status='PARTIAL' AND json_extract(body,'$.version')=4))", (scope_key(intent.scope),)).fetchall()
+            pending = db.execute("SELECT reservation FROM intents WHERE scope=? AND status IN ('SUBMITTING','UNKNOWN','PARTIAL')", (scope_key(intent.scope),)).fetchall()
             reservations = [Reservation(**json.loads(r[0])) for r in pending] if intent.version != 2 else []
             grant = db.execute("SELECT intent_hash FROM grants WHERE id=? AND scope=?", (intent.intent_id, scope_key(intent.scope))).fetchone()
             ledger = Ledger(before, self.risk.policy.sources, reservations) if intent.version == 1 else copy_ledger
@@ -283,6 +308,8 @@ class ExecutionGateway:
 
     def _settle(self, intent, before, report):
         now = self.clock()
+        if intent.version==1 and report is not None and report.cost_model!=self.__exchange.cost_model:
+            report=None  # A response cannot select a cheaper simulation model.
         receipt = (report.receipt if report is not None else self._unknown(intent, now)) if intent.version in (2,3,4) else reconcile(intent, before, report, now)
         with self.store.transaction() as db:
             row = db.execute("SELECT status,receipt FROM intents WHERE id=? AND scope=?", (intent.intent_id, scope_key(intent.scope))).fetchone()
@@ -290,7 +317,15 @@ class ExecutionGateway:
             if row["status"] not in {"SUBMITTING", "UNKNOWN", "PARTIAL"}:
                 return ExecutionReceipt.model_validate_json(row["receipt"])
             current = self.store.portfolio_in(db, intent.scope)
-            if current != before and intent.version == 1: receipt = self._unknown(intent, now)
+            if current != before and intent.version == 1:
+                previous=ExecutionReceipt.model_validate_json(row['receipt']) if row['receipt'] else None
+                if previous and previous.status=='PARTIAL' and report is not None:
+                    # Repeated partial evidence is query-only and idempotent.
+                    if current==report.after:return previous
+                    prior=(costed_effect(intent,before,previous.fills,current.received_ms,report.cost_model)
+                        if report.cost_model else __import__('core.foundation.paper_effect',fromlist=['effect']).effect(intent,before,previous.fills,current.received_ms))
+                    if current!=prior.model_copy(update={'revision':current.revision}):receipt=self._unknown(intent,now)
+                else:receipt = self._unknown(intent, now)
             if intent.version in (2,3,4) and report is not None and report.after.revision <= current.revision:
                 # A repeated query may return the same durable partial
                 # snapshot. Preserve that proven partial state instead of
@@ -302,6 +337,8 @@ class ExecutionGateway:
             if intent.version in (3,4) and current != before: receipt = self._unknown(intent, now)
             if receipt.status != "UNKNOWN":
                 after = report.after
+                if intent.version==1 and after.revision<=current.revision:
+                    after=after.model_copy(update={'revision':current.revision+1})
                 if intent.version==4 and receipt.status in {'FILLED','PARTIAL'}:
                     from .confirmed_ledger import project_receipt_in
                     after=project_receipt_in(db,intent,before,after,receipt)
@@ -321,6 +358,12 @@ class ExecutionGateway:
                 self._event(db, intent, kind, receipt, now)
             if status_changed and receipt.status in {"FILLED", "PARTIAL"}:
                 self._event(db, intent, {'OPEN':'POSITION_OPENED','ADD':'POSITION_INCREASED','REDUCE':'POSITION_REDUCED','CLOSE':'POSITION_CLOSED' if receipt.status == 'FILLED' else 'POSITION_REDUCED'}[intent.action], receipt, now)
+            if receipt.status=='PARTIAL' and intent.authorization=='PAPER_POLICY':
+                remaining=max(0.,intent.size-math.fsum(f.size for f in receipt.fills))
+                value=remaining*intent.limit_price
+                reservation=dict(intent_id=intent.intent_id,source=intent.source,margin=value/intent.leverage,
+                    account_capacity=value/intent.leverage+value*self.risk.policy.fee_buffer_pct/100)
+                db.execute('UPDATE intents SET reservation=? WHERE id=?',(json.dumps(reservation),intent.intent_id))
             db.execute("UPDATE intents SET status=?,receipt=? WHERE id=?", (receipt.status, encoded(receipt), intent.intent_id))
         return receipt
 

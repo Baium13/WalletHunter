@@ -63,7 +63,7 @@ class BackupRuntimeTests(unittest.TestCase):
         self.assertEqual(summary["old_backups_deleted"], 0)
         self.assertEqual(summary["databases"], 3)
         with tarfile.open(output, "r:gz") as archive:
-            self.assertEqual(set(archive.getnames()), {"data/state.json", ".env", *self.databases})
+            self.assertEqual(set(archive.getnames()), {"data/state.json", ".env", 'backup-manifest.json', *self.databases})
             self.assertEqual(archive.extractfile("data/state.json").read(), self.state)
             self.assertEqual(archive.extractfile(".env").read(), self.keys)
             for index, relative in enumerate(self.databases):
@@ -78,6 +78,30 @@ class BackupRuntimeTests(unittest.TestCase):
         old.write_bytes(b"unchanged older backup")
         self.run_backup()
         self.assertEqual(old.read_bytes(), b"unchanged older backup")
+
+    def test_explicit_manifest_rejects_omitted_or_missing_required_store(self):
+        entries=[dict(path=name,archive=name,kind='sqlite',required=True) for name in self.databases]
+        entries+=[dict(path='data/state.json',archive='data/state.json',kind='state',required=True),
+                  dict(path='.env',archive='.env',kind='file',required=True)]
+        manifest=self.root/'runtime-state-manifest.json'
+        manifest.write_text(json.dumps({'version':1,'artifacts':entries[:-1]}))
+        with self.assertRaisesRegex(ValueError,'omits'):self.run_backup()
+        entries.append(dict(path='missing.research',archive='research.store',kind='sqlite',required=True))
+        manifest.write_text(json.dumps({'version':1,'artifacts':entries}))
+        with self.assertRaisesRegex(ValueError,'missing'):self.run_backup()
+        self.assertEqual(list((self.root/'backups').iterdir()),[])
+
+    def test_nonstandard_extension_is_detected_by_sqlite_header(self):
+        with closing(sqlite3.connect(self.root/'data'/'custom.state')) as db:
+            db.execute('CREATE TABLE owned(id TEXT)');db.commit()
+        archive,result=self.run_backup()
+        with tarfile.open(archive) as tar:self.assertIn('data/custom.state',tar.getnames())
+        self.assertEqual(result['databases'],4)
+
+    def test_restore_refuses_nonempty_directory_and_preserves_it(self):
+        archive,_=self.run_backup();target=self.root/'restore';target.mkdir();(target/'keep').write_text('keep')
+        with self.assertRaisesRegex(ValueError,'empty'):self.module.restore(archive,target)
+        self.assertEqual((target/'keep').read_text(),'keep')
 
     def test_backups_created_in_same_second_do_not_overwrite_each_other(self):
         fixed = datetime(2026, 9, 6, 12, 0, 0, tzinfo=timezone.utc)

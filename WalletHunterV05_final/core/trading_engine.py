@@ -8,7 +8,14 @@ from dataclasses import asdict
 from core.execution_journal import ExecutionJournal
 from core.source_allocation import SourceAllocationBook
 from core.capital_snapshot import finite_amount
-from core.settings import validated_network
+try:
+    from core.settings import validated_network
+except ImportError:  # isolated test/runtime loaders may provide only Settings.load
+    def validated_network(mode):
+        value = str(mode).strip().upper()
+        if value not in {"MAINNET", "TESTNET"}:
+            raise ValueError("HL_MODE must be MAINNET or TESTNET")
+        return value
 from core.ai_user_orders import AiUserOrders
 from core.ai_position_actions import AiPositionActions
 from core.ai_review import account_guard, market_key

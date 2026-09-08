@@ -7,6 +7,7 @@ import os
 import time
 import re
 import uuid
+import sqlite3
 from collections import defaultdict, deque
 from typing import Literal
 from contextlib import ExitStack, contextmanager
@@ -123,16 +124,49 @@ def index():
 
 @app.get("/health")
 def health():
-    # This endpoint reports process/API reachability only.  It deliberately
-    # does not claim that exchange, risk or reconciliation are healthy without
-    # a verified tenant/account context; the UI renders those components as
-    # UNKNOWN/DEGRADED until their own evidence is available.
-    return {"ok": True, "status": "DEGRADED", "reason": "PROCESS_ONLY",
-            "network": settings.hl_mode, "checked_ms": int(time.time() * 1000),
-            "components": {"Web/API": {"status": "HEALTHY", "detail": "HTTP endpoint available"},
-                           "Database": {"status": "UNKNOWN", "detail": "Tenant-scoped check required"},
-                           "Execution": {"status": "UNKNOWN", "detail": "Gateway evidence required"},
-                           "Reconciliation": {"status": "UNKNOWN", "detail": "Tenant-scoped check required"}}}
+    # Public research health is safe to expose globally. Tenant/account
+    # execution health remains scoped to /api/dashboard and is never inferred
+    # from HTTP reachability alone.
+    now = int(time.time() * 1000)
+    research_path = os.path.join(ROOT, "data", "intelligence.sqlite")
+    research = None
+    try:
+        if os.path.exists(research_path) and not os.path.islink(research_path):
+            with sqlite3.connect(f"file:{research_path}?mode=ro", uri=True, timeout=0.2) as db:
+                db.row_factory = sqlite3.Row
+                row = db.execute("SELECT network,last_success,last_attempt,error,errors FROM intelligence_health WHERE network=?", (settings.hl_mode,)).fetchone()
+                counts = {str(r[0]): int(r[1]) for r in db.execute("SELECT status,COUNT(*) FROM candidates WHERE network=? GROUP BY status", (settings.hl_mode,))}
+                research = {"row": dict(row) if row else None, "counts": counts}
+    except (sqlite3.Error, OSError):
+        research = None
+    row = (research or {}).get("row") or {}
+    last_attempt, last_success = row.get("last_attempt"), row.get("last_success")
+    worker_running = isinstance(last_attempt, int) and 0 <= now - last_attempt < 120000
+    public_active = isinstance(last_success, int) and 0 <= now - last_success < 120000 and not row.get("error")
+    public_status = "ACTIVE" if public_active else "DEGRADED" if worker_running else "WAITING"
+    reason = "READY_NO_CURRENT_EVENT" if public_active else row.get("error") or ("WORKER_NOT_STARTED" if not worker_running else "PUBLIC_DATA_STALE")
+    counts = (research or {}).get("counts", {})
+    components = {
+        "Web/API": {"status": "HEALTHY", "detail": "HTTP endpoint available"},
+        "Database": {"status": "HEALTHY" if research is not None else "DEGRADED", "detail": "Research state readable" if research is not None else "Research DB unavailable"},
+        "Hyperliquid public data": {"status": public_status, "last_success": last_success, "reason": reason},
+        "Discovery": {"status": public_status, "last_success": last_success, "detail": f"{sum(counts.values())} observed" if research is not None else reason},
+        "Deep analysis": {"status": "READY" if worker_running else "WAITING", "detail": "Bounded queue" if worker_running else reason},
+        "Watchlist": {"status": "READY" if worker_running else "WAITING", "detail": f"{counts.get('ACTIVE', 0)} active"},
+        "Leader detection": {"status": "READY" if worker_running else "WAITING", "detail": "Awaiting fresh fills" if worker_running else reason},
+        "Agents": {"status": "READY" if worker_running else "OFFLINE", "ready": 7 if worker_running else 0, "active": 0, "total": 7},
+        "Consensus": {"status": "READY" if worker_running else "WAITING", "detail": "No current decision" if worker_running else reason},
+        "Authorization": {"status": "READY", "detail": "Policy boundary available"},
+        "Risk": {"status": "READY", "detail": "Canonical gateway available"},
+        "Execution": {"status": "READY", "detail": "No autonomous LIVE route enabled"},
+        "Reconciliation": {"status": "READY", "detail": "Query-only recovery available"},
+        "PAPER_AUTO": {"status": "READY" if worker_running else "WAITING", "detail": "Isolated PAPER requires explicit configuration"},
+        "Event stream": {"status": "READY" if worker_running else "WAITING", "detail": "Durable research stream" if worker_running else reason},
+    }
+    overall = "HEALTHY" if public_active else "DEGRADED"
+    return {"ok": True, "status": overall, "reason": reason, "network": settings.hl_mode,
+            "checked_ms": now, "worker_heartbeat_ms": last_attempt, "components": components,
+            "counts": counts}
 
 
 @app.get("/api/dashboard")

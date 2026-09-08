@@ -1,4 +1,5 @@
 import unittest
+import time
 import tempfile
 from core.manual_leader_copy import ManualLeaderConfig,ManualLeaderCopy
 from core.foundation.contracts import Scope
@@ -263,3 +264,102 @@ class ManualLeaderCopyTests(unittest.TestCase):
             self.assertFalse(case.engine.journal.pending(fixture.ACCOUNT))
         finally:
             case.doCleanups()
+
+
+class ManualCopyWorkerTests(unittest.TestCase):
+    def setUp(self):
+        import test_engine_safety as f
+        from core.manual_copy_worker import ManualCopyWorker
+        from unittest.mock import patch
+        self.f=f;self.case=f.EngineSafetyTests(methodName='runTest');self.case.setUp();self.addCleanup(self.case.doCleanups)
+        self.case.patch(copy_enabled=False,leaders=[],ai_slot_selected=False)
+        self.client=self.case.client;self.client.cash=100.
+        self.now=time.time()
+        def tick():
+            self.now+=.002
+            return self.now
+        clock=patch('time.time',tick);clock.start();self.addCleanup(clock.stop)
+        self.leaders={f.SOURCE_A:{'BTC':(10000.,'LONG',5)},f.SOURCE_B:{'ETH':(10000.,'LONG',5)}}
+        self.capital=100000.;self.stale=False;self.reads=[]
+        outer=self
+        class Reader:
+            network='TESTNET'
+            def state(self,leader,dex=''):
+                outer.reads.append(leader)
+                rows=[]
+                for coin,(margin,side,lev) in outer.leaders[leader].items():
+                    if (coin.split(':')[0] if ':' in coin else '')!=dex:continue
+                    size=margin*lev/100
+                    rows.append({'position':{'coin':coin,'szi':str(size if side=='LONG' else -size),
+                        'leverage':{'value':lev,'type':'cross'},'positionValue':str(margin*lev),'entryPx':'100',
+                        'marginUsed':str(margin),'unrealizedPnl':'0','returnOnEquity':'0'}})
+                return {'time':int(time.time()*1000)-(60000 if outer.stale else 0),
+                    'marginSummary':{'accountValue':outer.capital},'withdrawable':'1','assetPositions':rows}
+        self.reader=Reader();self.worker=ManualCopyWorker(self.case.engine,self.reader)
+        self.account={'address':f.ACCOUNT,'_tenant':'1'}
+        self.worker.service.configure(self.account,self.client,f.SOURCE_A,80.)
+        self.worker.service.start(self.account,self.client)
+    def cycle(self):return self.worker.cycle(1,self.case.store.profile(1)[1],self.client)
+    def assert_action(self,action):
+        report=self.cycle()
+        self.assertEqual(report['status'],'FOLLOWING',report)
+        self.assertEqual(report['results'][-1],{'market':'BTC|','action':action,'status':'FILLED'},report)
+        return report
+    def test_start_worker_proportional_open_add_reduce_close(self):
+        report=self.assert_action('OPEN')
+        self.assertEqual(report['denominator'],'PER_DEX_MARGIN_SUMMARY_ACCOUNT_VALUE')
+        self.assertAlmostEqual(self.client.rows[('BTC','')]['margin_used'],8.)
+        self.leaders[self.f.SOURCE_A]['BTC']=(20000.,'LONG',5);self.assert_action('ADD')
+        self.assertAlmostEqual(self.client.rows[('BTC','')]['margin_used'],16.)
+        self.leaders[self.f.SOURCE_A]['BTC']=(5000.,'LONG',5);self.assert_action('REDUCE')
+        self.leaders[self.f.SOURCE_A]={};self.assert_action('CLOSE')
+        self.assertFalse(self.client.rows)
+    def test_stop_holds_and_retains_monitoring(self):
+        self.assert_action('OPEN');calls=len(self.client.calls)
+        self.worker.service.stop(self.account,self.client);self.leaders[self.f.SOURCE_A]={}
+        report=self.cycle()
+        self.assertEqual(len(self.client.calls),calls);self.assertTrue(self.client.rows)
+        self.assertEqual(report['monitored'][0]['mode'],'POSITION_HOLD')
+    def test_switch_retains_old_source_and_charges_its_capital(self):
+        self.assert_action('OPEN')
+        self.worker.service.configure(self.account,self.client,self.f.SOURCE_B,80.)
+        self.worker.service.start(self.account,self.client)
+        self.leaders[self.f.SOURCE_B]['ETH']=(100000.,'LONG',5)
+        report=self.cycle()
+        self.assertIn(self.f.SOURCE_A,[r['leader'] for r in report['monitored']])
+        self.assertEqual(self.case.engine.journal.owned(self.f.ACCOUNT)['BTC|']['source_targets'][0]['wallet'],self.f.SOURCE_A)
+        if ('ETH','') in self.client.rows:self.assertLessEqual(self.client.rows[('ETH','')]['margin_used'],72.)
+        self.assertNotIn('OWNERSHIP_TRANSFER',str(report))
+    def test_restart_does_not_repeat_current_target(self):
+        from core.manual_copy_worker import ManualCopyWorker
+        self.assert_action('OPEN');calls=len(self.client.calls)
+        self.worker=ManualCopyWorker(self.case.engine,self.reader)
+        self.cycle();self.assertEqual(len(self.client.calls),calls)
+    def test_stale_or_missing_denominator_does_not_open(self):
+        self.stale=True;self.cycle();self.assertFalse(self.client.calls)
+        self.stale=False;self.capital=None;report=self.cycle()
+        self.assertEqual(report['results'][0]['status'],'DENOMINATOR_UNKNOWN_HOLD');self.assertFalse(self.client.calls)
+    def test_missing_denominator_does_not_block_proven_close(self):
+        self.assert_action('OPEN');self.capital=None;self.leaders[self.f.SOURCE_A]={};self.assert_action('CLOSE')
+    def test_partial_remains_reserved_and_does_not_repeat(self):
+        self.client.fill_fraction=.5
+        report=self.cycle();self.assertEqual(report['results'][0]['status'],'PARTIAL')
+        calls=len(self.client.calls);self.cycle();self.assertEqual(len(self.client.calls),calls)
+        self.assertTrue(self.case.engine.journal.pending(self.f.ACCOUNT))
+    def test_unknown_recovery_is_query_only(self):
+        from unittest.mock import patch
+        original=self.client.submit_copy_ioc
+        def lost(*args,**kwargs):original(*args,**kwargs);raise TimeoutError('lost ack')
+        with patch.object(self.client,'submit_copy_ioc',side_effect=lost):report=self.cycle()
+        self.assertEqual(report['results'][0]['status'],'UNKNOWN')
+        calls=len(self.client.calls);report=self.cycle()
+        self.assertEqual(len(self.client.calls),calls)
+        self.assertEqual(report['recovery'][0]['status'],'FILLED')
+    def test_reverse_uses_new_target_after_verified_close(self):
+        self.assert_action('OPEN');self.leaders[self.f.SOURCE_A]['BTC']=(20000.,'SHORT',5)
+        self.assert_action('REVERSE')
+        p=self.client.rows[('BTC','')];self.assertEqual(p['side'],'SHORT');self.assertAlmostEqual(p['margin_used'],16.)
+    def test_external_position_is_never_adopted(self):
+        self.client.seed(self.f.position())
+        report=self.cycle();self.assertFalse(self.client.calls)
+        self.assertEqual(report['results'][0]['status'],'UNRELATED_POSITION_HOLD')

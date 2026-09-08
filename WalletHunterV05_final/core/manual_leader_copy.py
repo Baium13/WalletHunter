@@ -384,6 +384,10 @@ def execute_manual_leader(*, engine, account, client, operation, event_id, actio
     price = float(client.mid(spec['coin'], spec.get('dex') or ''))
     if not math.isfinite(price) or price <= 0: raise ValueError('Price unavailable')
     manual_limit = policy.capital_limit(allocatable_capital)
+    if '_manual_effective_limit' in spec:
+        effective=float(spec['_manual_effective_limit'])
+        if not math.isfinite(effective) or not 0<=effective<=manual_limit: raise ValueError('Invalid held-capital limit')
+        manual_limit=effective
     if operation is None:
         if not engine or not engine.journal:
             raise ValueError('Durable journal required')
@@ -421,6 +425,8 @@ def execute_manual_leader(*, engine, account, client, operation, event_id, actio
                       configure_leverage=bool(spec.get('configure_leverage', executable_action in {'OPEN', 'ADD'})))
         delta_margin = abs(float(plan['delta_margin'])) if executable_action != 'CLOSE' else float(current_margin)
         size = delta_margin * leverage / price
+        if executable_action=='CLOSE' and before_position is not None:
+            size=abs(float(before_position['size']))
         buy = (target_side == 'LONG') if executable_action in {'OPEN', 'ADD'} else (target_side == 'SHORT')
         receipt = None
         try:
@@ -452,6 +458,9 @@ def execute_manual_leader(*, engine, account, client, operation, event_id, actio
         remaining = _manual_position(client, spec['coin'], spec.get('dex') or '')
         if remaining is not None:
             raise ValueError('Manual Leader reverse close not proven flat')
+        plan=dict(original_plan,delta_margin=float(original_plan['target_margin']))
+        before_position=None
+        current_margin=0.
         return prepared(float(original_plan['target_margin']), leader_side, 'OPEN', operation)
 
     target_side = leader_side

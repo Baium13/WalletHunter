@@ -70,6 +70,7 @@ class OfflineReader:
 class OfflineAccount:
     def balance(self): return 300.0
     exchange = object()
+    network = 'TESTNET'
     def __init__(self):
         self.rows = [position()]
         self.orders = []
@@ -78,23 +79,43 @@ class OfflineAccount:
         self.failure = False
         self.cancel_failure = False
         self.partial = False
+        self.info=self;self.order_proofs={};self.fills=[]
+    def user_state(self,*args): return {'time':int(time.time()*1000)}
+    def post(self,*args):return {'time':int(time.time()*1000),'levels':[[{'px':str(self.price-.01)}],[{'px':str(self.price+.01)}]]}
+    def round_price(self,coin,price,dex=''):return price
+    def response_error(self,response):return ''
+    def user_fills_by_time(self,account,start,end):return [f for f in self.fills if start<=f['time']<=end]
+    def query_order_by_cloid(self,cloid):return self.order_proofs.get(cloid,{'status':'unknownOid'})
+    def submit_copy_ioc(self,coin,buy,size,limit,reduce_only,cloid,dex='',*,expires_ms):
+        assert reduce_only
+        now=int(time.time()*1000);before=self.rows[0]['size']
+        if size==before:response=self.market_close(coin,dex)
+        else:response=self.market_reduce(coin,buy,size,dex,.5)
+        filled=before-(self.rows[0]['size'] if self.rows else 0.)
+        for p in self.rows:p.update(position_value=p['size']*self.price,margin_used=p['size']*self.price/p['leverage'])
+        oid=len(self.order_proofs)+1
+        self.order_proofs[cloid]={'status':'order','order':{'status':'filled' if filled==size else 'iocCancel','statusTimestamp':now,
+            'order':{'coin':coin,'oid':oid,'cloid':cloid,'side':'B' if buy else 'A','origSz':str(size),'limitPx':str(limit),'reduceOnly':True,'timestamp':now}}}
+        self.fills.append({'coin':coin,'oid':oid,'tid':oid,'side':'B' if buy else 'A','sz':str(filled),'px':str(self.price),'time':now})
+        return response
     def positions(self, *args):
         if self.failure:
             raise RuntimeError("Private position read failed")
         return deepcopy(self.rows)
     def frontend_open_orders(self, dex):
-        return deepcopy(self.orders)
+        return deepcopy([o for o in self.orders if (o['coin'].split(':')[0] if ':' in o['coin'] else '')==dex])
     def mid(self, *args):
         return self.price
     def round_size(self, coin, size, dex):
         return round(size, 2)
     def size_step(self, *args):
         return .01
-    def place_stop_loss(self, coin, side, size, price, dex):
+    def place_stop_loss(self, coin, side, size, price, dex, *, cloid=None):
         oid = max((o["oid"] for o in self.orders), default=0) + 1
         self.calls.append(("stop", coin, size, price, dex))
         self.orders.append({"coin": coin, "oid": oid, "reduceOnly": True,
-                            "orderType": "Stop Market", "triggerPx": str(price)})
+                            "orderType": "Stop Market", "triggerPx": str(price), 'sz':str(size),
+                            'cloid':cloid,'isTrigger':True,'side':'A' if side=='LONG' else 'B'})
         return {"status": "ok", "response": {"data": {"statuses": [{"resting": {"oid": oid}}]}}}
     def cancel_order(self, coin, oid, dex):
         self.calls.append(("cancel", coin, oid, dex))
@@ -121,6 +142,7 @@ class ApiSafetyTests(unittest.TestCase):
         self.tmp = self.stack.enter_context(tempfile.TemporaryDirectory())
         self.reader = OfflineReader()
         self.accounts = {ACCOUNT_A: OfflineAccount(), ACCOUNT_B: OfflineAccount()}
+        for address,client in self.accounts.items():client.address=address
         self.accounts[ACCOUNT_B].rows = [position("ETH", size=1)]
         self.fake_settings = SimpleNamespace(
             master_key=Fernet.generate_key(), telegram_bot_token=TOKEN,
@@ -225,13 +247,13 @@ class ApiSafetyTests(unittest.TestCase):
         self.assertIn("BTC|", self.store.profile(1)[1]["runtime"]["manual_stops"])
         self.assertEqual(len(self.accounts[ACCOUNT_A].orders), 1)
 
-    def test_manual_close_missing_canonical_context_fails_closed_without_touching_other_account(self):
+    def test_manual_close_uses_actual_gateway_without_touching_other_account(self):
         result = self.request("POST", "/api/position/close", body={"coin": "BTC"})
-        self.assertEqual(result.status_code, 409, result.text)
-        self.assertEqual(len(self.accounts[ACCOUNT_A].rows), 1)
+        self.assertEqual(result.status_code, 200, result.text)
+        self.assertEqual(len(self.accounts[ACCOUNT_A].rows), 0)
         self.assertIn("BTC|", self.store.profile(1)[1]["runtime"]["manual_hold_keys"])
         self.assertEqual(self.accounts[ACCOUNT_B].calls, [])
-        self.assertEqual(self.accounts[ACCOUNT_A].calls, [])
+        self.assertEqual(self.accounts[ACCOUNT_A].calls, [('close','BTC','')])
 
     def test_manual_read_failure_is_503_and_submits_nothing(self):
         self.accounts[ACCOUNT_A].failure = True

@@ -56,6 +56,8 @@ class AutonomousBackend:
     def process(self,record):
         """Input is the actual WalletDiscoveryEngine DECISION body, not a signal shortcut."""
         event=LeaderTradeEvent.model_validate(record['event'])
+        if record.get('admission_allowed',True) is False and event.action not in {'REDUCE','CLOSE'}:
+            return {'status':'LEADER_ADMISSION_HOLD','event_id':event.event_id}
         if event.action=='REVERSE':
             return self.reverse(record)
         leader=LeaderScore.model_validate(record['leader'])

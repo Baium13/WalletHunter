@@ -38,6 +38,7 @@ from core.ai_position_actions import AiPositionActions
 from core.ai_review import AiReview, account_guard
 from core.manual_positions import ManualPositions, ManualActionError
 from core.manual_leader_copy import ManualLeaderCopyService
+from core.manual_copy_worker import ManualCopyWorker
 from core.confirmed_execution_adapter import build_context
 from core.execution_journal import ExecutionJournal
 from core.ai_policy import ReviewPolicy
@@ -608,7 +609,8 @@ def manual_copy_config(x_telegram_init_data: str | None = Header(default=None)):
         return {"configured": False, "enabled": False, "allocation_pct": None, "leader": None}
     return {"configured": True, "enabled": bool(config.enabled), "allocation_pct": config.allocation_pct,
             "leader": config.leader, "alias": config.alias, "updated_ms": config.updated_ms,
-            "network": config.scope.network}
+            "network": config.scope.network,
+            "runtime": ManualCopyWorker(engine,reader).diagnostics(config.scope)}
 
 
 @app.put("/api/manual-copy")
@@ -618,19 +620,20 @@ def configure_manual_copy(payload: ManualCopyInput, x_telegram_init_data: str | 
     scoped, client = manual_leader_account(user["id"], profile)
     controller = manual_leader_controller()
     try:
-        config = controller.config(scoped, client)
-        if payload.leader is not None:
-            leader = payload.leader.strip().lower()
-            if not re.fullmatch(r"0x[0-9a-fA-F]{40}", leader):
-                raise ValueError("Invalid Hyperliquid leader address")
-        elif config:
-            leader = config.leader
-        else:
-            raise ValueError("Manual leader is required")
-        allocation = payload.allocation_pct if payload.allocation_pct is not None else (config.allocation_pct if config else 80.0)
-        config = controller.configure(scoped, client, leader, allocation, alias=leader)
-        if payload.action == "start": config = controller.start(scoped, client)
-        elif payload.action == "stop": config, _ = controller.stop(scoped, client)
+        with account_guard(ROOT, scoped['address']):
+            config = controller.config(scoped, client)
+            if payload.leader is not None:
+                leader = payload.leader.strip().lower()
+                if not re.fullmatch(r"0x[0-9a-fA-F]{40}", leader):
+                    raise ValueError("Invalid Hyperliquid leader address")
+            elif config:
+                leader = config.leader
+            else:
+                raise ValueError("Manual leader is required")
+            allocation = payload.allocation_pct if payload.allocation_pct is not None else (config.allocation_pct if config else 80.0)
+            config = controller.configure(scoped, client, leader, allocation, alias=leader)
+            if payload.action == "start": config = controller.start(scoped, client)
+            elif payload.action == "stop": config, _ = controller.stop(scoped, client)
     except (ValueError, TypeError) as exc:
         raise HTTPException(400, str(exc)) from None
     return {"configured": True, "enabled": bool(config.enabled), "allocation_pct": config.allocation_pct,
@@ -668,15 +671,9 @@ def manual_action(user_id, payload, action):
                 raise HTTPException(409, "Account changed; reload")
             runtime = profile["runtime"]
             account_client = account_client_for(profile)
-            try:
-                canonical = (build_context(account_client, tenant=user_id,
-                    coin=payload.coin.strip(), dex=payload.dex.strip().lower(), action='CLOSE',
-                    source='manual', store_path=os.path.join(ROOT, 'runtime', 'canonical.sqlite'))
-                    if action == 'close' else None)
-            except Exception:
-                # Existing API fixtures may expose only the manual compatibility
-                # client. They fail closed for canonical live context.
-                canonical = None
+            canonical = lambda request: build_context(account_client,tenant=user_id,
+                coin=request['coin'],dex=request['dex'],action=request['action'],source='manual',
+                settings=settings,profile=profile,journal=engine.journal,request=request)
             service = ManualPositions(account_client, runtime,
                                       lambda: storage.update_runtime(user_id, runtime),
                                       canonical_context=canonical)
@@ -936,7 +933,8 @@ def ai_order_decision(proposal_id: str, payload: AiOrderDecisionInput, x_telegra
                 profile, public_account_for(profile) if payload.confirm else None,
                 lambda: account_client_for(profile), persist_runtime, int(time.time() * 1000),
                 canonical_context=(lambda p: build_context(account_client_for(profile), tenant=user['id'], coin=p['coin'],
-                    dex=p.get('dex',''), action='OPEN', source='ai', store_path=os.path.join(ROOT,'runtime','canonical.sqlite'))) if payload.confirm else None)
+                    dex=p.get('dex',''), action='OPEN', source='ai',settings=settings,profile=profile,
+                    journal=engine.journal,request=p)) if payload.confirm else None)
             return {"result": result,
                 "user_orders": ai_user_orders.summary(user["id"], profile, int(time.time() * 1000))}
         except HTTPException:
@@ -974,7 +972,8 @@ def ai_position_decision(proposal_id: str, payload: AiOrderDecisionInput, x_tele
                 public_account_for(profile) if payload.confirm else None,
                 lambda: account_client_for(profile), persist_runtime, int(time.time() * 1000),
                 canonical_context=(lambda p: build_context(account_client_for(profile), tenant=user['id'], coin=p['coin'],
-                    dex=p.get('dex',''), action='REDUCE', source=p.get('source_wallet','ai'), store_path=os.path.join(ROOT,'runtime','canonical.sqlite'))) if payload.confirm else None)
+                    dex=p.get('dex',''), action=p['action'], source=p.get('source_wallet','ai'),settings=settings,
+                    profile=profile,journal=engine.journal,request=p)) if payload.confirm else None)
             return {"result": result, "position_actions": ai_position_actions.summary(user["id"], profile, int(time.time() * 1000))}
         except HTTPException:
             raise

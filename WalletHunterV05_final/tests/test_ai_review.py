@@ -12,6 +12,8 @@ from core.storage import Storage
 
 class FakeClient:
     exchange = object()
+    network = 'TESTNET'
+    address = '0x'+'a'*40
     def __init__(self):
         self.position = {"coin": "BTC", "dex": "", "side": "LONG", "size": 2.,
                          "entry_price": 120., "leverage": 5., "roe": -50.}
@@ -19,6 +21,25 @@ class FakeClient:
         self.calls = 0
         self.fail = False
         self.partial = False
+        self.info=self;self.orders={};self.fills=[]
+        self.position.update(position_value=200.,margin_used=40.)
+    def user_state(self,*args): return {'time':int(time.time()*1000)}
+    def frontend_open_orders(self,*args): return []
+    def post(self,*args): return {'time':int(time.time()*1000),'levels':[[{'px':'99.99'}],[{'px':'100.01'}]]}
+    def round_price(self,coin,price,dex=''): return price
+    def response_error(self,response): return ''
+    def query_order_by_cloid(self,cloid):return self.orders.get(cloid,{'status':'unknownOid'})
+    def user_fills_by_time(self,account,start,end):return [f for f in self.fills if start<=f['time']<=end]
+    def submit_copy_ioc(self,coin,buy,size,limit,reduce_only,cloid,dex='',*,expires_ms):
+        assert reduce_only
+        now=int(time.time()*1000)
+        before=self.position['size'];self.market_reduce(coin,buy,size,dex,.5)
+        filled=before-self.position['size'];self.position['position_value']=self.position['size']*self.price
+        self.position['margin_used']=self.position['position_value']/self.position['leverage']
+        self.orders[cloid]={'status':'order','order':{'status':'iocCancel' if self.partial else 'filled','statusTimestamp':now,
+            'order':{'coin':coin,'side':'B' if buy else 'A','oid':1,'cloid':cloid,'origSz':str(size),'limitPx':str(limit),'reduceOnly':True,'timestamp':now}}}
+        self.fills.append({'coin':coin,'side':'B' if buy else 'A','oid':1,'tid':1,'time':now,'sz':str(filled),'px':str(self.price)})
+        return {'status':'ok'}
     def positions(self, *args): return [deepcopy(self.position)]
     def balance(self): return 300.
     def mid(self, *args): return self.price
@@ -38,7 +59,7 @@ class ReviewTests(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.store = Storage(self.tmp.name, Fernet.generate_key())
         d, p = self.store.profile(1)
-        p["account"] = {"address": "0xabc", "id": "a"}
+        p["account"] = {"address": FakeClient.address, "id": "a"}
         self.store.save(d)
         self.ai = AiReview(self.tmp.name)
         self.client = FakeClient()
@@ -47,7 +68,7 @@ class ReviewTests(unittest.TestCase):
         payload = {"position": identity(self.client.position), "price": 100., "size": .5, "action": "REDUCE"}
         with closing(self.ai.connect()) as db:
             db.execute("INSERT INTO proposals(id,user_id,account,market,created,expires,status,payload) VALUES(?,?,?,?,?,?,?,?)",
-                       ("test", "1", "0xabc", "BTC|", time.time(), time.time()+300, "PENDING", json.dumps(payload)))
+                       ("test", "1", FakeClient.address, "BTC|", time.time(), time.time()+300, "PENDING", json.dumps(payload)))
             db.commit()
         return "test"
 

@@ -681,8 +681,15 @@ async def watcher_cycle():
     async def process(uid_text, p):
         async with limit:
             try:
-                if not p.get("copy_enabled") or not p.get("account") or not p.get("leaders"): return
+                if not p.get('account'): return
                 uid = int(uid_text); c = await asyncio.to_thread(account_client, uid, p); snapshots = []
+                if getattr(engine,'journal',None):
+                    try:
+                        from core.manual_copy_worker import ManualCopyWorker
+                        await asyncio.to_thread(ManualCopyWorker(engine,reader).cycle,uid,p,c)
+                    except Exception as exc:
+                        print('[MANUAL COPY USER]',uid,type(exc).__name__)
+                if not p.get("copy_enabled") or not p.get("leaders"): return
                 for wallet in p["leaders"][:3]:
                     positions, bal = await asyncio.gather(asyncio.to_thread(reader.positions, wallet, p.get("crypto_enabled", True), p.get("stocks_enabled", True)), asyncio.to_thread(reader.balance, wallet))
                     snapshots.append({"wallet":wallet, "positions":positions, "balance":bal, "enabled":leader_is_enabled(p, wallet)})

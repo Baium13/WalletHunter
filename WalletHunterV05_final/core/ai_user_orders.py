@@ -636,10 +636,13 @@ class AiUserOrders:
                 raise ValueError("proposal_expired_before_submission")
             from core.confirmed_execution_adapter import execute_confirmed_ai
             if canonical_context is not None:
-                route_context = canonical_context(payload) if callable(canonical_context) else canonical_context
+                request=dict(payload, action='OPEN', approved_leverage_cap=payload['leverage'])
+                route_context = canonical_context(request) if callable(canonical_context) else canonical_context
                 response = execute_confirmed_ai(route_context, coin=payload['coin'], dex=payload.get('dex',''),
                     side='BUY' if payload['direction']=='LONG' else 'SELL', size=payload['size'],
-                    price=payload['limit_price'], action='OPEN', source='ai')
+                    price=payload['limit_price'], action='OPEN', source='ai',identity=proposal_id,operation_id=operation,
+                    leverage=payload['leverage'],expires_ms=proposal['expires_ms'],exchange_client_id=payload['cloid'],
+                    allocation_limit=float(public_client.capital_snapshot().sizing_base_usdc)/3)
                 status = getattr(response, 'status', 'UNKNOWN')
                 result = {'canonical': True, 'status': status, 'order_ids': list(getattr(response, 'order_ids', ())),
                     'filled_size': sum(getattr(fill, 'size', 0) for fill in getattr(response, 'fills', ())),

@@ -12,7 +12,7 @@ from .store import digest
 
 def client_order_id(intent):
     intent = OrderIntent.model_validate_json(intent.model_dump_json())
-    return "0x" + digest(intent)[:32]
+    return intent.exchange_client_id or "0x" + digest(intent)[:32]
 
 
 def reconcile_order(intent, before, after, client, *, now_ms, max_age_ms):

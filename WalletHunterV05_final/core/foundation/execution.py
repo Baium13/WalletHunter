@@ -1,4 +1,4 @@
-"""One submission boundary for the new FAKE/PAPER route. LIVE is unavailable.
+"""Canonical submission boundary for isolated simulation and authorized live routes.
 
 Intent/reservation/event commit precedes any adapter call. Ambiguous effects
 are never retried; recovery queries evidence and atomically settles the ledger.
@@ -256,7 +256,7 @@ class ExecutionGateway:
             db.execute("INSERT INTO intents VALUES(?,?,?,?,?,?,?)", (intent.intent_id, scope_key(intent.scope), encoded(intent),
                 receipt.status, encoded(decision), json.dumps(reservation), encoded(receipt)))
             db.execute("INSERT INTO intent_prestate VALUES(?,?)", (intent.intent_id, encoded(before)))
-            if intent.version == 2:
+            if intent.version in (2,4):
                 # Same SQLite transaction as reservation. Keep the rich legacy
                 # envelope, adding only stable child identity links.
                 parent = db.execute('SELECT intent FROM operations WHERE id=?', (intent.parent_intent_id,)).fetchone()
@@ -283,7 +283,7 @@ class ExecutionGateway:
 
     def _settle(self, intent, before, report):
         now = self.clock()
-        receipt = (report.receipt if report is not None else self._unknown(intent, now)) if intent.version in (2,3) else reconcile(intent, before, report, now)
+        receipt = (report.receipt if report is not None else self._unknown(intent, now)) if intent.version in (2,3,4) else reconcile(intent, before, report, now)
         with self.store.transaction() as db:
             row = db.execute("SELECT status,receipt FROM intents WHERE id=? AND scope=?", (intent.intent_id, scope_key(intent.scope))).fetchone()
             if not row: raise ValueError("No durable intent")
@@ -291,7 +291,7 @@ class ExecutionGateway:
                 return ExecutionReceipt.model_validate_json(row["receipt"])
             current = self.store.portfolio_in(db, intent.scope)
             if current != before and intent.version == 1: receipt = self._unknown(intent, now)
-            if intent.version in (2,3) and report is not None and report.after.revision <= current.revision:
+            if intent.version in (2,3,4) and report is not None and report.after.revision <= current.revision:
                 # A repeated query may return the same durable partial
                 # snapshot. Preserve that proven partial state instead of
                 # downgrading it or pretending the remainder was filled.
@@ -299,9 +299,12 @@ class ExecutionGateway:
                 if not (row["status"] == "PARTIAL" and previous.get("status") == "PARTIAL"
                         and report.after == current):
                     receipt = self._unknown(intent, now)
-            if intent.version == 3 and current != before: receipt = self._unknown(intent, now)
+            if intent.version in (3,4) and current != before: receipt = self._unknown(intent, now)
             if receipt.status != "UNKNOWN":
                 after = report.after
+                if intent.version==4 and receipt.status in {'FILLED','PARTIAL'}:
+                    from .confirmed_ledger import project_receipt_in
+                    after=project_receipt_in(db,intent,before,after,receipt)
                 if intent.version == 3 and receipt.status in {'FILLED','PARTIAL'}:
                     # Order/fill/delta proof, not address similarity, grants ownership.
                     after = after.model_copy(update={'positions': tuple(
@@ -310,6 +313,8 @@ class ExecutionGateway:
                         if p.instrument == intent.instrument else p for p in after.positions)})
                 self.store.publish_portfolio_in(db, after, intent.correlation_id)
             kind = {"FILLED": "ORDER_FILLED", "PARTIAL": "ORDER_PARTIALLY_FILLED", "REJECTED": "ORDER_REJECTED", "UNKNOWN": "EXECUTION_UNKNOWN", "CONFIGURED": "LEVERAGE_CONFIGURED"}[receipt.status]
+            if receipt.status == 'CONFIGURED':
+                kind = {'PLACE_STOP':'PROTECTION_CONFIGURED','CANCEL_OWNED':'ORDER_CANCELLED'}.get(intent.action,kind)
             # Repeated UNKNOWN queries must not collide with the original timestamp.
             status_changed = receipt.status != row["status"]
             if status_changed:
@@ -329,9 +334,32 @@ class ExecutionGateway:
             prestate = db.execute("SELECT body FROM intent_prestate WHERE id=?", (intent.intent_id,)).fetchone()
             if not prestate: raise ValueError("Missing pre-execution evidence; no retry")
             before = PortfolioSnapshot.model_validate_json(prestate[0])
-            if intent.version in (2,3):
+            if intent.version in (2,3,4):
                 self.__exchange.before = before
                 self.__exchange.next_revision = self.store.portfolio_in(db, intent.scope).revision+1
         try: report = self.__exchange.query(intent)
         except Exception: report = None
         return self._settle(intent, before, report)
+
+    def authorize_confirmed(self, intent):
+        """Existing product confirmation, not an autonomous consensus grant.
+
+        The parent journal must durably bind exact intent bytes to the tenant.
+        Merely constructing a context or reading a proposal creates no grant.
+        """
+        from .copy_execution import HyperliquidExecutionAdapter
+        if type(self.__exchange) is not HyperliquidExecutionAdapter or intent.version != 4:
+            raise ValueError('Confirmed adapter required')
+        self.__exchange.validate_scope(intent)
+        with self.store.transaction() as db:
+            self.store.bind(db,intent.scope)
+            row=db.execute('SELECT account,intent,status FROM operations WHERE id=?',(intent.parent_intent_id,)).fetchone()
+            envelope=json.loads(row['intent']) if row else {}
+            if (not row or row['account']!=intent.scope.account or row['status']!='PREPARED'
+                    or envelope.get('network')!=intent.scope.network
+                    or envelope.get('confirmed_tenant')!=intent.scope.tenant
+                    or envelope.get('confirmed_intents',{}).get(intent.intent_id)!=digest(intent)):
+                raise ValueError('Exact durable product confirmation required')
+            old=db.execute('SELECT intent_hash FROM grants WHERE id=?',(intent.intent_id,)).fetchone()
+            if old and old[0]!=digest(intent): raise ValueError('Immutable confirmation collision')
+            db.execute('INSERT OR IGNORE INTO grants VALUES(?,?,?)',(intent.intent_id,scope_key(intent.scope),digest(intent)))

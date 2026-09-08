@@ -186,10 +186,10 @@ class WalletDiscoveryEngine:
                     db.execute('INSERT OR REPLACE INTO watch_epochs VALUES(?,?,?)',(self.network,row['wallet'],now))
                     self._record(db,'LEADER_PROMOTED',{'wallet':row['wallet'],'at':now},now)
 
-    def detect(self,address,info,now):
+    def detect(self,address,info,now,*,position_owned=False):
         with self.store.transaction() as db:
             saved=db.execute("SELECT cursor,status FROM candidates WHERE network=? AND wallet=?",(self.network,address)).fetchone()
-        if not saved or saved['status']!='ACTIVE': return []
+        if not saved or (saved['status']!='ACTIVE' and not position_owned): return []
         cursor=saved['cursor']
         if now<cursor: raise ValueError('CLOCK_REGRESSION')
         # Re-read a bounded overlap for delayed visibility and same-millisecond
@@ -238,6 +238,8 @@ class WalletDiscoveryEngine:
             'candles':candles,'book':book,'agents':[a.model_dump(mode='json') for a in outputs],'consensus':decision.model_dump(mode='json'),
             'mode':'OBSERVE','authorization':'NONE','executed':False}
         with self.store.transaction() as db:
+            admission=db.execute('SELECT status FROM candidates WHERE network=? AND wallet=?',(self.network,event.wallet)).fetchone()
+            body['admission_allowed']=bool(admission and admission['status']=='ACTIVE')
             if db.execute('SELECT 1 FROM decision_links WHERE event_id=?',(event.event_id,)).fetchone(): return decision
             record_id=self._record(db,'DECISION',body,now,event.instrument)
             db.execute('INSERT INTO decision_links VALUES(?,?)',(event.event_id,record_id))
@@ -255,9 +257,13 @@ class WalletDiscoveryEngine:
         try:
             with self.store.transaction() as db:
                 active=db.execute("SELECT wallet,analysis FROM candidates WHERE network=? AND status='ACTIVE' ORDER BY wallet LIMIT ?",(self.network,self.policy.watch_limit)).fetchall()
-            for row in active:
+            lifecycle=set(getattr(self,'position_owned_leaders',()))
+            if len(lifecycle)>32: raise ValueError('POSITION_WATCH_CAPACITY')
+            # Existing episodes have priority; demotion never ends their reads.
+            watched=sorted(lifecycle)+[r['wallet'] for r in active if r['wallet'] not in lifecycle]
+            for address in watched:
                 try:
-                    self.detect(row['wallet'],info,clock())
+                    self.detect(address,info,clock(),position_owned=address in lifecycle)
                 except Exception: errors.append('WATCHLIST_OR_ANALYSIS_UNAVAILABLE')
             with self.store.transaction() as db:
                 queue=db.execute("SELECT r.body,c.analysis FROM intelligence_records r JOIN candidates c ON c.network=r.network AND c.wallet=json_extract(r.body,'$.wallet') LEFT JOIN decision_links l ON l.event_id=json_extract(r.body,'$.event_id') WHERE r.network=? AND r.kind='LEADER_TRADE' AND l.event_id IS NULL ORDER BY r.rowid LIMIT 4",(self.network,)).fetchall()

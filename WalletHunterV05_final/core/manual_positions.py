@@ -86,7 +86,7 @@ class ManualPositions:
             kind = str(order.get("orderType", "")).lower()
             identified_stop = (bool(order.get("reduceOnly"))
                                and kind in {"stop market", "stop limit"})
-            if order.get("oid") is not None and (identified_stop or str(order["oid"]) in ids):
+            if order.get("oid") is not None and (str(order["oid"]) in ids or (self.legacy_test_executor and identified_stop)):
                 # A locally tracked ID is evidence of ownership; market equality
                 # is always checked above, so corrupt IDs cannot cancel another asset.
                 result.append(order)
@@ -132,6 +132,8 @@ class ManualPositions:
 
     @staticmethod
     def _rejection(response):
+        if hasattr(response, 'reconciliation'):
+            return '' if response.status in {'FILLED','PARTIAL','CONFIGURED'} else response.status
         if not isinstance(response, dict) or response.get("status") != "ok":
             return str(response)
         payload = response.get("response")
@@ -146,7 +148,19 @@ class ManualPositions:
         ids = {str(o["oid"]) for o in orders}
         for order in orders:
             try:
-                error = self._rejection(self.client.cancel_order(coin, order["oid"], dex))
+                if self.canonical_context is not None:
+                    from core.confirmed_execution_adapter import execute_manual_request
+                    key=self._market(coin,dex)[2]
+                    receipt=execute_manual_request(self.canonical_context,coin=coin,dex=dex,action='CANCEL_OWNED',
+                        side='BUY' if order.get('side')=='B' else 'SELL',size=float(order['sz']),
+                        price=float(order.get('triggerPx') or order['limitPx']),
+                        identity=self.runtime['manual_actions'][key]['id'],owned_order_id=str(order['oid']),
+                        owned_order_ids=tuple(ids))
+                    error=self._rejection(receipt)
+                elif self.legacy_test_executor is not None:
+                    error=self._rejection(self.legacy_test_executor.cancel(self.client,coin,order['oid'],dex))
+                else:
+                    raise ManualActionError('Canonical cancellation context required')
                 if error:
                     errors.append(error)
             except Exception as exc:
@@ -175,11 +189,22 @@ class ManualPositions:
         old_orders = self._stop_orders(coin, dex, saved)
         self._begin(key, "set_stop", before_oids=[o["oid"] for o in old_orders], requested_price=price)
         try:
-            response = self.client.place_stop_loss(coin, side, float(position["size"]), price, dex)
-            oid = self._accepted_oid(response)
+            if self.canonical_context is not None:
+                from core.confirmed_execution_adapter import execute_manual_request
+                response=execute_manual_request(self.canonical_context,coin=coin,dex=dex,action='PLACE_STOP',
+                    side='SELL' if side=='LONG' else 'BUY',size=float(position['size']),price=price,
+                    identity=self.runtime['manual_actions'][key]['id'],expected_position=position,
+                    leverage=int(position['leverage']))
+                oid=int(response.order_ids[0]) if response.status=='CONFIGURED' and response.order_ids else None
+            elif self.legacy_test_executor is not None:
+                response=self.legacy_test_executor.protect(self.client,coin,side,float(position['size']),price,dex)
+                oid=self._accepted_oid(response)
+            else:
+                raise ManualActionError('Canonical protection context required')
             if oid is None:
                 error = self._rejection(response)
-                self._record(key, status="rejected" if error else "unknown", error=error or "No resting stop ID")
+                definitive = getattr(response,'status',None)=='REJECTED' if hasattr(response,'reconciliation') else bool(error)
+                self._record(key, status="rejected" if definitive else "unknown", error=error or "No resting stop ID")
                 raise ManualActionError(error or "Stop outcome is unconfirmed")
             self._record(key, new_oid=oid)
             orders, visible = self._wait(lambda: self._market_orders(coin, dex),
@@ -245,7 +270,11 @@ class ManualPositions:
                 if self.canonical_context is not None:
                     response = execute_manual_request(self.canonical_context, coin=coin, dex=dex,
                         side='SELL' if position.get('side') == 'LONG' else 'BUY', size=abs(float(position['size'])),
-                        price=float(position.get('entry_price') or position.get('price')), action='CLOSE', source='manual')
+                        price=None, action='CLOSE', source='manual',identity=self.runtime['manual_actions'][key]['id'],
+                        expected_position=position,leverage=int(position['leverage']))
+                    if response.status not in {'FILLED','PARTIAL'}:
+                        self._record(key,status='rejected' if response.status=='REJECTED' else 'unknown',error=response.status)
+                        raise ManualActionError('Canonical close '+response.status)
                 elif callable(self.legacy_test_executor):
                     response = self.legacy_test_executor(self.client, coin, dex)
                 else:

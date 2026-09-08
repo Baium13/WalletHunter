@@ -122,6 +122,7 @@ class ExchangeBoundary:
         previous = (before["size"] * (1 if before["side"] == "LONG" else -1)) if before else 0
         signed = previous
         signed += float(size) * (1 if buy else -1)
+        signed = self.round_size(coin, abs(signed), dex)*(1 if signed>=0 else -1)
         if action == "reduce" and (previous == 0 or signed * previous < 0):
             signed = 0  # Exchange reduce-only orders cannot reverse a position.
         if abs(signed) < 1e-9:

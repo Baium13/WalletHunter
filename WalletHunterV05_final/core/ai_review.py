@@ -337,15 +337,28 @@ class AiReview:
                 runtime = profile["runtime"]
                 runtime.setdefault("ai_hold_keys", {})[row["market"]] = {"proposal": pid, "created": time.time()}
                 storage.update_runtime(uid, runtime)
+                from core.confirmed_execution_adapter import build_context, execute_confirmed_ai
+                from core.settings import load
+                operation=self.execution_journal.prepare(row['account'],row['market'],
+                    {'action':'AI_REVIEW_REDUCE','proposal_id':pid,'network':client.network,'before':p})
+                context=build_context(client,tenant=uid,coin=p['coin'],dex=p.get('dex') or '',action='REDUCE',
+                    source='ai_review',settings=load(),profile=profile,journal=self.execution_journal,
+                    request={'slippage_pct':.5})
+                side='BUY' if p['side']=='SHORT' else 'SELL'
+                slip=context['policy'].max_slippage_pct
+                raw=price*(1+slip/100 if side=='BUY' else 1-slip/100)
+                bound=context['round_price'](raw)
+                if (bound>raw if side=='BUY' else bound<raw): bound=context['round_price'](price)
                 submitted = True
-                response = client.market_reduce(p["coin"], p["side"] == "SHORT", size, p.get("dex") or "", .5)
-                error = client.order_error(response)
-                if error: raise RuntimeError(error)
-                after = next((v for v in client.positions(True, True) if market_key(v) == row["market"]), None)
-                remaining = number(after["size"]) if after else 0
-                expected = number(p["size"]) - size
-                tolerance = max(1e-12, number(client.size_step(p["coin"], p.get("dex") or "")) * .01)
-                status = "EXECUTED" if (after and after["side"] == p["side"] and abs(remaining-expected) <= tolerance) else "PARTIAL"
+                response=execute_confirmed_ai(context,coin=p['coin'],dex=p.get('dex') or '',side=side,size=size,
+                    price=bound,action='REDUCE',source='ai_review',identity=pid,operation_id=operation,
+                    expected_position=p,leverage=int(p['leverage']),expires_ms=int(row['expires']*1000))
+                status={'FILLED':'EXECUTED','PARTIAL':'PARTIAL','REJECTED':'REJECTED'}.get(response.status,'UNKNOWN')
+                after=next((v for v in context['store'].portfolio(response.scope).positions if v.instrument.market_key==row['market']),None)
+                remaining=after.size if after else 0.
+                self.execution_journal.finish(operation,{'ok':response.status=='FILLED','status':response.status,
+                    'execution_evidence':{'intent_id':response.intent_id,'network':response.scope.network}})
+                if response.status=='UNKNOWN': raise RuntimeError('Execution outcome unresolved; query recovery required')
                 result = {"status": status, "remaining_size": remaining, "copy_on_hold": True}
                 self.finish(pid, status, result)
                 return result

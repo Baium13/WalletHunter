@@ -30,7 +30,7 @@ class HyperliquidExecutionAdapter:
         if intent.scope != self.scope or c.network != self.scope.network or c.address.lower() != self.scope.account:
             raise ValueError('Account/network mismatch')
         if intent.execution_mode != 'LIVE' or not (intent.authorization == 'COPY_POLICY' or
-                (intent.version == 3 and intent.authorization == 'USER_CONFIRMED')):
+                (intent.version in (3,4) and intent.authorization == 'USER_CONFIRMED')):
             raise ValueError('Copy authorization required')
 
     def submit(self, intent, before, now):
@@ -38,6 +38,13 @@ class HyperliquidExecutionAdapter:
         self.before = before
         c, i = self.__client, intent.instrument
         coin = i.market_key.split('|')[0]
+        if intent.action == 'PLACE_STOP':
+            self.response = c.place_stop_loss(coin, 'LONG' if intent.side == 'SELL' else 'SHORT',
+                intent.size, intent.limit_price, i.dex, cloid=client_order_id(intent))
+            return self.query(intent)
+        if intent.action == 'CANCEL_OWNED':
+            self.response = c.cancel_order(coin, int(intent.owned_order_id), i.dex)
+            return self.query(intent)
         if intent.configure_leverage or intent.action == 'LEVERAGE_UPDATE':
             response = c.set_leverage(coin, intent.leverage, i.dex)
             if c.response_error(response): raise ValueError('Leverage rejected; reconcile configuration')
@@ -50,9 +57,11 @@ class HyperliquidExecutionAdapter:
         self.validate_scope(intent)
         c, before = self.__client, self.before
         after = account_snapshot(c, intent.scope, getattr(self, 'next_revision', before.revision+1), self.clock, dex=intent.instrument.dex,
-            require_collateral=intent.action not in {'REDUCE','CLOSE'})
+            require_collateral=intent.action not in {'REDUCE','CLOSE','PLACE_STOP','CANCEL_OWNED'})
         now = self.clock()
-        if intent.action == 'LEVERAGE_UPDATE':
+        if intent.action in {'PLACE_STOP','CANCEL_OWNED'}:
+            receipt = self._protection_receipt(intent, before, after, now)
+        elif intent.action == 'LEVERAGE_UPDATE':
             b = next((p for p in before.positions if p.instrument == intent.instrument), None)
             a = next((p for p in after.positions if p.instrument == intent.instrument), None)
             good = (a is not None and b is not None and a.side == b.side and a.size == b.size
@@ -72,6 +81,34 @@ class HyperliquidExecutionAdapter:
                 proof(self.response, intent.instrument.market_key.split('|')[0], intent.instrument.dex,
                     legacy(before), legacy(after), intent.created_ms)
         return LiveReport(receipt, after)
+
+    def _protection_receipt(self, intent, before, after, now):
+        """Exact reduce-only object proof, never a market-level cancellation."""
+        c = self.__client
+        oid = intent.owned_order_id
+        good = False
+        try:
+            rows = c.frontend_open_orders(intent.instrument.dex)
+            coin = intent.instrument.market_key.split('|')[0]
+            if intent.action == 'PLACE_STOP':
+                matches = [o for o in rows if o.get('cloid') == client_order_id(intent)]
+                if len(matches) == 1:
+                    o = matches[0]; oid = str(o['oid'])
+                    good = (o['coin'] == coin and o['reduceOnly'] is True and o.get('isTrigger') is True
+                            and str(o.get('orderType','')).lower() == 'stop market'
+                            and o['side'] == ('B' if intent.side == 'BUY' else 'A')
+                            and float(o['sz']) == intent.size and float(o['triggerPx']) == intent.limit_price)
+            else:
+                good = not any(str(o.get('oid')) == oid for o in rows)
+            # A protection mutation cannot prove a concurrently changed position.
+            same = lambda s: tuple((p.instrument,p.side,p.size,p.entry_price,p.leverage) for p in s.positions)
+            good = good and same(before) == same(after) and after.exchange_ms is not None and 0 <= now-after.exchange_ms <= 30000
+        except Exception:
+            good = False
+        return ExecutionReceipt(intent_id=intent.intent_id,scope=intent.scope,
+            status='CONFIGURED' if good else 'UNKNOWN',order_ids=(oid,) if good and oid else (),
+            reconciliation='CONFIRMED' if good else 'RECONCILIATION_REQUIRED',received_ms=now,
+            provenance='EXCHANGE' if good else 'UNKNOWN')
 
     def refresh(self, revision, dex=''):
         """Read-only fresh bound account evidence for a confirmed proposal."""

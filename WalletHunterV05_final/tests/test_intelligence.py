@@ -393,6 +393,20 @@ class IntelligenceTests(unittest.TestCase):
     def test_restart_preserves_registry(self):
         self.discover()
         self.assertEqual(WalletDiscoveryEngine(self.path,'TESTNET').snapshot(NOW)['counts'],{'DISCOVERED':2})
+    def test_demoted_position_owned_leader_remains_observed_without_admission(self):
+        analysis=self.activate()
+        with self.worker.store.transaction() as db:
+            db.execute("UPDATE candidates SET status='PROBATION' WHERE wallet=?",(ADDRESS,))
+        self.reader.fills.append(fill(3000,direction='Close Long',side='A',start='1',size='1',pnl='0',time=NOW+1000))
+        self.assertEqual(self.worker.detect(ADDRESS,self.reader._info,NOW+1000),[])
+        events=self.worker.detect(ADDRESS,self.reader._info,NOW+1000,position_owned=True)
+        self.assertEqual(events[0].action,'CLOSE')
+        self.assertEqual(self.worker.detect(ADDRESS,self.reader._info,NOW+1000,position_owned=True),[])
+    def test_demoted_leader_cannot_increase_autonomous_exposure(self):
+        backend,record=self.paper_backend()
+        record['admission_allowed']=False
+        self.assertEqual(backend.process(record)['status'],'LEADER_ADMISSION_HOLD')
+        self.assertEqual(backend.exchange.calls,0)
     def test_tiny_sample_does_not_qualify(self):
         w=reports([fill(pnl='100',time=NOW)],NOW)
         ranked=score(ADDRESS,'TESTNET',w,NOW,self.worker.policy)

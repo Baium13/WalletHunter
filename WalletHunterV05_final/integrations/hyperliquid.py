@@ -643,7 +643,7 @@ class HyperliquidAccount:
 
         return self.exchange.market_close(coin, slippage=slippage_pct / 100.0)
 
-    def place_stop_loss(self, coin, side, size, trigger_price, dex=""):
+    def place_stop_loss(self, coin, side, size, trigger_price, dex="", *, cloid=None):
         """Place a reduce-only stop-market order which survives this process."""
         if not self.exchange:
             return {"status": "paper", "response": {"data": {"statuses": [{"resting": {"oid": "paper"}}]}}}
@@ -659,7 +659,7 @@ class HyperliquidAccount:
         return self.exchange.order(
             sdk_coin, is_buy, size, float(trigger_price),
             {"trigger": {"triggerPx": float(trigger_price), "isMarket": True, "tpsl": "sl"}},
-            reduce_only=True,
+            reduce_only=True, **({'cloid': Cloid.from_str(cloid)} if cloid else {}),
         )
 
     def cancel_order(self, coin, oid, dex=""):

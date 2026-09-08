@@ -43,6 +43,12 @@ def main(argv=None):
         while True:
             started=time.monotonic()
             try:
+                if backend is not None:
+                    from core.foundation.store import scope_key
+                    import json
+                    with backend.store.transaction() as db:
+                        episodes=db.execute("SELECT body FROM position_episodes WHERE scope=?",(scope_key(backend.auth_policy.scope),)).fetchall()
+                    engine.position_owned_leaders={e['leader'] for row in episodes if (e:=json.loads(row['body']))['state']!='CLOSED'}
                 ok=tick(engine,reader,stream,int(time.time()*1000),clock=lambda:int(time.time()*1000))
                 if backend is not None: backend.drain(engine)
                 mode=backend.auth_policy.mode if backend is not None else 'OBSERVE'

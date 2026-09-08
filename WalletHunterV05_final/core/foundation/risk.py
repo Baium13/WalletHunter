@@ -33,6 +33,9 @@ class RiskGateway:
     def evaluate(self, intent, market, ledger, now, *, authorized=False, unresolved=False):
         intent = OrderIntent.model_validate_json(intent.model_dump_json())
         market = MarketSnapshot.model_validate_json(market.model_dump_json())
+        if intent.version == 4:
+            from .confirmed_risk import evaluate
+            return evaluate(self.policy, intent, market, ledger, now, authorized, unresolved)
         if intent.version == 2:
             return self._copy(intent, market, ledger, now, authorized, unresolved)
         p, snapshot = self.policy, ledger.portfolio

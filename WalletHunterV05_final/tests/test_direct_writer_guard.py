@@ -8,11 +8,17 @@ from core.confirmed_execution_adapter import (
 
 class DirectWriterGuard(unittest.TestCase):
     def test_product_modules_have_no_direct_submission_attributes(self):
-        root=Path(__file__).parents[1]/'core'
-        forbidden={'market_open','market_reduce','market_close','set_leverage','submit_user_ioc','submit_position_ioc'}
-        for name in ('manual_positions.py','ai_user_orders.py','ai_position_actions.py'):
-            tree=ast.parse((root/name).read_text(encoding='utf-8'))
-            self.assertFalse([n for n in ast.walk(tree) if isinstance(n,ast.Attribute) and n.attr in forbidden],name)
+        root=Path(__file__).parents[1]
+        forbidden={'market_open','market_reduce','market_close','set_leverage','submit_user_ioc','submit_position_ioc',
+                   'submit_copy_ioc','place_stop_loss','cancel_order','cancel_open_orders','bulk_orders','bulk_cancel'}
+        allowed={'core/foundation/copy_execution.py','core/legacy_route_calls.py'}
+        for folder in ('core','desktop','webapp'):
+            for path in (root/folder).rglob('*.py'):
+                name=path.relative_to(root).as_posix()
+                if name in allowed:continue
+                tree=ast.parse(path.read_text(encoding='utf-8-sig'))
+                self.assertFalse([n for n in ast.walk(tree) if isinstance(n,ast.Call)
+                    and isinstance(n.func,ast.Attribute) and n.func.attr in forbidden],name)
 
     def test_normal_route_modules_do_not_import_legacy_route_calls(self):
         root=Path(__file__).parents[1]/'core'

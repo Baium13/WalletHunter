@@ -155,16 +155,16 @@ class SourceContribution(Contract):
 
 
 class OrderIntent(Contract):
-    version: Literal[1, 2, 3] = 1
+    version: Literal[1, 2, 3, 4] = 1
     intent_id: Name
     scope: Scope
     instrument: InstrumentId
     source: Name
-    action: Literal["OPEN", "ADD", "REDUCE", "CLOSE", "LEVERAGE_UPDATE"]
+    action: Literal["OPEN", "ADD", "REDUCE", "CLOSE", "LEVERAGE_UPDATE", "PLACE_STOP", "CANCEL_OWNED"]
     side: Literal["BUY", "SELL"]
     size: Positive
     limit_price: Positive
-    order_type: Literal["IOC", "LEVERAGE"] = "IOC"
+    order_type: Literal["IOC", "LEVERAGE", "STOP_MARKET", "CANCEL"] = "IOC"
     leverage: Annotated[int, Field(strict=True, ge=1)]
     slippage_pct: Annotated[float, Field(strict=True, gt=0, le=10, allow_inf_nan=False)]
     authorization: Literal["USER_CONFIRMED", "COPY_POLICY", "PAPER_TEST", "PAPER_POLICY"]
@@ -175,17 +175,22 @@ class OrderIntent(Contract):
     source_contributions: tuple[SourceContribution, ...] = ()
     parent_intent_id: Name | None = None
     configure_leverage: bool = False
+    owned_order_id: Name | None = None
+    exchange_client_id: Annotated[str, Field(pattern=r"^0x[a-f0-9]{32}$")] | None = None
 
     @field_validator("version", mode="before")
     @classmethod
     def exact_version(cls, value):
-        if type(value) is not int or value not in (1, 2, 3):
+        if type(value) is not int or value not in (1, 2, 3, 4):
             raise ValueError("Unsupported intent schema version")
         return value
 
     @model_serializer(mode="wrap")
     def serialize_version(self, handler):
         data = handler(self)
+        if self.version < 4:
+            data.pop('owned_order_id', None)
+            data.pop('exchange_client_id', None)
         if self.version == 1:
             # Existing persisted intent hashes/client IDs must not change merely
             # because optional v2 fields were added to the Python model.
@@ -197,6 +202,8 @@ class OrderIntent(Contract):
     def coherent(self):
         if self.instrument.network != self.scope.network or self.expires_ms <= self.created_ms:
             raise ValueError("Invalid intent identity/lifetime")
+        if self.version < 4 and (self.owned_order_id or self.exchange_client_id or self.action in {'PLACE_STOP','CANCEL_OWNED'}):
+            raise ValueError('Scoped confirmed operations require version 4')
         if self.version == 1:
             if self.source_contributions or self.parent_intent_id is not None or self.configure_leverage or self.action == "LEVERAGE_UPDATE" or self.order_type != "IOC":
                 raise ValueError("Copy extensions require intent version 2")
@@ -205,6 +212,14 @@ class OrderIntent(Contract):
                     or self.order_type not in ('IOC','LEVERAGE')
                     or self.source_contributions or self.parent_intent_id is not None):
                 raise ValueError('Version 3 requires explicitly confirmed live entry')
+        elif self.version == 4:
+            if self.authorization != 'USER_CONFIRMED' or self.execution_mode != 'LIVE' or not self.parent_intent_id:
+                raise ValueError('Confirmed operation requires durable parent authority')
+            if (self.action == 'CANCEL_OWNED') != (self.owned_order_id is not None):
+                raise ValueError('Cancellation requires exact owned order identity')
+            expected_type = {'PLACE_STOP':'STOP_MARKET','CANCEL_OWNED':'CANCEL','LEVERAGE_UPDATE':'LEVERAGE'}.get(self.action,'IOC')
+            if self.order_type != expected_type:
+                raise ValueError('Confirmed action/order type mismatch')
         else:
             if self.authorization != "COPY_POLICY" or not self.source_contributions or self.parent_intent_id is None:
                 raise ValueError("Version 2 requires copy authority, parent and explicit sources")
@@ -267,7 +282,7 @@ class DomainEvent(Contract):
     event_id: Name
     event_type: Literal["MARKET_SNAPSHOT", "PORTFOLIO_SNAPSHOT", "LEADER_EVENT", "ORDER_INTENT_CREATED",
         "RISK_APPROVED", "RISK_REJECTED", "ORDER_SUBMITTED", "ORDER_PARTIALLY_FILLED", "ORDER_FILLED", "ORDER_REJECTED",
-        "EXECUTION_UNKNOWN", "POSITION_OPENED", "POSITION_INCREASED", "POSITION_REDUCED", "LEVERAGE_CONFIGURED", "POSITION_CHANGED", "POSITION_CLOSED", "RECONCILIATION_REQUIRED"]
+        "EXECUTION_UNKNOWN", "POSITION_OPENED", "POSITION_INCREASED", "POSITION_REDUCED", "LEVERAGE_CONFIGURED", "PROTECTION_CONFIGURED", "ORDER_CANCELLED", "POSITION_CHANGED", "POSITION_CLOSED", "RECONCILIATION_REQUIRED"]
     correlation_id: Name
     scope: Scope
     event_ms: Millis

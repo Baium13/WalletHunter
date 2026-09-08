@@ -562,15 +562,25 @@ class AiPositionActions:
                 raise ValueError("signer_mismatch_or_expiry")
             from core.confirmed_execution_adapter import execute_confirmed_ai
             if canonical_context is not None:
-                route_context = canonical_context(payload) if callable(canonical_context) else canonical_context
+                action='ADD' if payload['action']=='AVERAGE' else 'REDUCE'
+                request=dict(payload,action=action,approved_leverage_cap=payload['leverage'])
+                route_context = canonical_context(request) if callable(canonical_context) else canonical_context
                 response = execute_confirmed_ai(route_context, coin=payload['coin'], dex=payload.get('dex',''),
                     side='BUY' if payload['is_buy'] else 'SELL', size=payload['size'], price=payload['limit_price'],
-                    action='CLOSE' if payload.get('reduce_only') and payload['action']=='CLOSE' else 'REDUCE', source=payload.get('source_wallet','ai'))
+                    action=action, source=payload.get('source_wallet','ai'),identity=proposal_id,operation_id=operation,
+                    expected_position=payload['position_before'],leverage=payload['leverage'],expires_ms=row['expires_ms'],
+                    exchange_client_id=payload['cloid'],allocation_limit=float(context['budget']['source_slot_usdc']))
                 status = getattr(response, 'status', 'UNKNOWN')
                 result = {'canonical': True, 'status': status, 'order_ids': list(getattr(response, 'order_ids', ())),
                     'filled_size': sum(getattr(fill, 'size', 0) for fill in getattr(response, 'fills', ())),
                     'average_price': (sum(fill.size*fill.price for fill in getattr(response, 'fills', ())) /
                         max(sum(fill.size for fill in getattr(response, 'fills', ())), 1e-12)) if getattr(response, 'fills', ()) else None}
+                if status in {'FILLED','PARTIAL'}:
+                    snapshot=route_context['store'].portfolio(response.scope)
+                    after=next((p for p in snapshot.positions if p.instrument.market_key==key),None)
+                    result['position_after']=dict(payload['position_before'],size=after.size if after else 0.,
+                        entry_price=after.entry_price if after else payload['position_before']['entry_price'],
+                        margin_used=after.margin if after else 0.,position_value=after.notional if after else 0.)
             elif callable(self.legacy_test_executor):
                 signer = signing_factory()
                 if str(getattr(signer, "address", "")).lower() != row["account"] or _network(signer) != payload["network"]:
@@ -594,12 +604,15 @@ class AiPositionActions:
         if operation:
             ownership = None
             if status in ("FILLED", "PARTIAL"):
-                ownership = deepcopy(context["owned"])
+                # The canonical transaction already projected verified fill
+                # identities and source weights. Do not overwrite that proof
+                # with the stale pre-confirmation journal envelope.
+                ownership = deepcopy(self.journal.owned(row['account']).get(key) if canonical_context is not None else context["owned"])
                 after = deepcopy(result["position_after"])
                 ownership.update(position=after, size=after["size"], side=after["side"], intervention_proposal_id=proposal_id)
                 ratio = after["size"]/payload["position_before"]["size"]
                 ownership["source_targets"][0]["margin"] = after["margin_used"]
-                if "signed" in ownership["source_targets"][0]:
+                if canonical_context is None and "signed" in ownership["source_targets"][0]:
                     ownership["source_targets"][0]["signed"] = _number(ownership["source_targets"][0]["signed"], "source_signed", -math.inf)*ratio
             try:
                 self.journal.finish(operation, {"ok": ownership is not None, "status": status, **result}, ownership)

@@ -4,6 +4,7 @@ from pathlib import Path
 from core.product_read import reader
 from core.foundation.contracts import OrderIntent
 from core.foundation.store import digest,scope_key
+from core.foundation.authorization import AuthorizationDecision
 
 
 class ProductConfirmations:
@@ -15,13 +16,17 @@ class ProductConfirmations:
 
     def proposals(self):
         with reader(self.path) as db:
+            owner=db.execute('SELECT tenant FROM owners WHERE network=? AND account=?',(self.scope.network,self.scope.account)).fetchone()
+            if not owner or owner[0]!=self.scope.tenant:raise ValueError('CONFIRMATION_STORE_SCOPE')
             records=db.execute('SELECT * FROM autonomous_decisions WHERE scope=? ORDER BY rowid DESC LIMIT 100',(scope_key(self.scope),)).fetchall()
             result=[]
             for row in records:
                 if not row['intent']:continue
                 intent=OrderIntent.model_validate_json(row['intent']);data=json.loads(row['body'])
+                if intent.scope!=self.scope or intent.intent_id!=row['id']:raise ValueError('PROPOSAL_SCOPE_MISMATCH')
                 request=db.execute('SELECT body FROM authorization_requests WHERE id=? AND scope=?',(intent.intent_id,scope_key(self.scope))).fetchone()
                 original=json.loads(request[0]) if request else {}
+                if request and AuthorizationDecision.model_validate(original).scope!=self.scope:raise ValueError('AUTHORIZATION_SCOPE_MISMATCH')
                 if data['mode']!='LIVE_CONFIRM' or original.get('outcome')!='CONFIRMATION_REQUIRED':continue
                 rejected=False
                 if db.execute("SELECT 1 FROM sqlite_master WHERE name='authorization_rejections'").fetchone():

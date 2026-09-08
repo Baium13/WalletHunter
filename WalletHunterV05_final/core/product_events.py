@@ -15,9 +15,69 @@ class ProductEvents:
             db.executescript('''CREATE TABLE IF NOT EXISTS product_events(seq INTEGER PRIMARY KEY AUTOINCREMENT,
                 scope TEXT,id TEXT,kind TEXT,body TEXT,created INTEGER,UNIQUE(scope,id));
                 CREATE TABLE IF NOT EXISTS product_latest(scope TEXT,object TEXT,digest TEXT,PRIMARY KEY(scope,object));
+                CREATE TABLE IF NOT EXISTS product_source_offsets(scope TEXT,source TEXT,seq INTEGER,PRIMARY KEY(scope,source));
                 CREATE TABLE IF NOT EXISTS product_outbox(scope TEXT,id TEXT,body TEXT,status TEXT,attempts INTEGER,
                 due INTEGER,critical INTEGER,last_error TEXT,PRIMARY KEY(scope,id));
                 CREATE TABLE IF NOT EXISTS product_delivery_health(scope TEXT PRIMARY KEY,body TEXT);''')
+
+    def ingest(self,view,limit=20):
+        """Resume durable source history, even when all dashboards were offline.
+
+        Publish-before-offset plus immutable event identity is crash-idempotent.
+        Source databases are opened read-only; delivery is never performed here.
+        """
+        from core.product_read import reader
+        from core.foundation.contracts import DomainEvent
+        import sqlite3
+        if type(limit) is not int or not 1<=limit<=50:raise ValueError('SOURCE_BOUND')
+        sources=[(view.root/'data/executions.sqlite3','events',None)]
+        for binding in view.bindings:
+            sources.extend((view._path(binding.state_path),table,binding.mode) for table in ('events','autonomous_outcomes','autonomous_decisions'))
+        sources.append((view.research_path,'intelligence_records',None))
+        key=scope_key(view.scope)
+        for path,table,mode in sources:
+            identity=str(path.resolve())+'|'+table
+            with self.store.transaction() as db:
+                old=db.execute('SELECT seq FROM product_source_offsets WHERE scope=? AND source=?',(key,identity)).fetchone()
+                after=old[0] if old else 0
+            try:
+                with reader(path) as db:
+                    if table=='intelligence_records':
+                        records=db.execute('SELECT rowid AS seq,* FROM intelligence_records WHERE network=? AND rowid>? ORDER BY rowid LIMIT ?',(view.scope.network,after,limit)).fetchall()
+                    else:
+                        records=db.execute('SELECT rowid AS seq,* FROM '+table+' WHERE scope=? AND rowid>? ORDER BY rowid LIMIT ?',(key,after,limit)).fetchall()
+            except (ValueError,OSError,sqlite3.Error):continue
+            for row in records:
+                kind=payload=None;notify=critical=False
+                try:
+                    value=json.loads(row['body'])
+                    if table=='events':
+                        event=DomainEvent.model_validate(value)
+                        if event.scope!=view.scope:raise ValueError('EVENT_SCOPE_MISMATCH')
+                        mapping={'PORTFOLIO_SNAPSHOT':'POSITION_UPDATED','ORDER_INTENT_CREATED':'ORDER_INTENT',
+                            'RISK_APPROVED':'RISK_UPDATED','RISK_REJECTED':'RISK_UPDATED','ORDER_SUBMITTED':'EXECUTION_UPDATED',
+                            'ORDER_FILLED':'EXECUTION_UPDATED','ORDER_PARTIALLY_FILLED':'EXECUTION_UPDATED','ORDER_REJECTED':'EXECUTION_UPDATED',
+                            'EXECUTION_UNKNOWN':'EXECUTION_UPDATED','RECONCILIATION_REQUIRED':'EXECUTION_UPDATED'}
+                        kind='POSITION_UPDATED' if event.event_type.startswith('POSITION_') else mapping.get(event.event_type);payload=value
+                        notify=event.event_type in {'ORDER_FILLED','ORDER_PARTIALLY_FILLED','ORDER_REJECTED','EXECUTION_UNKNOWN','RECONCILIATION_REQUIRED','RISK_APPROVED','RISK_REJECTED'}
+                        critical=event.event_type in {'EXECUTION_UNKNOWN','RECONCILIATION_REQUIRED'}
+                    elif table=='autonomous_outcomes':
+                        if value.get('version')=='outcome-v2':kind,payload,notify='OUTCOME_UPDATED',value,True
+                    elif table=='autonomous_decisions':
+                        if value.get('status')=='CONFIRMATION_REQUIRED':kind,payload,notify='AUTHORIZATION_REQUIRED',value['authorization'],True
+                    else:
+                        mapping={'LEADER_PROMOTED':'LEADER_PROMOTED','LEADER_DEGRADED':'LEADER_DEGRADED','LEADER_TRADE':'LEADER_EVENT','DECISION':'CONSENSUS_UPDATED'}
+                        kind=mapping.get(row['kind']);payload=value.get('consensus') if row['kind']=='DECISION' else value
+                        notify=kind is not None
+                    # Event identity survives a restore into a different directory;
+                    # only the read cursor needs to rediscover that source path.
+                    if kind:self.publish(view.scope,'source:'+str(mode)+':'+table+':'+str(row['id']),kind,dict(mode=mode,evidence=payload),notify=notify,critical=critical)
+                except (ValueError,KeyError,TypeError):
+                    # Optional product projection poison is visible, never a reason
+                    # to mutate or discard the canonical financial record.
+                    self.publish(view.scope,'poison:'+identity+':'+str(row['seq']),'HEALTH_UPDATED',{'status':'DEGRADED','reason':'PRODUCT_SOURCE_RECORD_INVALID'})
+                with self.store.transaction() as db:
+                    db.execute('INSERT INTO product_source_offsets VALUES(?,?,?) ON CONFLICT(scope,source) DO UPDATE SET seq=MAX(seq,excluded.seq)',(key,identity,row['seq']))
 
     def publish(self,scope,identity,kind,payload,*,notify=False,critical=False):
         encoded=json.dumps(clean(payload),sort_keys=True,allow_nan=False)
@@ -42,12 +102,12 @@ class ProductEvents:
             payload={k:action[k] for k in ('intent_id','status','correlation_id','timestamp','origin')}
             payload['mode']=action['intent']['execution_mode']
             self.publish(scope,'account:'+action['intent_id'],'MANUAL_COPY_UPDATED' if action['origin']=='MANUAL_LEADER_COPY' else 'EXECUTION_UPDATED',
-                payload,notify=True,critical=action['status'] in {'UNKNOWN','PARTIAL'})
+                payload,critical=action['status'] in {'UNKNOWN','PARTIAL'})
         discovery=snapshot['discovery']
         self.publish(scope,'discovery','DISCOVERY_UPDATED',{'counts':discovery['counts'],'status':discovery['status']})
         for leader in discovery['leaders']:
             self.publish(scope,'leader:'+leader['wallet'],'LEADER_PROMOTED' if leader['status']=='ACTIVE' else 'LEADER_DEGRADED',
-                {'wallet':leader['wallet'],'status':leader['status']},notify=leader['status'] in {'ACTIVE','PROBATION','RETIRED'})
+                {'wallet':leader['wallet'],'status':leader['status']})
         for mode in snapshot['runtimes']:
             prefix=mode['mode']+':'
             self.publish(scope,prefix+'mode','MODE_CHANGED',{'configured':mode['configured_mode'],'runtime':mode['runtime_mode']})
@@ -56,17 +116,16 @@ class ProductEvents:
                 for field,kind in [('event','LEADER_EVENT'),('agents','AGENT_UPDATED'),('consensus','CONSENSUS_UPDATED'),('authorization','AUTHORIZATION_REQUIRED')]:
                     value=decision.get(field)
                     if value is not None:self.publish(scope,prefix+field+decision['event']['event_id'],kind,value,
-                        notify=field=='event' or (field=='consensus' and value.get('decision') in {'COPY_LONG','COPY_SHORT','SKIP'}) or
-                            (field=='authorization' and value.get('outcome')=='CONFIRMATION_REQUIRED'))
+                        notify=False)
             for action in mode.get('actions',[]):
                 payload={k:action[k] for k in ('intent_id','status','correlation_id','timestamp')}
                 payload['mode']=mode['mode']
-                self.publish(scope,prefix+action['intent_id'],'EXECUTION_UPDATED',payload,notify=True,critical=action['status'] in {'UNKNOWN','PARTIAL'})
+                self.publish(scope,prefix+action['intent_id'],'EXECUTION_UPDATED',payload,critical=action['status'] in {'UNKNOWN','PARTIAL'})
                 self.publish(scope,prefix+action['intent_id']+'-intent','ORDER_INTENT',action['intent'])
-                if action['risk']:self.publish(scope,prefix+action['intent_id']+'-risk','RISK_UPDATED',action['risk'],notify=True)
+                if action['risk']:self.publish(scope,prefix+action['intent_id']+'-risk','RISK_UPDATED',action['risk'])
             for episode in mode.get('episodes',[]):
                 self.publish(scope,prefix+episode['episode_id'],'POSITION_UPDATED',{k:episode[k] for k in ('episode_id','instrument','state','mode','origin','unresolved')})
-                if episode['outcome']:self.publish(scope,prefix+episode['episode_id']+'-outcome','OUTCOME_UPDATED',episode['outcome'],notify=True)
+                if episode['outcome']:self.publish(scope,prefix+episode['episode_id']+'-outcome','OUTCOME_UPDATED',episode['outcome'])
 
     def read(self,scope,after=0,limit=50):
         if type(after) is not int or after<0 or type(limit) is not int or not 1<=limit<=100:raise ValueError('CURSOR_BOUND')

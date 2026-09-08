@@ -79,7 +79,7 @@ def router(authenticate,resolve,event_service,backend_factory):
 
     @api.get('/api/product/events/resume')
     def events(after:int=Query(0,ge=0),x_telegram_init_data:str|None=Header(default=None)):
-        _,v=view(x_telegram_init_data);service=event_service();snapshot=v.snapshot();service.collect(snapshot)
+        _,v=view(x_telegram_init_data);service=event_service();service.ingest(v);snapshot=v.snapshot();service.collect(snapshot)
         return {'snapshot':snapshot,**service.read(v.scope,after)}
 
     @api.get('/api/product/events/stream')
@@ -95,7 +95,7 @@ def router(authenticate,resolve,event_service,backend_factory):
                     _,current=view(x_telegram_init_data)
                     if current.scope!=v.scope:break
                     def page():
-                        service=event_service();snapshot=current.snapshot();service.collect(snapshot)
+                        service=event_service();service.ingest(current);snapshot=current.snapshot();service.collect(snapshot)
                         return snapshot,service.read(v.scope,cursor)
                     snapshot,data=await asyncio.to_thread(page);cursor=data['cursor']
                     if n==0 or data['reset_required']:data['snapshot']=snapshot

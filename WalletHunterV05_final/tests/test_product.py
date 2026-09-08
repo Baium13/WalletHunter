@@ -199,10 +199,13 @@ class ProductTests(unittest.TestCase):
         self.assertTrue(manual['configured']);self.assertAlmostEqual(manual['committed'],8.)
         self.assertEqual(manual['reserved'],0.);self.assertAlmostEqual(manual['available'],72.)
         self.assertEqual(manual['positions'][0]['origin'],'MANUAL_LEADER_COPY')
+        shared_leader_view=ProductReadModel(root,scope,clock=lambda:int(case.now*1000),sources=(case.f.SOURCE_A,)).snapshot()
+        self.assertEqual(shared_leader_view['account']['source_allocations'][case.f.SOURCE_A]['committed'],0.)
+        self.assertAlmostEqual(shared_leader_view['manual_copy']['committed'],8.)
 
     def test_telegram_failure_does_not_prevent_subsequent_canonical_close(self):
         b,r,_,view=self.setup_view();b.process(r)
-        events=ProductEvents(self.root/'data/product.sqlite3',b.clock);events.collect(view.snapshot())
+        events=ProductEvents(self.root/'data/product.sqlite3',b.clock);events.ingest(view);events.collect(view.snapshot())
         async def fail(*args):raise TimeoutError()
         asyncio.run(events.deliver(b.auth_policy.scope,fail))
         b.process(self.case.followup(r,'CLOSE',1,0))
@@ -235,3 +238,56 @@ class ProductTests(unittest.TestCase):
         events.publish(b.auth_policy.scope,'safety','HEALTH_UPDATED',{'private_key':'synthetic-secret','nested':{'telegram_bot_token':'synthetic'},'capacity':float('nan')})
         data=events.read(b.auth_policy.scope)['events'][0]['data']
         self.assertNotIn('private_key',data);self.assertNotIn('telegram_bot_token',data['nested']);self.assertIsNone(data['capacity'])
+
+    def test_corrupt_embedded_account_scope_is_not_exposed(self):
+        b,r,_,view=self.setup_view();b.process(r)
+        with b.store.transaction() as db:
+            row=db.execute('SELECT body FROM portfolios').fetchone();p=json.loads(row[0]);p['scope']['account']='0x'+'f'*40
+            db.execute('UPDATE portfolios SET body=?',(json.dumps(p),))
+        mode=view.snapshot()['runtimes'][0]
+        self.assertEqual(mode['status'],'UNKNOWN');self.assertNotIn('portfolio',mode)
+
+    def test_corrupt_embedded_proposal_scope_cannot_reach_factory(self):
+        b,_,control,factory,_=self.live_control()
+        with b.store.transaction() as db:
+            row=db.execute('SELECT intent FROM autonomous_decisions').fetchone();intent=json.loads(row[0]);intent['scope']['tenant']='other'
+            db.execute('UPDATE autonomous_decisions SET intent=?',(json.dumps(intent),))
+        with self.assertRaises(ValueError):control.proposals()
+        factory.assert_not_called()
+
+    def test_offline_product_recovers_source_backlog_beyond_snapshot_window(self):
+        from core.foundation.contracts import DomainEvent,ExecutionReceipt
+        b,_,_,view=self.setup_view();scope=b.auth_policy.scope
+        for n in range(110):
+            receipt=ExecutionReceipt(intent_id='offline-'+str(n),scope=scope,status='UNKNOWN',reconciliation='RECONCILIATION_REQUIRED',received_ms=b.clock(),provenance='UNKNOWN')
+            b.store.append(DomainEvent(event_id='offline-'+str(n),event_type='EXECUTION_UNKNOWN',correlation_id='offline-'+str(n),
+                scope=scope,event_ms=b.clock(),received_ms=b.clock(),payload=receipt))
+        events=ProductEvents(self.root/'data/product.sqlite3',b.clock)
+        for _ in range(8):events.ingest(view)
+        with events.store.transaction() as db:
+            count=db.execute("SELECT COUNT(*) FROM product_outbox WHERE body LIKE '%offline-%'").fetchone()[0]
+        self.assertEqual(count,110)
+        restarted=ProductEvents(self.root/'data/product.sqlite3',b.clock);restarted.ingest(view)
+        with restarted.store.transaction() as db:self.assertEqual(db.execute("SELECT COUNT(*) FROM product_outbox WHERE body LIKE '%offline-%'").fetchone()[0],110)
+
+    def test_source_publish_crash_before_offset_is_idempotent(self):
+        from test_autonomous_durability import Crash
+        b,r,_,view=self.setup_view();b.process(r);events=ProductEvents(self.root/'data/product.sqlite3',b.clock)
+        publish=events.publish
+        def crash(*args,**kwargs):publish(*args,**kwargs);raise Crash()
+        with patch.object(events,'publish',side_effect=crash),self.assertRaises(Crash):events.ingest(view)
+        resumed=ProductEvents(self.root/'data/product.sqlite3',b.clock);resumed.ingest(view)
+        items=resumed.read(b.auth_policy.scope,limit=100)['events']
+        self.assertEqual(len({e['id'] for e in items}),len(items))
+
+    def test_restored_source_path_preserves_notification_identity(self):
+        import sqlite3
+        from contextlib import closing
+        b,r,binding,view=self.setup_view();b.process(r)
+        events=ProductEvents(self.root/'data/product.sqlite3',b.clock);events.ingest(view)
+        with events.store.transaction() as db:before=db.execute('SELECT COUNT(*) FROM product_outbox').fetchone()[0]
+        restored=self.root/'restored.sqlite'
+        with closing(sqlite3.connect(b.store.path)) as source,closing(sqlite3.connect(restored)) as destination:source.backup(destination)
+        relocated=ProductReadModel(self.root,b.auth_policy.scope,[binding.model_copy(update={'state_path':str(restored)})],b.clock,research_path=self.case.worker.store.path)
+        events.ingest(relocated)
+        with events.store.transaction() as db:self.assertEqual(before,db.execute('SELECT COUNT(*) FROM product_outbox').fetchone()[0])

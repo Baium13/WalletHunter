@@ -6,7 +6,7 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 from pydantic import Field
-from core.foundation.contracts import Contract, Scope, PortfolioSnapshot,MarketSnapshot
+from core.foundation.contracts import Contract, Scope, PortfolioSnapshot,MarketSnapshot,OrderIntent,ExecutionReceipt
 from core.foundation.store import scope_key
 from core.foundation.autonomous_allocation import AutonomousAllocationPolicy, AutonomousLedger
 from core.foundation.ledger import Reservation
@@ -22,7 +22,7 @@ class RuntimeBinding(Contract):
 def clean(value):
     """Finite JSON only. Never project credentials or free-form exception text."""
     if isinstance(value, dict):
-        return {k:clean(v) for k,v in value.items() if not any(x in k.lower() for x in ('secret','private_key','token','password','error_text'))}
+        return {k:clean(v) for k,v in value.items() if not any(x in k.lower() for x in ('secret','private_key','api_key','credential','token','password','session_string','error_text'))}
     if isinstance(value,(list,tuple)):return [clean(v) for v in value]
     if isinstance(value,float) and not math.isfinite(value):return None
     return value
@@ -94,10 +94,13 @@ class ProductReadModel:
             owner=db.execute('SELECT tenant FROM owners WHERE network=? AND account=?',(scope.network,scope.account)).fetchone()
             if not owner or owner[0]!=scope.tenant:raise ValueError('STORE_SCOPE_UNVERIFIED')
             p=rows(db,'portfolios',key,1);portfolio=PortfolioSnapshot.model_validate(body(p[0])) if p else None
+            if portfolio and portfolio.scope!=scope:raise ValueError('PORTFOLIO_SCOPE_MISMATCH')
             raw=rows(db,'intents',key);decisions=rows(db,'autonomous_decisions',key)
             episodes=[body(r) for r in rows(db,'position_episodes',key)]
+            from core.position_episodes import PositionEpisode
+            if any(PositionEpisode.model_validate(e).scope!=scope or (mode is not None and e['mode']!=mode) for e in episodes):raise ValueError('EPISODE_SCOPE_MISMATCH')
             outcomes=[body(r) for r in rows(db,'autonomous_outcomes',key)]
-            calibrations=[body(r) for r in rows(db,'calibration_records',key)]
+            calibrations=[body(r) for r in rows(db,'calibration_records',key) if body(r).get('version')=='evaluation-v2']
             health=rows(db,'autonomous_health',key,1);health=body(health[0]) if health else {}
             runtime=rows(db,'autonomous_modes',key,1);runtime=runtime[0]['mode'] if runtime else None
             if mode and runtime!=mode:raise ValueError('RUNTIME_MODE_MISMATCH')
@@ -118,7 +121,13 @@ class ProductReadModel:
                     a=ledger.allocation(policy.source);allocation.update(committed=a.committed,reserved=a.reserved,available=a.available)
             actions=[]
             for r in raw:
-                i=json.loads(r['body']);receipt=json.loads(r['receipt']) if r['receipt'] else None
+                intent=OrderIntent.model_validate_json(r['body'])
+                if intent.scope!=scope or intent.intent_id!=r['id']:raise ValueError('INTENT_SCOPE_MISMATCH')
+                i=intent.model_dump(mode='json');receipt=None
+                if r['receipt']:
+                    parsed=ExecutionReceipt.model_validate_json(r['receipt'])
+                    if parsed.scope!=scope or parsed.intent_id!=r['id']:raise ValueError('RECEIPT_SCOPE_MISMATCH')
+                    receipt=parsed.model_dump(mode='json')
                 origin='AUTONOMOUS' if mode else 'COPY' if i['authorization']=='COPY_POLICY' else 'MANUAL' if i['source']=='manual' else None
                 if not mode and db.execute("SELECT 1 FROM sqlite_master WHERE name='operations'").fetchone():
                     parent=db.execute('SELECT intent FROM operations WHERE id=? AND account=?',(i.get('parent_intent_id'),scope.account)).fetchone()
@@ -194,6 +203,7 @@ class ProductReadModel:
                 result['counts']={**counts,'OBSERVED':sum(counts.values())}
                 for r in db.execute('SELECT wallet,status,last_seen,analysis FROM candidates WHERE network=? ORDER BY score DESC,wallet LIMIT 32',(self.scope.network,)):
                     analysis=json.loads(r['analysis']) if r['analysis'] else None
+                    if isinstance(analysis,dict):analysis={k:analysis[k] for k in ('wallet','network','computed_ms','score','windows','history_method','equity_drawdown_pct','funding_included','not_a_profit_probability') if k in analysis}
                     result['leaders'].append(dict(wallet=r['wallet'],status=r['status'],last_seen=r['last_seen'],analysis=analysis))
                 h=db.execute('SELECT last_success,last_attempt,error FROM intelligence_health WHERE network=?',(self.scope.network,)).fetchone()
                 result.update(observed(h['last_success'] if h else None,self.clock(),failed=bool(h and h['error'])))
@@ -213,7 +223,8 @@ class ProductReadModel:
                 if Scope.model_validate(config['authorization']['scope'])!=self.scope or config['authorization']['mode']!=binding.mode:raise ValueError('CONFIG_SCOPE_MISMATCH')
                 modes.append(self._store(self._path(binding.state_path),binding.mode,config))
             except (OSError,sqlite3.Error,ValueError,KeyError,TypeError):modes.append({'mode':binding.mode,'configured_mode':binding.mode,'runtime_mode':None,'status':'UNKNOWN','reason':'CANONICAL_STORE_UNAVAILABLE'})
-        manual={'configured':None,'status':'UNKNOWN','committed':None,'reserved':None,'available':None,'positions':[]}
+        manual={'configured':None,'status':'UNKNOWN','committed':None,'reserved':None,'available':None,'positions':[],
+            'pnl':None,'outcome_summary':None,'pending_operations':None}
         account=None
         try:
             account=self._store(self.root/'data/executions.sqlite3')
@@ -228,6 +239,7 @@ class ProductReadModel:
                     manual['reserved']=None if state.get('reserved_unknown') else 0.
                 if configs:
                     configuration=body(configs[0]);manual['enabled']=configuration['enabled'];manual['paused']=not configuration['enabled']
+                    manual.update(selected_leader=configuration['leader'],alias=configuration['alias'],allocation_pct=configuration['allocation_pct'])
                     if manual['paused']:manual['status']='HOLD'
                     evidence=next((m for m in (manual.get('monitored') or []) if m.get('leader')==configuration['leader']),{})
                     manual['leader_capital_denominator']=evidence.get('capital')
@@ -237,13 +249,23 @@ class ProductReadModel:
                 if account and account.get('portfolio'):
                     from core.source_allocation import SourceAllocationBook
                     portfolio=PortfolioSnapshot.model_validate(account['portfolio'])
+                    if portfolio.completeness!='COMPLETE' or portfolio.evidence=='LEGACY_UNKNOWN':
+                        manual.update(committed=None,reserved=None,available=None,status='HOLD')
+                        raise ValueError('CAPITAL_EVIDENCE_UNAVAILABLE')
                     owned={r['market']:json.loads(r['record']) for r in db.execute('SELECT market,record FROM ownership WHERE account=?',(self.scope.account,))}
                     owned={k:r for k,r in owned.items() if r.get('network',r.get('execution_evidence',{}).get('network'))==self.scope.network}
                     actual={p.instrument.market_key:dict(side=p.side,size=p.size,entry_price=p.entry_price,position_value=p.notional,leverage=p.leverage,margin_used=p.margin) for p in portfolio.positions}
                     pending={r['market']:json.loads(r['intent']) for r in db.execute("SELECT market,intent FROM operations WHERE account=? AND status IN ('PREPARED','UNKNOWN')",(self.scope.account,))}
                     account['source_allocations']=None
                     if all(r.get('network')==self.scope.network for r in pending.values()):
-                        book=SourceAllocationBook(portfolio.sizing_capital,list(self.sources),actual,owned,{k for k,r in owned.items() if r.get('managed')},pending)
+                        # Manual Leader Copy has its own allocation even if the
+                        # public leader address also appears in configured COPY.
+                        separate={k for k,r in owned.items() if r.get('strategy')=='MANUAL_LEADER_COPY'}
+                        copy_owned={k:r for k,r in owned.items() if k not in separate}
+                        copy_actual={k:r for k,r in actual.items() if k not in separate}
+                        copy_pending={k:r for k,r in pending.items() if r.get('strategy')!='MANUAL_LEADER_COPY'}
+                        book=SourceAllocationBook(portfolio.sizing_capital,list(self.sources),copy_actual,copy_owned,
+                            {k for k,r in copy_owned.items() if r.get('managed')},copy_pending)
                         if not book.errors:account['source_allocations']={source:{'allocation_limit':a.allocation_limit,'committed':a.committed_margin,'reserved':a.reserved_margin,'available':a.available_source_budget} for source,a in book.accounts.items()}
                     for p in account['portfolio']['positions']:
                         instrument=p['instrument'];market=(instrument['dex']+':' if instrument['dex'] else '')+instrument['symbol']+'|'+instrument['dex']
@@ -267,6 +289,7 @@ class ProductReadModel:
                         manual_owned={k:r for k,r in owned.items() if r.get('strategy')=='MANUAL_LEADER_COPY'}
                         manual_actual={k:v for k,v in actual.items() if k in manual_owned}
                         manual_pending={k:r for k,r in pending.items() if r.get('strategy')=='MANUAL_LEADER_COPY'}
+                        manual['pending_operations']=[{'market':k,'action':r.get('action'),'state':'RECONCILIATION_REQUIRED'} for k,r in manual_pending.items()]
                         manual_book=SourceAllocationBook(portfolio.sizing_capital,[selected],manual_actual,manual_owned,
                             {k for k,r in manual_owned.items() if r.get('managed')},manual_pending,allocation_limits={selected:manual['allocation_limit']})
                         if not manual_book.errors and all(r.get('network')==self.scope.network for r in manual_pending.values()):

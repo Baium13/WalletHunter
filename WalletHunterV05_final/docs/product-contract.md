@@ -40,6 +40,11 @@ re-authentication and reset notification after retention gaps (2,000 events).
 The stream projects real state changes; it is not an exchange execution journal.
 Polling/disconnect does not change financial state. Reconcile periodically with
 the snapshot; public discovery coverage means observed markets, not all wallets.
+Independent persisted source offsets drain canonical events, outcomes,
+confirmation requests and research history in batches of 20. They catch up after
+UI/Telegram downtime beyond the snapshot's 100-record window; publication before
+offset acknowledgement is idempotent across crashes. Optional corrupt source
+records emit a product health warning without changing the original store.
 
 Telegram `/status` is private-chat-only and uses this same read model. A separate
 bounded task projects notifications and sends at most one per tenant per turn.

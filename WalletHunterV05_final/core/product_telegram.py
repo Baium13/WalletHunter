@@ -25,6 +25,8 @@ def notice_text(event,identity,en=True):
         'LEADER_PROMOTED':('Leader promoted','Лидер выбран'),'LEADER_DEGRADED':('Leader downgraded','Рейтинг лидера понижен'),
         'HEALTH_UPDATED':('System warning','Предупреждение системы')}
     kind=event['type'];title=labels.get(kind,(kind,kind))[0 if en else 1];data=event['data']
+    if isinstance(data.get('evidence'),dict):data={**data,**data['evidence']}
+    if isinstance(data.get('payload'),dict):data={**data,**data['payload']}
     fields=('mode','status','wallet','intent_id','decision_id','net_pnl')
     return title+'\n'+'\n'.join(f'{k}: {data[k]}' for k in fields if k in data and data[k] is not None)+'\nID: '+identity[:12]
 
@@ -40,6 +42,7 @@ async def product_notifications(root,storage,settings,client):
                     _,profile=storage.profile(int(uid))
                     if not profile.get('account'):continue
                     view=view_for(root,uid,profile,settings.hl_mode)
+                    await asyncio.to_thread(service.ingest,view)
                     snapshot=await asyncio.to_thread(view.snapshot)
                     await asyncio.to_thread(service.collect,snapshot)
                     if not profile.get('notifications',True):continue

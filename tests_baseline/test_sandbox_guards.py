@@ -32,7 +32,7 @@ class SandboxGuards(unittest.TestCase):
             self.assertIn("tests/test_ownership_history_cache.py", files)
         if phase in {"1.2", "1", "block1"}:
             self.assertIn("tests/test_source_allocation.py", files)
-        self.assertEqual(len(list((root/"tests").glob("*.cjs"))), 6)
+        self.assertEqual(len(list((root/"tests").glob("*.cjs"))), 7 if phase == "block1" else 6)
         for name in files:
             p = Path(name)
             self.assertNotIn("data", p.parts)

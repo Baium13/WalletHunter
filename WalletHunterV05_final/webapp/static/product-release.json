@@ -1,0 +1,9 @@
+{
+  "release": "c7fc73edfbc1367a",
+  "contract": "product-v1",
+  "assets": {
+    "product-model.js": "dfa84b3a32d4eb8a11d2ed9c73639ecafe560988d5e1fb2ea18c74b7e2a6827b",
+    "product.js": "9da0c8b7899fad49cd369ba1a8ec855209e5f800bb31cf82e2be97e080f1c516",
+    "product.css": "d6dd76831b29b66a4749100e1ea93c08b06986a30491e72cc2091b379de2d091"
+  }
+}

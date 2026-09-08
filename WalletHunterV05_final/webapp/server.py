@@ -118,9 +118,19 @@ def product_view(uid):
     _,profile=storage.profile(uid)
     return view_for(ROOT,uid,profile,settings.hl_mode)
 
+def product_market(scope,coin,interval,hours,token):
+    # Read-only compatibility boundary: reuse existing bounded chart/price caches,
+    # never instantiate another client or interpret a candle as a live mark.
+    if scope.network!=settings.hl_mode:raise HTTPException(409,'MARKET_NETWORK_MISMATCH')
+    data=chart(coin,interval,hours,token)
+    dex,symbol=coin.split(':',1) if ':' in coin else ('',coin)
+    try:mark=price(symbol,dex,token)
+    except Exception:mark=None
+    return {**data,'mark':mark}
+
 app.include_router(product_router(require_user,product_view,
     lambda:ProductEvents(os.path.join(ROOT,'data','product.sqlite3')),
-    lambda binding:confirmed_backend(ROOT,binding,storage,settings)))
+    lambda binding:confirmed_backend(ROOT,binding,storage,settings),product_market))
 
 
 def short_address(value: str) -> str:

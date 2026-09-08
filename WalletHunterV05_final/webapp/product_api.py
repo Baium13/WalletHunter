@@ -1,6 +1,8 @@
 """Authenticated product contracts; no credentials, no generic 'confirm latest'."""
 import asyncio
 import json
+import math
+from typing import Literal
 from collections import Counter
 from fastapi import APIRouter,Header,HTTPException,Query,Request
 from fastapi.responses import StreamingResponse
@@ -13,7 +15,7 @@ class ConfirmationInput(BaseModel):
     proposal_hash:str=Field(pattern='^[0-9a-f]{64}$')
 
 
-def router(authenticate,resolve,event_service,backend_factory):
+def router(authenticate,resolve,event_service,backend_factory,market_reader=None):
     api=APIRouter();connections=Counter()
     def view(token):
         user=authenticate(token)
@@ -47,6 +49,26 @@ def router(authenticate,resolve,event_service,backend_factory):
         _,v=view(x_telegram_init_data)
         try:return v.episode(episode_id)
         except KeyError:raise HTTPException(404,'EPISODE_NOT_FOUND') from None
+
+    @api.get('/api/product/market/candles')
+    def market(coin:str=Query(pattern=r'^(?:[a-z0-9]+:)?[A-Za-z0-9._/-]{1,32}$'),
+               network:Literal['MAINNET','TESTNET']=Query(),interval:Literal['1m','5m','15m','1h','4h','1d']='15m',
+               hours:int=Query(24,ge=1,le=720),x_telegram_init_data:str|None=Header(default=None)):
+        _,v=view(x_telegram_init_data)
+        if network!=v.scope.network:raise HTTPException(409,'MARKET_NETWORK_MISMATCH')
+        if market_reader is None:raise HTTPException(503,'MARKET_READ_UNAVAILABLE')
+        try:
+            data=market_reader(v.scope,coin,interval,hours,x_telegram_init_data)
+            finite=lambda x:isinstance(x,(int,float)) and not isinstance(x,bool) and math.isfinite(x)
+            candles=data['candles']
+            if len(candles)>500 or any(not all(finite(c.get(k)) for k in ('t','o','h','l','c')) or c['t']<=0 or c['l']<=0
+                or c['h']<max(c['o'],c['c']) or c['l']>min(c['o'],c['c']) for c in candles):raise ValueError('MALFORMED_CANDLES')
+            mark=data.get('mark')
+            if mark is not None and (not finite(mark.get('price')) or mark['price']<=0 or not finite(mark.get('time'))):mark=None
+            return {'version':'product-market-v1','scope':v.scope.model_dump(mode='json'),'coin':coin,'interval':interval,
+                'candles':candles,'mark':mark,'exchange_timestamp':None,'timestamp_evidence':'REST_RECEIPT_NOT_EXCHANGE_TIME'}
+        except HTTPException:raise
+        except (ValueError,TypeError,KeyError,OSError):raise HTTPException(503,'MARKET_EVIDENCE_UNAVAILABLE') from None
 
     @api.get('/api/product/leaders/{wallet}')
     def leader(wallet:str,x_telegram_init_data:str|None=Header(default=None)):

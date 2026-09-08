@@ -127,7 +127,7 @@ class ProductTests(unittest.TestCase):
         with self.assertRaises(ValueError):c.act(p['id'],p['proposal_hash'],'7',True)
         factory.assert_not_called()
 
-    def api(self,view,factory=None):
+    def api(self,view,factory=None,market=None):
         from fastapi import FastAPI,HTTPException
         from fastapi.testclient import TestClient
         from webapp.product_api import router
@@ -135,8 +135,28 @@ class ProductTests(unittest.TestCase):
             if token!='valid':raise HTTPException(401,'AUTH_REQUIRED')
             return {'id':int(view.scope.tenant)}
         events=ProductEvents(self.root/'data/product.sqlite3',view.clock)
-        app=FastAPI();app.include_router(router(authenticate,lambda uid:view,lambda:events,factory or Mock()))
+        app=FastAPI();app.include_router(router(authenticate,lambda uid:view,lambda:events,factory or Mock(),market))
         return TestClient(app),events
+
+    def test_product_market_scoped_finite_and_read_only(self):
+        b,r,_,view=self.setup_view();reader=Mock(return_value={'candles':[{'t':10,'o':100.,'h':102.,'l':99.,'c':101.}],
+            'mark':{'price':101.,'time':b.clock()}});signer=Mock();client,_=self.api(view,signer,reader)
+        params={'coin':'BTC','network':view.scope.network};header={'x-telegram-init-data':'valid'}
+        self.assertEqual(client.get('/api/product/market/candles',params=params).status_code,401)
+        mismatch={**params,'network':'MAINNET' if view.scope.network=='TESTNET' else 'TESTNET'}
+        self.assertEqual(client.get('/api/product/market/candles',params=mismatch,headers=header).status_code,409)
+        reader.assert_not_called()
+        result=client.get('/api/product/market/candles',params=params,headers=header)
+        self.assertEqual(result.status_code,200);self.assertEqual(result.json()['scope']['tenant'],view.scope.tenant)
+        self.assertIsNone(result.json()['exchange_timestamp']);signer.assert_not_called()
+
+    def test_product_market_invalid_is_unavailable_not_zero(self):
+        b,r,_,view=self.setup_view();reader=Mock(return_value={'candles':[{'t':10,'o':float('nan'),'h':102.,'l':99.,'c':101.}]})
+        client,_=self.api(view,market=reader);params={'coin':'BTC','network':view.scope.network};h={'x-telegram-init-data':'valid'}
+        self.assertEqual(client.get('/api/product/market/candles',params=params,headers=h).status_code,503)
+        reader.return_value={'candles':[],'mark':{'price':float('inf'),'time':10}}
+        result=client.get('/api/product/market/candles',params=params,headers=h).json();self.assertIsNone(result['mark'])
+        self.assertEqual(client.get('/api/product/market/candles',params={**params,'network':'invalid'},headers=h).status_code,422)
 
     def test_api_contracts_authoritative_views_and_no_signer(self):
         b,r,_,view=self.setup_view();b.process(r);factory=Mock();client,_=self.api(view,factory)

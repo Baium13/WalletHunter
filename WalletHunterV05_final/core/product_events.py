@@ -5,7 +5,7 @@ import json
 import time
 from core.foundation.store import Store,scope_key
 from core.product_read import clean
-from core.product_notifications import PREFERENCES,classification,financial_notice
+from core.product_notifications import PREFERENCES,classification,financial_notice,execution_identity
 
 
 class ProductEvents:
@@ -141,17 +141,23 @@ class ProductEvents:
             db.execute('INSERT OR IGNORE INTO product_events(scope,id,kind,body,created) VALUES(?,?,?,?,?)',(key,eid,kind,encoded,self.clock()))
             db.execute('INSERT OR REPLACE INTO product_latest VALUES(?,?,?)',(key,identity,digest))
             category=classification(kind,payload)
-            if notify and category=='CRITICAL' and payload.get('intent_id'):
+            intent_id,mode=execution_identity(payload)
+            if notify and category=='CRITICAL' and intent_id:
                 # Preserve the legacy alert identity across notification-policy
                 # deployment. SENT/SENDING/DEAD all retain delivery uncertainty;
                 # changing presentation must not enqueue another alert.
-                prior=db.execute("SELECT 1 FROM product_outbox WHERE scope=? AND critical=1 AND "
-                    "COALESCE(json_extract(body,'$.data.intent_id'),json_extract(body,'$.data.payload.intent_id'))=? LIMIT 1",
-                    (key,payload['intent_id'])).fetchone()
-                if prior:notify=False
+                prior=db.execute("SELECT body FROM product_outbox WHERE scope=? AND critical=1 AND ("
+                    "json_extract(body,'$.data.intent_id')=? OR json_extract(body,'$.data.payload.intent_id')=? OR "
+                    "json_extract(body,'$.data.evidence.intent_id')=? OR json_extract(body,'$.data.evidence.payload.intent_id')=?)",
+                    (key,intent_id,intent_id,intent_id,intent_id))
+                for row in prior:
+                    previous,channel=execution_identity(json.loads(row['body']).get('data'))
+                    if previous==intent_id and (not mode or not channel or mode==channel):
+                        notify=False;break
             if notify and category:
                 # One financial action identity, independent of later view changes.
-                nid=hashlib.sha256(('notice-v1:'+identity).encode()).hexdigest()
+                notice_identity=('critical-intent:'+str(mode)+':'+intent_id) if category=='CRITICAL' and intent_id else identity
+                nid=hashlib.sha256(('notice-v1:'+notice_identity).encode()).hexdigest()
                 db.execute('INSERT OR IGNORE INTO product_outbox VALUES(?,?,?,?,?,?,?,?)',(key,nid,json.dumps({'type':kind,'data':clean(payload)}),'PENDING',0,self.clock(),int(category=='CRITICAL'),None))
             db.execute('DELETE FROM product_events WHERE scope=? AND seq NOT IN (SELECT seq FROM product_events WHERE scope=? ORDER BY seq DESC LIMIT ?)',(key,key,self.RETENTION))
 

@@ -17,6 +17,24 @@ FINANCIAL = {'POSITION_OPEN':'OPEN','POSITION_ADD':'ADD','POSITION_REDUCE':'REDU
 CRITICAL = {'EXECUTION_UNKNOWN','RECONCILIATION_REQUIRED','CRITICAL_TRADING_FAILURE'}
 
 
+def execution_identity(data):
+    """Known product/domain envelopes only; never infer identity from a market.
+
+    Conflicting IDs are ambiguous and must not suppress another intent's alert.
+    Legacy rows may lack mode; an explicit PAPER/LIVE distinction is preserved.
+    """
+    if not isinstance(data,dict):return None,None
+    nodes=[data]
+    for path in (('payload',),('evidence',),('evidence','payload')):
+        node=data
+        for part in path:node=node.get(part) if isinstance(node,dict) else None
+        if isinstance(node,dict):nodes.append(node)
+    ids={n['intent_id'] for n in nodes if isinstance(n.get('intent_id'),str) and n['intent_id']}
+    mode=data.get('mode') or data.get('execution_mode')
+    mode={'PAPER_AUTO':'PAPER','LIVE_CONFIRM':'LIVE'}.get(mode,mode)
+    return (next(iter(ids)) if len(ids)==1 else None),mode
+
+
 def classification(kind, data):
     """Positive allowlist, enforced at enqueue AND delivery (including old rows)."""
     if not isinstance(data,dict):return None

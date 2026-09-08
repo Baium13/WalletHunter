@@ -76,13 +76,66 @@ class ProductTests(unittest.TestCase):
         b,r,_,v=self.setup_view();events=ProductEvents(self.root/'notices.sqlite',b.clock)
         b.exchange.behavior='ACK_LOSS';b.process(r)
         intent=v.snapshot()['runtimes'][0]['actions'][0]['intent_id']
-        with events.store.transaction() as db:
-            db.execute('INSERT INTO product_outbox VALUES(?,?,?,?,?,?,?,?)',
-                (scope_key(v.scope),'legacy',json.dumps({'type':'EXECUTION_UPDATED','data':{'payload':{'intent_id':intent,'status':'UNKNOWN'}}}),
-                 'SENT',1,0,1,None))
-        for _ in range(2):events.ingest(v,50)
-        with events.store.transaction() as db:
-            self.assertEqual(db.execute('SELECT COUNT(*) FROM product_outbox').fetchone()[0],1)
+        payload={'intent_id':intent,'status':'UNKNOWN'}
+        for n,data in enumerate((payload,{'payload':payload},{'evidence':payload},{'evidence':{'payload':payload}})):
+            with self.subTest(envelope=n):
+                events=ProductEvents(self.root/f'legacy-{n}.sqlite',b.clock)
+                with events.store.transaction() as db:
+                    db.execute('INSERT INTO product_outbox VALUES(?,?,?,?,?,?,?,?)',
+                        (scope_key(v.scope),'legacy',json.dumps({'type':'EXECUTION_UPDATED','data':data}),
+                         'SENT',1,0,1,None))
+                for _ in range(2):
+                    events=ProductEvents(events.store.path,b.clock);events.ingest(v,50)
+                with events.store.transaction() as db:
+                    self.assertEqual(db.execute('SELECT COUNT(*) FROM product_outbox').fetchone()[0],1)
+
+    def test_unknown_identity_envelopes_restart_modes_and_tenants(self):
+        b,r,_,v=self.setup_view();events=ProductEvents(self.root/'identity.sqlite',b.clock)
+        sent=[]
+        async def send(e,i):sent.append(i)
+        for n,data in enumerate(({'evidence':{'payload':{'intent_id':'same'}}},
+                {'payload':{'intent_id':'same'}},{'intent_id':'same'})):
+            events=ProductEvents(events.store.path,b.clock)
+            events.publish(v.scope,str(n),'EXECUTION_UNKNOWN',dict(data,mode='LIVE'),notify=True)
+            asyncio.run(events.deliver(v.scope,send))
+        self.assertEqual(len(sent),1)
+        for identity,mode in [('other','LIVE'),('same','PAPER')]:
+            events.publish(v.scope,identity+mode,'EXECUTION_UNKNOWN',{'intent_id':identity,'mode':mode},notify=True)
+        self.assertEqual(len(self.notifications(events,v.scope)),3)
+        other=v.scope.model_copy(update={'tenant':'other','account':'0x'+'f'*40})
+        events.publish(other,'other-tenant','EXECUTION_UNKNOWN',{'intent_id':'same','mode':'LIVE'},notify=True)
+        self.assertEqual(len(self.notifications(events,other)),1)
+
+    def test_ambiguous_notification_identity_cannot_suppress_other_intent(self):
+        from core.product_notifications import execution_identity
+        self.assertEqual(execution_identity({'intent_id':'a','evidence':{'payload':{'intent_id':'b'}}})[0],None)
+        self.assertEqual(execution_identity({'symbol':'BTC','action':'OPEN'})[0],None)
+
+    def test_agent_availability_counts_active_waiting_not_degraded(self):
+        from core.product_read import agent_availability
+        agents=[{'status':'ACTIVE'} for _ in range(6)]+[{'status':'WAITING'}]
+        before=json.dumps(agents)
+        self.assertEqual(agent_availability(agents)['available'],7)
+        self.assertEqual(agent_availability(agents)['active'],6)
+        self.assertEqual(agent_availability(agents)['waiting'],1)
+        self.assertEqual(json.dumps(agents),before)
+        agents[0]={'status':'DEGRADED','readiness':'READY'};agents[1]={'status':'OFFLINE','readiness':'READY'}
+        self.assertEqual(agent_availability(agents)['available'],5)
+
+    def test_risk_readiness_is_separate_from_poison_jobs_and_historical_decision(self):
+        from core.product_read import runtime_risk_health
+        worker=dict(status='DEGRADED',heartbeat_ms=200000,quarantine_count=6,quarantined_jobs=3,
+            unresolved_execution_count=0,reconciliation_backlog=0,processing_lag_ms=0,
+            readiness_version='configured-worker-v1',ready_components=['risk'])
+        risk={'created_ms':1,'reasons':['SCOPE_MISMATCH']};execution={'reconciliation_backlog':0}
+        h=runtime_risk_health(worker,risk,execution,200000)
+        self.assertEqual(h['status'],'READY');self.assertFalse(h['decision_fresh'])
+        self.assertEqual(h['last_decision_reasons'],['SCOPE_MISMATCH'])
+        self.assertEqual(h['processing_degradation'],['QUARANTINED_INPUT_JOBS'])
+        self.assertEqual(worker['status'],'DEGRADED')
+        for broken in ({'heartbeat_ms':1},{'unresolved_execution_count':1},{'processing_lag_ms':1},
+                       {'status':'UNHEALTHY'},{'quarantine_count':0},{'ready_components':[]}):
+            self.assertNotEqual(runtime_risk_health(dict(worker,**broken),risk,execution,200000)['status'],'READY')
 
     def test_notification_preferences_strict_scoped_authenticated(self):
         b,r,_,v=self.setup_view();client,events=self.api(v);url='/api/product/notification-preferences';h={'x-telegram-init-data':'valid'}

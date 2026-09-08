@@ -57,6 +57,44 @@ def observed(stamp,now,*,failed=False,critical=False):
         'last_success_ms':stamp,'fresh':fresh,'critical':critical}
 
 
+def agent_availability(agents):
+    """Availability is not activity. Preserve every underlying signal state."""
+    counts={name:sum(a.get('status')==name for a in agents) for name in
+        ('READY','ACTIVE','WAITING','DEGRADED','OFFLINE','UNKNOWN')}
+    return dict(total=len(agents),available=sum(counts[n] for n in ('READY','ACTIVE','WAITING')),
+        active=counts['ACTIVE'],waiting=counts['WAITING'],ready=counts['READY'],
+        degraded=counts['DEGRADED'],offline=counts['OFFLINE'],unknown=counts['UNKNOWN'])
+
+
+def runtime_risk_health(worker,risk,execution,now):
+    """Worker readiness and last decision are different observations.
+
+    Poison jobs degrade processing, not a loaded risk evaluator. This projection
+    grants no authority; every new intent still undergoes canonical validation.
+    """
+    signal=observed((risk or {}).get('created_ms'),now,critical=True)
+    heartbeat=worker.get('heartbeat_ms')
+    fresh=type(heartbeat) is int and 0<=now-heartbeat<=90000
+    clear=all(type(worker.get(k)) is int and worker[k]==0 for k in
+        ('unresolved_execution_count','reconciliation_backlog','processing_lag_ms')) and execution.get('reconciliation_backlog')==0
+    poison_only=(worker.get('status')=='DEGRADED' and worker.get('quarantine_count',0)>0 and clear)
+    ready=(fresh and clear and worker.get('readiness_version')=='configured-worker-v1'
+        and 'risk' in worker.get('ready_components',[]) and (worker.get('status')=='HEALTHY' or poison_only))
+    reasons=[]
+    if ready:signal.update(status='READY',ready_observed_ms=heartbeat)
+    elif not fresh:reasons.append('WORKER_HEARTBEAT_STALE_OR_UNAVAILABLE')
+    elif not clear:reasons.append('UNRESOLVED_EXECUTION_OR_PROCESSING_BACKLOG')
+    else:reasons.append('WORKER_READINESS_UNAVAILABLE')
+    if not signal['fresh']:reasons.append('LAST_RISK_DECISION_STALE_OR_ABSENT')
+    if not ready:
+        signal['status']='UNHEALTHY' if worker.get('status')=='UNHEALTHY' else 'UNKNOWN' if not worker and not risk else 'DEGRADED'
+    signal.update(reasons=reasons,heartbeat_ms=heartbeat,decision_fresh=signal['fresh'],
+        last_decision_reasons=(risk or {}).get('reasons',[]),
+        processing_degradation=['QUARANTINED_INPUT_JOBS'] if poison_only else [],
+        quarantined_jobs=worker.get('quarantined_jobs'))
+    return signal
+
+
 def performance(outcomes):
     valid=[o for o in outcomes if o.get('version')=='outcome-v2']
     values=[o['net_pnl'] for o in valid if isinstance(o.get('net_pnl'),(int,float)) and math.isfinite(o['net_pnl'])]
@@ -198,7 +236,7 @@ class ProductReadModel:
                 agents.append(dict(agent_id=name,**state,result=a,heartbeat_ms=None,latency_ms=None))
             return clean(dict(mode=mode,runtime_mode=runtime,configured_mode=mode,last_transition_ms=None,worker=health,allocation=allocation,
                 portfolio=portfolio.model_dump(mode='json') if portfolio else None,episodes=episode_views,actions=actions,
-                latest_decision=latest,agents=agents,consensus=(latest or {}).get('consensus'),
+                latest_decision=latest,agents=agents,agent_summary=agent_availability(agents),consensus=(latest or {}).get('consensus'),
                 risk=actions[0]['risk'] if actions else None,analytics=performance(outcomes),calibration=calibrations,
                 execution={'pending':sum(r['status']=='SUBMITTING' for r in pending),'unknown':sum(r['status']=='UNKNOWN' for r in pending),
                     'partial':sum(r['status']=='PARTIAL' for r in pending),'reconciliation_backlog':len(pending)+sum(e['unresolved'] and not any(a['status'] in {'SUBMITTING','PARTIAL','UNKNOWN'} for a in e['actions']) for e in episode_views),
@@ -241,6 +279,7 @@ class ProductReadModel:
                 result['coverage']['meaning']='PUBLIC_ACTIVITY_AND_LEADER_RESEARCH_NOT_PAPER_ADMISSION'
                 result['coverage']['observed_instruments']=[r[0] for r in db.execute("SELECT DISTINCT json_extract(body,'$.instrument.symbol') FROM intelligence_records WHERE network=? AND kind='LEADER_TRADE' AND json_valid(body) LIMIT 100",(self.scope.network,)) if r[0]]
         except (OSError,sqlite3.Error,ValueError,TypeError):result['status']='UNKNOWN'
+        result['display_state']='ACTIVE · DEGRADED' if result.get('worker_active') and result['status']=='DEGRADED' else result['status']
         return clean(result)
 
     def snapshot(self):
@@ -394,6 +433,9 @@ class ProductReadModel:
                         name in {'authorization','execution'} and m.get('runtime_mode') in {'PAPER_AUTO','SHADOW'} or
                         name=='allocation' and (m.get('allocation') or {}).get('status')=='VERIFIED' and (m.get('portfolio') or {}).get('evidence')=='FAKE'):
                     signal.update(status='READY',ready_observed_ms=heartbeat,reasons=['WAITING_FOR_ACTIONABLE_EVENT'])
+                if name=='risk':
+                    signal=runtime_risk_health(worker,m.get('risk'),m.get('execution',{}),self.clock())
+                    m['risk_health']=dict(signal,mode=m['mode'])
                 if components[name]['status']!='UNHEALTHY':components[name]=signal
         try:
             with reader(self.root/'data/product.sqlite3') as db:
@@ -404,6 +446,7 @@ class ProductReadModel:
         components['web']=observed(self.clock(),self.clock());components['database']=observed(self.clock() if account or any(m.get('portfolio') for m in modes) else None,self.clock())
         status='UNHEALTHY' if any(c['status']=='UNHEALTHY' for c in components.values()) else 'DEGRADED' if any(c['status'] in {'UNKNOWN','DEGRADED'} for c in components.values()) else 'HEALTHY'
         if quarantines:
+            components['risk']['manual_copy_mainnet']={'status':'BLOCKED','unresolved_execution_count':len(quarantines)}
             for name in ('execution','reconciliation'):
                 if components[name]['status']!='UNHEALTHY':components[name]['status']='DEGRADED'
                 components[name].update(quarantined_mainnet=len(quarantines),retry_allowed=False,

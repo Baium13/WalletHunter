@@ -41,6 +41,8 @@ test('privacy covers analytics and wallet input',()=>{assert.match(css,/\.privac
 test('initial mode is unknown and manual view never implies PAPER authorization',()=>{assert.match(js,/mode:'UNKNOWN'/);assert.match(js,/Manual Copy is independent/);});
 test('unavailable position evidence does not display zero',()=>{assert.match(js,/num\(known\?open.length:null,0\)/);assert.match(js,/completeness==='COMPLETE'/);});
 test('language preference persists',()=>{assert.match(js,/pref\.set\('wh_lang'/);assert.match(js,/document\.documentElement\.lang=S\.lang/);});
+test('agent availability uses authoritative summary without degraded readiness override',()=>{assert.match(js,/agent_summary\?\.available/);assert.match(js,/agent_summary\?\.active/);assert.match(js,/agent_summary\?\.waiting/);assert.doesNotMatch(js,/readiness==='READY'\|\|\['READY','ACTIVE','WAITING'\]/);});
+test('health separates discovery activity and scoped risk details',()=>{assert.match(js,/worker_active&&c.status==='DEGRADED'/);assert.match(js,/last_decision_reasons/);assert.match(js,/manual_copy_mainnet/);});
 test('keyed updates preserve canvases and dirty inputs',()=>{assert.match(js,/o\.tagName==='CANVAS'\)continue/);assert.match(js,/S\.manualDirty/);assert.doesNotMatch(js,/terminal.*innerHTML\s*=/);});
 test('stream resumes with authenticated fetch, bounded buffer',()=>{assert.match(js,/events\/stream\?after=\$\{S\.cursor\}/);assert.match(js,/buffer\.length>2000000/);assert.match(js,/x-telegram-init-data/);});
 test('reduced motion and safe-area are supported',()=>{assert.match(css,/prefers-reduced-motion/);assert.match(css,/safe-area-inset-bottom/);});

@@ -36,7 +36,7 @@ from integrations.hyperliquid import HyperliquidAccount, verify_account_control
 
 S = load()
 # Versioned URL makes Telegram reopen the current Mini App build after deployments.
-WEBAPP_URL = os.getenv("WEBAPP_URL", "https://wallethunter-hl.duckdns.org/?v=8")
+WEBAPP_URL = os.getenv("WEBAPP_URL", "https://wallethunter-hl.duckdns.org/?v=20260907-product-3")
 if not S.telegram_api_id or not S.telegram_api_hash or not S.telegram_bot_token:
     raise RuntimeError("Telegram credentials missing")
 if not S.master_key: raise RuntimeError("MASTER_KEY is required")

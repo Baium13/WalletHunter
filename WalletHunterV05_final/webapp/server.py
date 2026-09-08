@@ -109,6 +109,19 @@ def require_user(init_data: str | None) -> dict:
 from webapp.intelligence_api import router as intelligence_router
 app.include_router(intelligence_router(os.path.join(ROOT, 'data', 'intelligence.sqlite'), settings.hl_mode, require_user))
 
+from webapp.product_api import router as product_router
+from core.product_runtime import view_for
+from core.product_events import ProductEvents
+from integrations.product_confirmation import confirmed_backend
+
+def product_view(uid):
+    _,profile=storage.profile(uid)
+    return view_for(ROOT,uid,profile,settings.hl_mode)
+
+app.include_router(product_router(require_user,product_view,
+    lambda:ProductEvents(os.path.join(ROOT,'data','product.sqlite3')),
+    lambda binding:confirmed_backend(ROOT,binding,storage,settings)))
+
 
 def short_address(value: str) -> str:
     return value if len(value) <= 12 else f"{value[:6]}…{value[-4:]}"
@@ -125,52 +138,15 @@ def index():
 
 @app.get("/health")
 def health():
-    # Public research health is safe to expose globally. Tenant/account
-    # execution health remains scoped to /api/dashboard and is never inferred
-    # from HTTP reachability alone.
-    now = int(time.time() * 1000)
-    research_path = os.path.join(ROOT, "data", "intelligence.sqlite")
-    research = None
-    try:
-        if os.path.exists(research_path) and not os.path.islink(research_path):
-            with sqlite3.connect(f"file:{research_path}?mode=ro", uri=True, timeout=0.2) as db:
-                db.row_factory = sqlite3.Row
-                row = db.execute("SELECT network,last_success,last_attempt,error,errors FROM intelligence_health WHERE network=?", (settings.hl_mode,)).fetchone()
-                counts = {str(r[0]): int(r[1]) for r in db.execute("SELECT status,COUNT(*) FROM candidates WHERE network=? GROUP BY status", (settings.hl_mode,))}
-                research = {"row": dict(row) if row else None, "counts": counts}
-    except (sqlite3.Error, OSError):
-        research = None
-    row = (research or {}).get("row") or {}
-    last_attempt, last_success = row.get("last_attempt"), row.get("last_success")
-    worker_running = isinstance(last_attempt, int) and 0 <= now - last_attempt < 120000
-    error_text = str(row.get("error") or "")
-    fatal_public = any(token in error_text for token in ("PUBLIC_STREAM_UNAVAILABLE", "DISCOVERY_UNAVAILABLE"))
-    public_active = worker_running and not fatal_public
-    public_status = "ACTIVE" if public_active else "DEGRADED" if worker_running else "WAITING"
-    reason = "READY_NO_CURRENT_EVENT" if public_active and not error_text else row.get("error") or ("WORKER_NOT_STARTED" if not worker_running else "PUBLIC_DATA_STALE")
-    deep_status = "DEGRADED" if "HISTORY_INCOMPLETE" in error_text or "RESEARCH_DEFERRED" in error_text else "READY" if worker_running else "WAITING"
-    counts = (research or {}).get("counts", {})
-    components = {
-        "Web/API": {"status": "HEALTHY", "detail": "HTTP endpoint available"},
-        "Database": {"status": "HEALTHY" if research is not None else "DEGRADED", "detail": "Research state readable" if research is not None else "Research DB unavailable"},
-        "Hyperliquid public data": {"status": public_status, "last_success": last_success, "reason": reason},
-        "Discovery": {"status": public_status, "last_success": last_success, "detail": f"{sum(counts.values())} observed" if research is not None else reason},
-        "Deep analysis": {"status": deep_status, "detail": "Bounded queue" if worker_running and deep_status == "READY" else reason},
-        "Watchlist": {"status": "READY" if worker_running else "WAITING", "detail": f"{counts.get('ACTIVE', 0)} active"},
-        "Leader detection": {"status": "READY" if worker_running else "WAITING", "detail": "Awaiting fresh fills" if worker_running else reason},
-        "Agents": {"status": "READY" if worker_running else "OFFLINE", "ready": 7 if worker_running else 0, "active": 0, "total": 7},
-        "Consensus": {"status": "READY" if worker_running else "WAITING", "detail": "No current decision" if worker_running else reason},
-        "Authorization": {"status": "READY", "detail": "Policy boundary available"},
-        "Risk": {"status": "READY", "detail": "Canonical gateway available"},
-        "Execution": {"status": "READY", "detail": "No autonomous LIVE route enabled"},
-        "Reconciliation": {"status": "READY", "detail": "Query-only recovery available"},
-        "PAPER_AUTO": {"status": "READY" if worker_running else "WAITING", "detail": "Isolated PAPER requires explicit configuration"},
-        "Event stream": {"status": "READY" if worker_running else "WAITING", "detail": "Durable research stream" if worker_running else reason},
-    }
-    overall = "HEALTHY" if public_active and not error_text else "DEGRADED" if worker_running else "WAITING"
-    return {"ok": True, "status": overall, "reason": reason, "network": settings.hl_mode,
-            "checked_ms": now, "worker_heartbeat_ms": last_attempt, "components": components,
-            "counts": counts}
+    from core.product_read import ProductReadModel,observed
+    from core.foundation.contracts import Scope
+    now=int(time.time()*1000)
+    scope=Scope(tenant='public-health',account='0x'+'0'*40,network=settings.hl_mode)
+    research=ProductReadModel(ROOT,scope).discovery()
+    return {'ok':True,'status':'DEGRADED','network':settings.hl_mode,'checked_ms':now,
+        'private_health':'AUTHENTICATED_API_REQUIRED','components':{
+            'Web/API':observed(now,now),'Discovery':{k:research.get(k) for k in ('status','last_success_ms','heartbeat_ms')},
+            'Risk':observed(None,now,critical=True),'Execution':observed(None,now,critical=True)}}
 
 
 @app.get("/api/dashboard")

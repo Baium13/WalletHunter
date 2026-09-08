@@ -770,6 +770,20 @@ async def ai_lifecycle_watcher():
         except Exception as exc: print("[AI RECONCILIATION LOOP]", type(exc).__name__)
         await asyncio.sleep(60)
 
+@client.on(events.NewMessage(pattern=r"^/status$"))
+async def product_status(event):
+    if not event.is_private:return
+    from core.product_runtime import view_for
+    from core.product_telegram import status_text
+    uid=event.sender_id
+    _,p=store.profile(uid)
+    try:
+        snapshot=await asyncio.to_thread(view_for(ROOT,uid,p,S.hl_mode).snapshot)
+        await event.respond(status_text(snapshot,p.get('language')=='en'),parse_mode=None)
+    except Exception:
+        await event.respond('Canonical product status unavailable. / Статус системы недоступен.',parse_mode=None)
+
+
 async def main():
     await client.start(bot_token=S.telegram_bot_token)
     try:
@@ -790,6 +804,8 @@ async def main():
     asyncio.create_task(ai_position_watcher())
     asyncio.create_task(ai_entry_watcher())
     asyncio.create_task(ai_lifecycle_watcher())
+    from core.product_telegram import product_notifications
+    asyncio.create_task(product_notifications(ROOT,store,S,client))
     await client.run_until_disconnected()
 
 if __name__ == "__main__": asyncio.run(main())

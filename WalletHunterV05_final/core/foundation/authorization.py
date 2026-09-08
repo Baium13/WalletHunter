@@ -37,6 +37,7 @@ class AuthorizationService:
                     id TEXT PRIMARY KEY,scope TEXT,event_id TEXT,body TEXT,policy TEXT,consensus TEXT,
                     UNIQUE(scope,event_id));
                 CREATE TABLE IF NOT EXISTS authorization_confirmations(id TEXT PRIMARY KEY,scope TEXT,body TEXT);
+                CREATE TABLE IF NOT EXISTS authorization_rejections(id TEXT PRIMARY KEY,scope TEXT,created_ms INTEGER);
                 CREATE TRIGGER IF NOT EXISTS auth_no_update BEFORE UPDATE ON authorization_requests BEGIN SELECT RAISE(ABORT,'immutable'); END;
                 CREATE TRIGGER IF NOT EXISTS auth_no_delete BEFORE DELETE ON authorization_requests BEGIN SELECT RAISE(ABORT,'immutable'); END;
             ''')
@@ -80,6 +81,8 @@ class AuthorizationService:
         if str(authenticated_user)!=scope.tenant: raise ValueError('CONFIRMATION_TENANT_MISMATCH')
         if type(now) is not int: raise ValueError('CLOCK_INVALID')
         with self.store.transaction() as db:
+            if db.execute('SELECT 1 FROM authorization_rejections WHERE id=? AND scope=?',(decision_id,scope_key(scope))).fetchone():
+                raise ValueError('PROPOSAL_REJECTED')
             row=db.execute('SELECT body FROM authorization_requests WHERE id=? AND scope=?',(decision_id,scope_key(scope))).fetchone()
             if not row: raise ValueError('AUTHORIZATION_NOT_FOUND')
             pending=AuthorizationDecision.model_validate_json(row[0])
@@ -90,6 +93,15 @@ class AuthorizationService:
             approved=pending.model_copy(update={'outcome':'AUTHORIZED','execution_mode':'LIVE'})
             db.execute('INSERT INTO authorization_confirmations VALUES(?,?,?)',(decision_id,scope_key(scope),encoded(approved)))
             return approved
+
+    def reject(self,decision_id,scope,now,*,authenticated_user,projection=None):
+        if str(authenticated_user)!=scope.tenant:raise ValueError('CONFIRMATION_TENANT_MISMATCH')
+        with self.store.transaction() as db:
+            row=db.execute('SELECT body FROM authorization_requests WHERE id=? AND scope=?',(decision_id,scope_key(scope))).fetchone()
+            if not row or AuthorizationDecision.model_validate_json(row[0]).mode!='LIVE_CONFIRM':raise ValueError('AUTHORIZATION_NOT_FOUND')
+            if db.execute('SELECT 1 FROM authorization_confirmations WHERE id=?',(decision_id,)).fetchone() or db.execute('SELECT 1 FROM intents WHERE id=?',(decision_id,)).fetchone():raise ValueError('ALREADY_AUTHORIZED')
+            db.execute('INSERT OR IGNORE INTO authorization_rejections VALUES(?,?,?)',(decision_id,scope_key(scope),now))
+            if projection:projection(db)
 
     def verify(self,decision,now):
         decision=AuthorizationDecision.model_validate_json(decision.model_dump_json())

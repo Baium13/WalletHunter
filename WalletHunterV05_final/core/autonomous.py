@@ -89,6 +89,11 @@ class AutonomousBackend:
             health['quarantined_jobs']=db.execute("SELECT COUNT(*) FROM autonomous_jobs WHERE scope=? AND stage='QUARANTINED'",(scope,)).fetchone()[0]
             health['quarantine_count']+=health['quarantined_jobs']
             health['status']='DEGRADED' if health['quarantine_count'] or health['unresolved_execution_count'] else 'HEALTHY'
+            # Readiness is a fresh worker/configuration observation, not a
+            # fabricated market signal or a successful execution timestamp.
+            health['ready_components']=['structure','momentum','volatility','liquidity',
+                'order_flow','leader','risk_context','consensus','risk','reconciliation']
+            health['readiness_version']='configured-worker-v1'
             pending_job=db.execute("SELECT MIN(started_ms) FROM autonomous_jobs WHERE scope=? AND stage IN ('CLAIMED','ANALYZED','AUTHORIZED','SUBMISSION_PENDING','RECOVERY_REQUIRED','RECONCILING')",(scope,)).fetchone()[0]
             health['processing_lag_ms']=max(0,self.clock()-pending_job) if pending_job else 0
             db.execute('INSERT OR REPLACE INTO autonomous_health VALUES(?,?)',(scope,json.dumps(health)))

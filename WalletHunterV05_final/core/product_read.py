@@ -189,6 +189,10 @@ class ProductReadModel:
             actual={a['agent_id']:a for a in (latest or {}).get('agents',[])}
             for name in names:
                 a=actual.get(name);state=observed((a or {}).get('created_ms'),now)
+                ready = (health.get('readiness_version')=='configured-worker-v1'
+                    and health.get('status')=='HEALTHY' and name in health.get('ready_components',[])
+                    and 0 <= now-health.get('heartbeat_ms',0) <= 90000)
+                if a is None and ready:state.update(status='READY',ready_observed_ms=health['heartbeat_ms'])
                 if a and state['fresh'] and a['direction'] in {'WAIT','BLOCK'}:state['status']='WAITING' if a['direction']=='WAIT' else 'DEGRADED'
                 agents.append(dict(agent_id=name,**state,result=a,heartbeat_ms=None,latency_ms=None))
             return clean(dict(mode=mode,runtime_mode=runtime,configured_mode=mode,last_transition_ms=None,worker=health,allocation=allocation,
@@ -321,6 +325,12 @@ class ProductReadModel:
                 'allocation':(m.get('portfolio') or {}).get('received_ms') if (m.get('allocation') or {}).get('status')=='VERIFIED' else None}
             for name,stamp in stamps.items():
                 signal=observed(stamp,self.clock(),failed=bool(backlog and name in {'execution','reconciliation'}),critical=name in {'allocation','risk','execution','reconciliation'})
+                worker=m.get('worker',{})
+                ready = (worker.get('readiness_version')=='configured-worker-v1' and worker.get('status')=='HEALTHY'
+                    and heartbeat is not None and 0<=self.clock()-heartbeat<=90000 and not backlog)
+                if stamp is None and ready and (name in worker.get('ready_components',[]) or
+                        name=='agents' and all(a['status']=='READY' for a in m.get('agents',[]))):
+                    signal.update(status='READY',ready_observed_ms=heartbeat)
                 if components[name]['status']!='UNHEALTHY':components[name]=signal
         try:
             with reader(self.root/'data/product.sqlite3') as db:

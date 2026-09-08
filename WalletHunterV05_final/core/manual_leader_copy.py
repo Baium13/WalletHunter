@@ -390,6 +390,15 @@ def execute_manual_leader(*, engine, account, client, operation, event_id, actio
         raise ValueError('Invalid leverage')
     price = float(client.mid(spec['coin'], spec.get('dex') or ''))
     if not math.isfinite(price) or price <= 0: raise ValueError('Price unavailable')
+    if operation is None and action in {'OPEN', 'ADD', 'REDUCE'}:
+        # A positive margin delta can round to zero exchange lots. Reject it
+        # before creating a durable PREPARED reservation, not in OrderIntent.
+        executable_size = float(client.round_size(spec['coin'],
+            abs(float(plan['delta_margin'])) * leverage / price, spec.get('dex') or ''))
+        if not math.isfinite(executable_size) or executable_size < 0:
+            raise ValueError('Invalid normalized size')
+        if executable_size == 0 or executable_size * price < engine.MIN_ORDER_NOTIONAL_USD:
+            return dict(plan, status='BELOW_EXECUTABLE_MINIMUM', executable_size=executable_size)
     manual_limit = policy.capital_limit(allocatable_capital)
     if '_manual_effective_limit' in spec:
         effective=float(spec['_manual_effective_limit'])

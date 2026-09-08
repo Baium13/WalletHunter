@@ -166,7 +166,7 @@ def health():
         "PAPER_AUTO": {"status": "READY" if worker_running else "WAITING", "detail": "Isolated PAPER requires explicit configuration"},
         "Event stream": {"status": "READY" if worker_running else "WAITING", "detail": "Durable research stream" if worker_running else reason},
     }
-    overall = "HEALTHY" if public_active else "DEGRADED"
+    overall = "HEALTHY" if public_active and not error_text else "DEGRADED" if worker_running else "WAITING"
     return {"ok": True, "status": overall, "reason": reason, "network": settings.hl_mode,
             "checked_ms": now, "worker_heartbeat_ms": last_attempt, "components": components,
             "counts": counts}

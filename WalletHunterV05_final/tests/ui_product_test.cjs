@@ -33,6 +33,7 @@ test('five primary navigation destinations',()=>assert.match(js,/\['home','posit
 test('privacy persists and charts do not leak masked values',()=>{assert.match(js,/pref\.set\('wh_privacy'/);assert.match(css,/\.privacy \.financial-chart/);});
 test('privacy covers analytics and wallet input',()=>{assert.match(css,/\.privacy #manual-wallet/);assert.match(css,/analytics-metrics/);});
 test('initial mode is unknown and manual view never implies PAPER authorization',()=>{assert.match(js,/mode:'UNKNOWN'/);assert.match(js,/Manual Copy is independent/);});
+test('unavailable position evidence does not display zero',()=>{assert.match(js,/num\(known\?open.length:null,0\)/);assert.match(js,/completeness==='COMPLETE'/);});
 test('language preference persists',()=>{assert.match(js,/pref\.set\('wh_lang'/);assert.match(js,/document\.documentElement\.lang=S\.lang/);});
 test('keyed updates preserve canvases and dirty inputs',()=>{assert.match(js,/o\.tagName==='CANVAS'\)continue/);assert.match(js,/S\.manualDirty/);assert.doesNotMatch(js,/terminal.*innerHTML\s*=/);});
 test('stream resumes with authenticated fetch, bounded buffer',()=>{assert.match(js,/events\/stream\?after=\$\{S\.cursor\}/);assert.match(js,/buffer\.length>2000000/);assert.match(js,/x-telegram-init-data/);});

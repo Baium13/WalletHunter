@@ -1,0 +1,29 @@
+{
+  "source_commit": "5300f6d",
+  "asset_release": "c7fc73edfbc1367a",
+  "date": "2026-09-08",
+  "python": {"discovered": 1001, "passed": 1000, "skipped": 1, "failed": 0, "errors": 0, "duration_seconds": 196.313},
+  "javascript": {"passed": 128, "failed": 0, "new_product_tests": 32},
+  "product_api": {"passed": 30, "new_market_contract_tests": 2},
+  "safety": {"passed": 71, "repository_tests": 57, "isolated_harness_tests": 14},
+  "browser": {
+    "engine": "installed Microsoft Edge via Playwright 1.62.1",
+    "widths": [375, 390, 430, 1280, 1440, 1920],
+    "rendered_screens": 78,
+    "checks_passed": 120,
+    "runtime_errors": 0,
+    "fixture_only": true,
+    "checks": ["no horizontal overflow", "all primary screens and sheets", "canvas and hero identity retained across stream updates", "slider draft retained", "privacy", "RU/EN", "exact proposal rejection", "explicit leader switch", "STOP ignores unsaved leader draft"],
+    "limitations": ["Not physical iPhone/Safari certification", "External page requests and WebSockets blocked; no OS-wide egress certificate", "Original visual reference image unavailable"]
+  },
+  "source_unchanged_during_final_suite": true,
+  "trading_modules_unchanged_from": "914014e",
+  "real_orders": 0,
+  "production_state_changed": false,
+  "deployment": {
+    "updated": false,
+    "served_build_verified": false,
+    "reason": "SSH existing identity file unreadable: Permission denied; publickey authentication failed. Host verification retained."
+  },
+  "local_reports": [".phase0/frontend-final.json", ".phase0/terminal-shipping-visual/report.json"]
+}

@@ -6,13 +6,24 @@ from typing import Literal
 from collections import Counter
 from fastapi import APIRouter,Header,HTTPException,Query,Request
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel,ConfigDict,Field
+from pydantic import BaseModel,ConfigDict,Field,StrictBool
 from core.product_control import ProductConfirmations
 
 
 class ConfirmationInput(BaseModel):
     model_config=ConfigDict(extra='forbid')
     proposal_hash:str=Field(pattern='^[0-9a-f]{64}$')
+
+
+class NotificationInput(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    OPEN:StrictBool|None=None
+    ADD:StrictBool|None=None
+    REDUCE:StrictBool|None=None
+    REVERSE:StrictBool|None=None
+    CLOSE:StrictBool|None=None
+    CRITICAL:StrictBool|None=None
+    LIVE_CONFIRM:StrictBool|None=None
 
 
 def router(authenticate,resolve,event_service,backend_factory,market_reader=None):
@@ -28,7 +39,9 @@ def router(authenticate,resolve,event_service,backend_factory,market_reader=None
 
     @api.get('/api/product/{section}')
     def section(section:str,x_telegram_init_data:str|None=Header(default=None)):
-        _,v=view(x_telegram_init_data);s=v.snapshot()
+        _,v=view(x_telegram_init_data)
+        if section=='notification-preferences':return event_service().preferences(v.scope)
+        s=v.snapshot()
         if section in {'health','discovery','manual-copy','account'}:return s[section.replace('-','_')]
         if section=='capital':return {'scope':s['scope'],'manual_copy':s['manual_copy'],
             'copy':(s['account'] or {}).get('source_allocations'),'real_account':(s['account'] or {}).get('portfolio'),
@@ -42,6 +55,13 @@ def router(authenticate,resolve,event_service,backend_factory,market_reader=None
                 'modes':{m['mode']:{'decision':m.get(fields[section]),'current_state':'PRESENT' if m.get(fields[section]) else 'NO_CURRENT_DECISION',
                     'execution_authority':False} for m in s['runtimes']}}
         return {'scope':s['scope'],'modes':{m['mode']:m.get(fields[section]) for m in s['runtimes']}}
+
+    @api.put('/api/product/notification-preferences')
+    def notifications(payload:NotificationInput,x_telegram_init_data:str|None=Header(default=None)):
+        _,v=view(x_telegram_init_data)
+        changes=payload.model_dump(exclude_unset=True)
+        try:return event_service().preferences(v.scope,changes)
+        except ValueError:raise HTTPException(422,'NOTIFICATION_PREFERENCES_INVALID') from None
 
     @api.get('/api/product/positions/{episode_id}')
     @api.get('/api/product/timeline/{episode_id}')

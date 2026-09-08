@@ -11,6 +11,118 @@ from core.foundation.store import scope_key
 
 
 class ProductTests(unittest.TestCase):
+    def notifications(self,events,scope):
+        with events.store.transaction() as db:
+            return [json.loads(r[0]) for r in db.execute('SELECT body FROM product_outbox WHERE scope=? AND status!=?',(scope_key(scope),'SUPPRESSED'))]
+
+    def test_financial_only_actual_open_add_reduce_close_and_restart(self):
+        from core.product_notifications import notice_text
+        b,r,_,view=self.setup_view();events=ProductEvents(self.root/'notices.sqlite',b.clock)
+        events.preferences(view.scope)
+        for record in (r,self.case.followup(r,'ADD',1,2,side='BUY',suffix='add'),
+                       self.case.followup(r,'REDUCE',2,1,suffix='reduce'),self.case.followup(r,'CLOSE',1,0,suffix='close')):
+            b.process(record);events.ingest(view,50)
+        rows=self.notifications(events,view.scope)
+        self.assertEqual([e['type'] for e in rows],['POSITION_OPEN','POSITION_ADD','POSITION_REDUCE','POSITION_CLOSE'])
+        for e in rows:
+            text=notice_text(e,'internal-id')
+            self.assertIn('🧪 PAPER',text);self.assertNotIn('internal-id',text);self.assertNotIn(view.scope.account,text)
+        self.assertIn('net_pnl',rows[-1]['data']);self.assertIn('duration_ms',rows[-1]['data'])
+        sent=[]
+        async def send(e,i):sent.append(i)
+        asyncio.run(events.deliver(view.scope,send));restarted=ProductEvents(events.store.path,b.clock)
+        restarted.ingest(view,50);asyncio.run(restarted.deliver(view.scope,send))
+        self.assertEqual(len(sent),4);self.assertEqual(len(set(sent)),4)
+
+    def test_internal_events_never_enqueue_even_if_notify_requested(self):
+        from core.product_notifications import notice_text
+        b,r,_,v=self.setup_view();events=ProductEvents(self.root/'notices.sqlite',b.clock)
+        kinds=['LEADER_EVENT','CONSENSUS_UPDATED','AGENT_UPDATED','DISCOVERY_UPDATED','LEADER_PROMOTED','RANKING_UPDATED','HEALTH_UPDATED','RISK_UPDATED','AUTHORIZATION_REQUIRED']
+        for kind in kinds:
+            events.publish(v.scope,kind,kind,{'status':'UNHEALTHY','wallet':'0x'+'a'*40},notify=True,critical=True)
+            self.assertEqual(notice_text({'type':kind,'data':{}},'id'),'')
+        self.assertEqual(self.notifications(events,v.scope),[])
+        self.assertEqual(len(events.read(v.scope)['events']),len(kinds))
+
+    def test_legacy_outbox_suppressed_without_deleting_activity_or_history(self):
+        b,r,_,v=self.setup_view();events=ProductEvents(self.root/'notices.sqlite',b.clock)
+        with events.store.transaction() as db:
+            for n in range(260):db.execute('INSERT INTO product_outbox VALUES(?,?,?,?,?,?,?,?)',(scope_key(v.scope),str(n),json.dumps({'type':'CONSENSUS_UPDATED','data':{}}),'PENDING',0,0,0,None))
+        sent=[]
+        async def send(*a):sent.append(a)
+        for _ in range(3):asyncio.run(events.deliver(v.scope,send))
+        self.assertEqual(sent,[])
+        with events.store.transaction() as db:self.assertEqual(db.execute("SELECT COUNT(*) FROM product_outbox WHERE status='SUPPRESSED'").fetchone()[0],260)
+
+    def test_shadow_and_historical_fills_do_not_notify(self):
+        b,r,_,v=self.setup_view('SHADOW');b.process(r)
+        events=ProductEvents(self.root/'notices.sqlite',b.clock);events.ingest(v,50)
+        self.assertEqual(self.notifications(events,v.scope),[])
+        self.case=fixture.IntelligenceTests();self.case.setUp();self.addCleanup(self.case.doCleanups)
+        self.root=Path(self.case.temp.name)
+        b,r,_,v=self.setup_view();b.process(r)
+        events=ProductEvents(self.root/'later.sqlite',lambda:b.clock()+1000);events.ingest(v,50)
+        self.assertEqual(self.notifications(events,v.scope),[])
+        self.assertTrue(events.read(v.scope)['events'])
+
+    def test_unknown_one_critical_no_fake_position_or_retry(self):
+        b,r,_,v=self.setup_view();events=ProductEvents(self.root/'notices.sqlite',b.clock);events.preferences(v.scope)
+        b.exchange.behavior='ACK_LOSS';b.process(r)
+        for _ in range(3):events.ingest(v,50);events.collect(v.snapshot())
+        rows=self.notifications(events,v.scope)
+        self.assertEqual([e['type'] for e in rows],['EXECUTION_UNKNOWN']);self.assertEqual(b.exchange.calls,1)
+
+    def test_notification_preferences_strict_scoped_authenticated(self):
+        b,r,_,v=self.setup_view();client,events=self.api(v);url='/api/product/notification-preferences';h={'x-telegram-init-data':'valid'}
+        self.assertEqual(client.put(url,json={'OPEN':False}).status_code,401)
+        for change in ({'OPEN':'false'},{'OPEN':None},{'RISK_UPDATED':True},{'tenant':'other'}):
+            self.assertEqual(client.put(url,headers=h,json=change).status_code,422)
+        self.assertFalse(client.put(url,headers=h,json={'OPEN':False}).json()['preferences']['OPEN'])
+        self.assertTrue(events.preferences(v.scope.model_copy(update={'account':'0x'+'f'*40,'tenant':'other'}))['preferences']['OPEN'])
+        b.process(r);events.ingest(v,50);sent=[]
+        async def send(*a):sent.append(a)
+        asyncio.run(events.deliver(v.scope,send));self.assertEqual(sent,[])
+
+    def test_reverse_is_one_notification_only_after_both_proven_legs(self):
+        b,r,_,v=self.setup_view();events=ProductEvents(self.root/'notices.sqlite',b.clock);events.preferences(v.scope)
+        b.process(r);events.ingest(v,50)
+        reverse=self.case.followup(r,'REVERSE',1,-1)
+        for candle in reverse['candles']:
+            high,low=float(candle['h']),float(candle['l'])
+            candle.update(c=str(200-float(candle['c'])),h=str(200-low),l=str(200-high))
+        result=b.process(reverse);self.assertEqual(result['open']['status'],'FILLED',result['open'])
+        events.ingest(v,50)
+        rows=self.notifications(events,v.scope)
+        self.assertEqual([e['type'] for e in rows],['POSITION_OPEN','POSITION_REVERSE'])
+        self.assertEqual((rows[-1]['data']['previous_side'],rows[-1]['data']['side']),('LONG','SHORT'))
+
+    def test_reverse_unproven_close_is_one_critical_not_a_reverse(self):
+        b,r,_,v=self.setup_view();events=ProductEvents(self.root/'notices.sqlite',b.clock);events.preferences(v.scope)
+        b.process(r);events.ingest(v,50);b.exchange.behavior='ACK_LOSS'
+        b.process(self.case.followup(r,'REVERSE',1,-1));events.ingest(v,50);events.ingest(v,50)
+        self.assertEqual([e['type'] for e in self.notifications(events,v.scope)],['POSITION_OPEN','RECONCILIATION_REQUIRED'])
+        self.assertEqual(b.exchange.calls,2)
+
+    def test_financial_health_critical_but_discovery_degradation_silent(self):
+        b,r,_,v=self.setup_view();events=ProductEvents(self.root/'notices.sqlite',b.clock);snapshot=v.snapshot()
+        snapshot['health']['components']['discovery']['status']='UNHEALTHY';events.collect(snapshot)
+        self.assertEqual(self.notifications(events,v.scope),[])
+        snapshot['health']['components']['private_account']['status']='UNHEALTHY';events.collect(snapshot);events.collect(snapshot)
+        self.assertEqual([e['type'] for e in self.notifications(events,v.scope)],['CRITICAL_TRADING_FAILURE'])
+
+    def test_desktop_copy_sender_cannot_bypass_financial_outbox(self):
+        import ast
+        tree=ast.parse((Path(__file__).parents[1]/'desktop/main.py').read_text(encoding='utf-8'))
+        notify=next(n for n in tree.body if isinstance(n,ast.AsyncFunctionDef) and n.name=='notify')
+        self.assertFalse(any(isinstance(n,ast.Call) for n in ast.walk(notify)))
+
+    def test_confirmation_is_optional_live_label_without_research_dump(self):
+        from core.product_notifications import notice_text,classification
+        self.assertIsNone(classification('POSITION_OPEN',[]))
+        text=notice_text({'type':'LIVE_CONFIRM_REQUIRED','data':{'mode':'LIVE_CONFIRM','symbol':'BTC','intent_id':'internal-only','raw_reason':'unsafe-debug'}},'id',False)
+        self.assertIn('⚠️ LIVE',text);self.assertIn('BTC',text)
+        self.assertNotIn('internal-only',text);self.assertNotIn('unsafe-debug',text)
+
     def setUp(self):
         self.case=fixture.IntelligenceTests();self.case.setUp();self.addCleanup(self.case.doCleanups)
         self.root=Path(self.case.temp.name)

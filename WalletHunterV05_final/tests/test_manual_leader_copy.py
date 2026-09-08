@@ -314,6 +314,27 @@ class ManualCopyWorkerTests(unittest.TestCase):
         self.leaders[self.f.SOURCE_A]['BTC']=(5000.,'LONG',5);self.assert_action('REDUCE')
         self.leaders[self.f.SOURCE_A]={};self.assert_action('CLOSE')
         self.assertFalse(self.client.rows)
+    def test_manual_follower_notifications_use_actual_gateway_fills(self):
+        import json
+        from pathlib import Path
+        from core.product_events import ProductEvents
+        from core.product_notifications import notice_text
+        from core.foundation.store import scope_key
+        scope=Scope(tenant='1',account=self.f.ACCOUNT,network='TESTNET')
+        events=ProductEvents(Path(self.case.engine.journal.path).parent/'notification-test.sqlite',lambda:0)
+        def collect():
+            with self.case.engine.journal.connect() as db:ids=[r[0] for r in db.execute('SELECT id FROM intents WHERE scope=?',(scope_key(scope),))]
+            for identity in ids:events.project_financial(self.case.engine.journal.path,scope,identity)
+        self.assert_action('OPEN');collect()
+        self.leaders[self.f.SOURCE_A]['BTC']=(20000.,'LONG',5);self.assert_action('ADD');collect()
+        self.leaders[self.f.SOURCE_A]['BTC']=(5000.,'LONG',5);self.assert_action('REDUCE');collect()
+        self.leaders[self.f.SOURCE_A]['BTC']=(10000.,'SHORT',5);self.assert_action('REVERSE');collect()
+        self.leaders[self.f.SOURCE_A]={};self.assert_action('CLOSE');collect()
+        with events.store.transaction() as db:rows=[json.loads(r[0]) for r in db.execute('SELECT body FROM product_outbox ORDER BY rowid')]
+        self.assertEqual([r['type'] for r in rows],['POSITION_OPEN','POSITION_ADD','POSITION_REDUCE','POSITION_REVERSE','POSITION_CLOSE'])
+        for row in rows:
+            self.assertEqual(row['data']['source'],'MANUAL_COPY')
+            text=notice_text(row,'audit');self.assertIn('⚠️ LIVE',text);self.assertNotIn(self.f.SOURCE_A,text)
     def test_actual_desktop_watcher_consumes_start_with_legacy_copy_disabled(self):
         import ast
         import asyncio

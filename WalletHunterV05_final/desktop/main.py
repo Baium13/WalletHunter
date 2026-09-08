@@ -32,6 +32,8 @@ from core.ai_position_observer import AiPositionObserver, position_notice, posit
 from core.ai_user_orders import AiUserOrders
 from core.ai_entry_observer import AiEntryObserver, entry_notice
 from core.profile_mutation import save_profile_guarded, legacy_trading_callback
+from core.product_telegram import confirmation_notifications_enabled
+from core.product_notifications import notice_text as financial_notice_text
 from integrations.hyperliquid import HyperliquidAccount, verify_account_control
 
 S = load()
@@ -104,9 +106,10 @@ async def ai_position_watcher():
                     check = await asyncio.to_thread(observer.prepare, uid)
                     print("[AI POSITION CHECK]", (check or {}).get("status"), (check or {}).get("reason"))
                     batches, current = await asyncio.to_thread(observer.notices, uid)
+                    if not confirmation_notifications_enabled(ROOT,uid,current,S.hl_mode):continue
                     for rows in batches[:3]:
                         en = current.get("language") == "en"
-                        message = await client.send_message(uid, position_notice(rows, en), parse_mode=None,
+                        message = await client.send_message(uid, financial_notice_text({'type':'LIVE_CONFIRM_REQUIRED','data':{'mode':'LIVE_CONFIRM','symbol':rows[0]['payload'].get('coin')}},en=en), parse_mode=None,
                             buttons=[[KeyboardButtonWebView("Review in APP" if en else "Рассмотреть в APP", position_app_url(WEBAPP_URL))]])
                         for row in rows: ai_position_actions.mark_notified(uid, row["id"])
                         _, fresh = profile(uid)
@@ -143,10 +146,11 @@ async def ai_entry_watcher():
                     check = await asyncio.to_thread(observer.prepare, uid)
                     print("[AI ENTRY CHECK]", (check or {}).get("status"), (check or {}).get("reason"))
                     rows, current = await asyncio.to_thread(observer.notices, uid)
+                    if not confirmation_notifications_enabled(ROOT,uid,current,S.hl_mode):continue
                     for row in rows[:1]:
                         if not await asyncio.to_thread(observer.claim_notice, uid, row["id"]):continue
                         en = current.get("language") == "en"
-                        message = await client.send_message(uid, entry_notice(row, en), parse_mode=None,
+                        message = await client.send_message(uid, financial_notice_text({'type':'LIVE_CONFIRM_REQUIRED','data':{'mode':'LIVE_CONFIRM','symbol':row['payload'].get('coin')}},en=en), parse_mode=None,
                             buttons=[[KeyboardButtonWebView("Review in APP" if en else "Рассмотреть в APP", position_app_url(WEBAPP_URL))]])
                         _, fresh = profile(uid)
                         remember_notification(uid, fresh, message)
@@ -254,7 +258,7 @@ async def show_menu(event, edit=False):
     text = ("<b>⚡ WALLET HUNTER</b>\n"
             "<i>CRYPTO COPY TERMINAL · HYPERLIQUID</i>\n\n"
             "━━━━━━━━━━━━━━━━━━\n"
-            "В этом чате приходят только важные уведомления: исполнение, риск и ошибки.")
+            "Здесь — изменения ваших позиций и критические ошибки исполнения. Аналитика и все события — в приложении.")
     buttons = [[Button.inline("🧹 ОЧИСТИТЬ УВЕДОМЛЕНИЯ", b"clear_journal")]]
     if edit:
         try: await event.edit(text, buttons=buttons, parse_mode="html")
@@ -372,22 +376,9 @@ def notification_labels(result, english: bool):
 
 
 async def notify(uid, p, result, account):
-    if not p.get("notifications") or result.action in {"NO_CHANGE", "LEVERAGE_UPDATE"}: return
-    english = p.get("language") == "en"
-    if result.action == "MIN_NOTIONAL_SKIP":
-        body = (f"⚪ <b>{'Trade not placed' if english else 'Сделка не совершена'}</b> · <b>{esc(result.coin)}</b>\n"
-                f"{'Required position change' if english else 'Требуемое изменение позиции'}: <b>${result.target_notional:,.2f}</b> · {'Hyperliquid minimum' if english else 'минимум Hyperliquid'}: <b>$10.00</b>\n"
-                + ("No order was sent. Repeated entry checks remain silent until execution or a new position episode." if english else "Бот не отправлял ордер. Повторные проверки не вызывают уведомлений до исполнения или нового входа кошелька."))
-        remember_notification(uid, p, await client.send_message(uid, body, parse_mode="html"))
-        return
-    icon = "🟢" if result.side == "LONG" else "🔴" if result.side == "SHORT" else "⚪"
-    action, side, market, status, error = notification_labels(result, english)
-    body = (f"{icon} <b>{esc(action)}</b> · <b>{esc(result.coin)}</b>\n"
-            f"{esc(side)} · {esc(market)} · {result.leverage:g}x\n"
-            f"{'Target' if english else 'Цель'}: <b>${result.target_notional:,.2f}</b> | {'Filled size' if english else 'Факт. размер'}: <b>{result.size:g}</b>\n"
-            f"{'Mode' if english else 'Режим'}: <b>{status}</b>")
-    if error: body += f"\n⚠️ {esc(error)}"
-    remember_notification(uid, p, await client.send_message(uid, body, parse_mode="html"))
+    # Canonical receipt -> durable product outbox is the sole automatic
+    # financial sender. Planner Results (including skips) are not fill proof.
+    return
 
 @client.on(events.NewMessage(pattern=r"^/start$"))
 async def start(event): await show_menu(event)
@@ -694,16 +685,7 @@ async def watcher_cycle():
                     positions, bal = await asyncio.gather(asyncio.to_thread(reader.positions, wallet, p.get("crypto_enabled", True), p.get("stocks_enabled", True)), asyncio.to_thread(reader.balance, wallet))
                     snapshots.append({"wallet":wallet, "positions":positions, "balance":bal, "enabled":leader_is_enabled(p, wallet)})
                 await engine.sync_profile(uid, p, c, snapshots, lambda result, account: notify(uid, p, result, account))
-                now = datetime.now().astimezone()
-                runtime = p.setdefault("runtime", {})
-                if p.get("notifications") and now.hour >= 20 and runtime.get("daily_report") != now.date().isoformat():
-                    await scheduled_report(uid, p, c, 1, "ЕЖЕДНЕВНЫЙ ОТЧЁТ")
-                    runtime["daily_report"] = now.date().isoformat()
-                week = f"{now.isocalendar().year}-{now.isocalendar().week}"
-                if p.get("notifications") and now.weekday() == 0 and now.hour >= 20 and runtime.get("weekly_report") != week:
-                    await scheduled_report(uid, p, c, 7, "ЕЖЕНЕДЕЛЬНЫЙ ОТЧЁТ")
-                    runtime["weekly_report"] = week
-                store.update_runtime(uid, runtime)
+                # Scheduled analytics live in Activity, not automatic chat pushes.
             except Exception as exc:
                 print("[WATCHER USER]", uid_text, type(exc).__name__)
     await asyncio.gather(*(process(uid, p) for uid, p in store.load().get("profiles", {}).items()))
@@ -732,13 +714,14 @@ async def ai_review_watcher():
                     await asyncio.to_thread(ai_review.generate, uid, p, account_reader, reader)
                     await asyncio.to_thread(ai_review.research.poll, uid, reader, int(time.time() * 1000))
                     _, notification_profile = store.profile(uid)
-                    if not notification_profile.get("notifications", True) or not notification_profile.get("ai_review_enabled", True): continue
+                    if not notification_profile.get("ai_review_enabled", True) or not confirmation_notifications_enabled(ROOT,uid,notification_profile,S.hl_mode): continue
                     for row in ai_review.list(uid):
                         if row["notified"] or row["status"] != "PENDING" or row["expires"] < time.time(): continue
+                        if row['payload'].get('action')!='REDUCE' or not row['payload'].get('gate',{}).get('allowed'):continue
                         en = notification_profile.get("language") == "en"
                         buttons = [[Button.inline("Confirm" if en else "Подтвердить", f'air:yes:{row["id"]}'.encode()),
                                     Button.inline("No" if en else "Нет", f'air:no:{row["id"]}'.encode())]] if row["status"] == "PENDING" else None
-                        message = await client.send_message(uid, review_text(row, en), buttons=buttons, parse_mode=None)
+                        message = await client.send_message(uid, financial_notice_text({'type':'LIVE_CONFIRM_REQUIRED','data':{'mode':'LIVE_CONFIRM','symbol':row['payload']['position'].get('coin')}},en=en), buttons=buttons, parse_mode=None)
                         ai_review.mark_notified(row["id"])
                         _, fresh = profile(uid)
                         remember_notification(uid, fresh, message)

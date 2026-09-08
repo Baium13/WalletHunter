@@ -24,5 +24,18 @@
  const proposalValid=(p,now)=>p?.status==='PENDING'&&/^[a-f0-9]{64}$/.test(p.proposal_hash||'')&&number(p.intent?.expires_ms)!==null&&p.intent.expires_ms>now;
  const candles=rows=>(rows||[]).filter(c=>['t','o','h','l','c'].every(k=>number(c[k])!==null)&&c.t>0&&c.l>0&&c.h>=Math.max(c.o,c.c)&&c.l<=Math.min(c.o,c.c)).sort((a,b)=>a.t-b.t).filter((c,i,a)=>i===0||c.t!==a[i-1].t);
  const markers=p=>(p.actions||[]).flatMap(a=>(a.receipt?.fills||[]).map(f=>({intent:a.intent_id,action:a.intent?.action,time:f.exchange_ms??f.timestamp??f.time,price:f.price,size:f.size}))).filter(f=>number(f.time)!==null&&number(f.price)!==null);
- const api={number,modes,runtime,scopeKey,liveId,positions,isOpen,timeline,curve,mergeEvents,proposalValid,candles,markers};if(typeof module==='object')module.exports=api;else root.WHModel=api;
+ function activityEvent(event){
+  const d=event?.data||{},e=d.evidence||d,p=e.payload||e,c=p.consensus||p,trade=p.event||p;
+  const kind=event.type||'',type=p.event_type||e.event_type||kind;
+  const category=/RISK|AUTHORIZATION/.test(kind)?'RISK':/POSITION|ORDER|EXECUTION|OUTCOME|MANUAL_COPY|LIVE_CONFIRM/.test(kind)?'TRADING':/CONSENSUS|AGENT|ANALYSIS/.test(kind)?'AI':/LEADER|DISCOVER|RANKING|WALLET/.test(kind)?'LEADERS':'SYSTEM';
+  const title=/CONSENSUS/.test(kind)?'AI_CONSENSUS':kind==='LEADER_EVENT'?'LEADER_ACTIVITY':
+   /POSITION_(OPEN|ADD|REDUCE|REVERSE|CLOSE)$/.test(kind)?kind:
+   ['LEADER_PROMOTED','LEADER_DEGRADED','DISCOVERY_UPDATED','WALLET_DISCOVERED','LEADER_ANALYZED','AGENT_UPDATED','RISK_UPDATED','ORDER_INTENT','EXECUTION_UPDATED','POSITION_UPDATED','OUTCOME_UPDATED','HEALTH_UPDATED','AUTHORIZATION_REQUIRED','LIVE_CONFIRM_REQUIRED'].includes(kind)?kind:'ACTIVITY_'+category;
+  const wallet=trade.wallet||trade.leader||p.wallet;
+  return {category,title,mode:d.mode||p.mode||'',symbol:trade.instrument?.symbol||p.instrument?.symbol||p.symbol||'',
+   action:c.decision||trade.action||p.action||p.status||'',side:trade.side||p.side||'',
+   confidence:number(c.confidence),wallet:typeof wallet==='string'&&/^0x[0-9a-f]{40}$/i.test(wallet)?wallet:null,
+   technical:{event_id:event.id,correlation_id:e.correlation_id||p.correlation_id,intent_id:p.intent_id,type,evidence:d}};
+ }
+ const api={number,modes,runtime,scopeKey,liveId,positions,isOpen,timeline,curve,mergeEvents,proposalValid,candles,markers,activityEvent};if(typeof module==='object')module.exports=api;else root.WHModel=api;
 })(typeof window==='object'?window:globalThis);

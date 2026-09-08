@@ -3,6 +3,7 @@ import asyncio
 from pathlib import Path
 from core.product_runtime import view_for
 from core.product_events import ProductEvents
+from core.product_notifications import notice_text
 
 
 def status_text(snapshot,en=True):
@@ -19,16 +20,12 @@ def status_text(snapshot,en=True):
         ('Consensus: ' if en else 'Консенсус: ')+', '.join((m.get('consensus') or {}).get('decision',unavailable) for m in modes)])
 
 
-def notice_text(event,identity,en=True):
-    labels={'AUTHORIZATION_REQUIRED':('Confirmation required','Требуется подтверждение'),
-        'EXECUTION_UPDATED':('Execution update','Обновление исполнения'),'OUTCOME_UPDATED':('Position outcome','Результат позиции'),
-        'LEADER_PROMOTED':('Leader promoted','Лидер выбран'),'LEADER_DEGRADED':('Leader downgraded','Рейтинг лидера понижен'),
-        'HEALTH_UPDATED':('System warning','Предупреждение системы')}
-    kind=event['type'];title=labels.get(kind,(kind,kind))[0 if en else 1];data=event['data']
-    if isinstance(data.get('evidence'),dict):data={**data,**data['evidence']}
-    if isinstance(data.get('payload'),dict):data={**data,**data['payload']}
-    fields=('mode','status','wallet','intent_id','decision_id','net_pnl')
-    return title+'\n'+'\n'.join(f'{k}: {data[k]}' for k in fields if k in data and data[k] is not None)+'\nID: '+identity[:12]
+def confirmation_notifications_enabled(root,uid,profile,network):
+    if not profile.get('notifications',True):return False
+    try:
+        view=view_for(root,uid,profile,network)
+        return ProductEvents(Path(root)/'data/product.sqlite3').preferences(view.scope)['preferences']['LIVE_CONFIRM']
+    except (ValueError,OSError):return False
 
 
 async def product_notifications(root,storage,settings,client):

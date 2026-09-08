@@ -143,7 +143,7 @@ class ProductReadModel:
                 predictions=db.execute('SELECT p.body FROM autonomous_predictions p JOIN episode_actions a ON a.id=p.id WHERE a.episode=? AND p.scope=? ORDER BY p.rowid LIMIT 100',(episode['episode_id'],key)).fetchall()
                 predictions=[body(p) for p in predictions]
                 outcome=next((o for o in outcomes if o.get('episode_id')==episode['episode_id'] and o.get('version')=='outcome-v2'),None)
-                order_ids={oid for a in matching for oid in (a['receipt'] or {}).get('order_ids',[])}
+                order_ids={oid for a in matching if a['status'] in {'FILLED','PARTIAL'} for oid in (a['receipt'] or {}).get('order_ids',[])}
                 position=next((p for p in (portfolio.positions if portfolio else ()) if p.instrument.model_dump(mode='json')==episode['instrument'] and p.evidence=='VERIFIED' and order_ids.intersection(p.order_ids)),None)
                 first=predictions[0] if predictions else {};latest=matching[0] if matching else None
                 # SHADOW inventory has no exchange identifiers; scoped hypothetical intent identity is its proof.
@@ -166,7 +166,12 @@ class ProductReadModel:
                     margin=position.margin if position else None,notional=position.notional if position else None,leverage=position.leverage if position else None,
                     pnl=outcome.get('net_pnl') if outcome else unrealized,pnl_kind='REALIZED' if outcome else 'UNREALIZED_MARK_EXCLUDES_FEES' if unrealized is not None else 'UNAVAILABLE',
                     outcome=outcome,current_action_state=latest['status'] if latest else first.get('status'),
-                    unresolved=any(a['status'] in {'UNKNOWN','PARTIAL','SUBMITTING'} for a in matching),correlation_id=episode['first_event_id'],timeline=[])
+                    unresolved=episode['state'] in {'UNKNOWN','PARTIAL','RECONCILIATION_REQUIRED'} or any(a['status'] in {'UNKNOWN','PARTIAL','SUBMITTING'} for a in matching),correlation_id=episode['first_event_id'],timeline=[])
+                detail['recorded_state']=episode['state']
+                if episode['state']=='REJECTED' and position is not None:
+                    # Preserve Block 2's legacy read-through: an action-level
+                    # rejection cannot hide exact proven, attributable exposure.
+                    detail.update(state='RECONCILIATION_REQUIRED',unresolved=True)
                 for prediction in predictions:
                     for field,kind in [('event','LEADER_EVENT'),('agents','ANALYSIS'),('consensus','CONSENSUS'),('authorization','AUTHORIZATION'),('risk','RISK')]:
                         value=prediction.get(field)
@@ -191,7 +196,7 @@ class ProductReadModel:
                 latest_decision=latest,agents=agents,consensus=(latest or {}).get('consensus'),
                 risk=actions[0]['risk'] if actions else None,analytics=performance(outcomes),calibration=calibrations,
                 execution={'pending':sum(r['status']=='SUBMITTING' for r in pending),'unknown':sum(r['status']=='UNKNOWN' for r in pending),
-                    'partial':sum(r['status']=='PARTIAL' for r in pending),'reconciliation_backlog':len(pending),
+                    'partial':sum(r['status']=='PARTIAL' for r in pending),'reconciliation_backlog':len(pending)+sum(e['unresolved'] and not any(a['status'] in {'SUBMITTING','PARTIAL','UNKNOWN'} for a in e['actions']) for e in episode_views),
                     'last_error':next(({'code':'EXECUTION_UNKNOWN','intent_id':a['intent_id'],'timestamp':(a['receipt'] or {}).get('received_ms')} for a in actions if a['status']=='UNKNOWN'),None),
                     'last_success_ms':max(((a['receipt'] or {}).get('received_ms',0) for a in actions if (a['receipt'] or {}).get('reconciliation')=='CONFIRMED'),default=None)}))
 

@@ -291,3 +291,19 @@ class ProductTests(unittest.TestCase):
         relocated=ProductReadModel(self.root,b.auth_policy.scope,[binding.model_copy(update={'state_path':str(restored)})],b.clock,research_path=self.case.worker.store.path)
         events.ingest(relocated)
         with events.store.transaction() as db:self.assertEqual(before,db.execute('SELECT COUNT(*) FROM product_outbox').fetchone()[0])
+
+    def test_legacy_rejected_episode_does_not_hide_proven_open_exposure(self):
+        b,r,_,view=self.setup_view();b.process(r)
+        with b.store.transaction() as db:
+            episode=json.loads(db.execute('SELECT body FROM position_episodes').fetchone()[0]);episode['state']='REJECTED'
+            db.execute('UPDATE position_episodes SET body=?',(json.dumps(episode),))
+        visible=view.snapshot()['runtimes'][0]['episodes'][0]
+        self.assertEqual(visible['state'],'RECONCILIATION_REQUIRED');self.assertTrue(visible['unresolved']);self.assertGreater(visible['size'],0)
+        with b.store.transaction() as db:self.assertEqual(json.loads(db.execute('SELECT body FROM position_episodes').fetchone()[0])['state'],'REJECTED')
+
+    def test_research_consensus_stream_is_not_account_authorization(self):
+        b,r,_,view=self.setup_view();events=ProductEvents(self.root/'events.sqlite',b.clock);events.ingest(view)
+        decisions=[e for e in events.read(b.auth_policy.scope,limit=100)['events'] if e['type']=='CONSENSUS_UPDATED']
+        self.assertTrue(decisions)
+        self.assertTrue(all(e['data']['stage']=='RESEARCH_ONLY' and e['data']['execution_authority'] is False for e in decisions))
+        self.assertEqual(b.exchange.calls,0)

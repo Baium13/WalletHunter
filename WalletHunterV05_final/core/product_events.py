@@ -71,7 +71,9 @@ class ProductEvents:
                         notify=kind is not None
                     # Event identity survives a restore into a different directory;
                     # only the read cursor needs to rediscover that source path.
-                    if kind:self.publish(view.scope,'source:'+str(mode)+':'+table+':'+str(row['id']),kind,dict(mode=mode,evidence=payload),notify=notify,critical=critical)
+                    if kind:self.publish(view.scope,'source:'+str(mode)+':'+table+':'+str(row['id']),kind,
+                        dict(mode=mode,stage='RESEARCH_ONLY' if table=='intelligence_records' else 'CANONICAL_RECORD',
+                            execution_authority=False,evidence=payload),notify=notify,critical=critical)
                 except (ValueError,KeyError,TypeError):
                     # Optional product projection poison is visible, never a reason
                     # to mutate or discard the canonical financial record.
@@ -115,7 +117,8 @@ class ProductEvents:
             if decision:
                 for field,kind in [('event','LEADER_EVENT'),('agents','AGENT_UPDATED'),('consensus','CONSENSUS_UPDATED'),('authorization','AUTHORIZATION_REQUIRED')]:
                     value=decision.get(field)
-                    if value is not None:self.publish(scope,prefix+field+decision['event']['event_id'],kind,value,
+                    if value is not None:self.publish(scope,prefix+field+decision['event']['event_id'],kind,
+                        dict(mode=mode['mode'],stage='ACCOUNT_ANALYSIS' if field in {'agents','consensus'} else 'ACCOUNT_EVENT',execution_authority=False,evidence=value),
                         notify=False)
             for action in mode.get('actions',[]):
                 payload={k:action[k] for k in ('intent_id','status','correlation_id','timestamp')}

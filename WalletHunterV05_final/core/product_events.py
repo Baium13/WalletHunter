@@ -141,6 +141,14 @@ class ProductEvents:
             db.execute('INSERT OR IGNORE INTO product_events(scope,id,kind,body,created) VALUES(?,?,?,?,?)',(key,eid,kind,encoded,self.clock()))
             db.execute('INSERT OR REPLACE INTO product_latest VALUES(?,?,?)',(key,identity,digest))
             category=classification(kind,payload)
+            if notify and category=='CRITICAL' and payload.get('intent_id'):
+                # Preserve the legacy alert identity across notification-policy
+                # deployment. SENT/SENDING/DEAD all retain delivery uncertainty;
+                # changing presentation must not enqueue another alert.
+                prior=db.execute("SELECT 1 FROM product_outbox WHERE scope=? AND critical=1 AND "
+                    "COALESCE(json_extract(body,'$.data.intent_id'),json_extract(body,'$.data.payload.intent_id'))=? LIMIT 1",
+                    (key,payload['intent_id'])).fetchone()
+                if prior:notify=False
             if notify and category:
                 # One financial action identity, independent of later view changes.
                 nid=hashlib.sha256(('notice-v1:'+identity).encode()).hexdigest()

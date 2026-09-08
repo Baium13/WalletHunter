@@ -87,6 +87,10 @@ class ManualCopyWorker:
         if self.reader.network!=scope.network: raise ValueError('READER_NETWORK_MISMATCH')
         config=self.service.config(account,client)
         if config is None:return None
+        from core.execution_quarantine import active_in
+        with closing(self.engine.journal.connect()) as db:
+            quarantines=active_in(db,scope)
+        if quarantines:config=config.model_copy(update={'enabled':False})
         report=dict(enabled=config.enabled,leader=config.leader,status='HOLD',heartbeat_ms=self.clock(),
             denominator='PER_DEX_MARGIN_SUMMARY_ACCOUNT_VALUE',monitored=[],results=[],errors=[])
         try:

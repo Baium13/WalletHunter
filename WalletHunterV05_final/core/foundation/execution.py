@@ -190,6 +190,8 @@ class ExecutionGateway:
             raise ValueError('Copy adapter required')
         self.__exchange.validate_scope(intent)
         with self.store.transaction() as db:
+            from core.execution_quarantine import require_unblocked
+            require_unblocked(db,intent.scope)
             self.store.bind(db, intent.scope)
             row = db.execute('SELECT account,intent,status FROM operations WHERE id=?', (intent.parent_intent_id,)).fetchone()
             if not row or row['account'] != intent.scope.account or row['status'] != 'PREPARED' or json.loads(row['intent']).get('network') != intent.scope.network:

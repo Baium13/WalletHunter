@@ -1,0 +1,13 @@
+{
+  "change": "Operator quarantine overlay for unresolved Manual Copy execution",
+  "financial_outcome": "UNKNOWN remains UNKNOWN; no release or retry API",
+  "isolation": "Scope-bound live quarantine; separate PAPER/SHADOW stores unchanged",
+  "deployment": "Paused UI/Telegram deployment permitted only with intact quarantines and zero live grants",
+  "tests": {"python_passed": 1029, "python_discovered": 1030, "existing_skip": 1, "javascript_passed": 135, "safety_passed": 71, "new_quarantine_cases": 8},
+  "validation_notes": [
+    "Initial implementation test failures were fixed; final full run has zero failures/errors.",
+    "First full run exceeded 300s; final isolated run used a 900s process timeout without weakening I/O guards.",
+    "No real exchange orders; production validation used public read-only adapters.",
+    "Quarantine enforcement/read model installed separately; UI/Telegram release remains a separately gated deployment."
+  ]
+}

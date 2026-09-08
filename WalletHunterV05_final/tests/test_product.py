@@ -72,6 +72,18 @@ class ProductTests(unittest.TestCase):
         rows=self.notifications(events,v.scope)
         self.assertEqual([e['type'] for e in rows],['EXECUTION_UNKNOWN']);self.assertEqual(b.exchange.calls,1)
 
+    def test_legacy_sent_unknown_survives_notification_policy_cutover(self):
+        b,r,_,v=self.setup_view();events=ProductEvents(self.root/'notices.sqlite',b.clock)
+        b.exchange.behavior='ACK_LOSS';b.process(r)
+        intent=v.snapshot()['runtimes'][0]['actions'][0]['intent_id']
+        with events.store.transaction() as db:
+            db.execute('INSERT INTO product_outbox VALUES(?,?,?,?,?,?,?,?)',
+                (scope_key(v.scope),'legacy',json.dumps({'type':'EXECUTION_UPDATED','data':{'payload':{'intent_id':intent,'status':'UNKNOWN'}}}),
+                 'SENT',1,0,1,None))
+        for _ in range(2):events.ingest(v,50)
+        with events.store.transaction() as db:
+            self.assertEqual(db.execute('SELECT COUNT(*) FROM product_outbox').fetchone()[0],1)
+
     def test_notification_preferences_strict_scoped_authenticated(self):
         b,r,_,v=self.setup_view();client,events=self.api(v);url='/api/product/notification-preferences';h={'x-telegram-init-data':'valid'}
         self.assertEqual(client.put(url,json={'OPEN':False}).status_code,401)

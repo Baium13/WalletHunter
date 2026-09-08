@@ -199,6 +199,10 @@ class ManualLeaderCopyService:
 
     def _write(self, config):
         with closing(sqlite3.connect(self.path, timeout=10)) as db:
+            db.execute('BEGIN IMMEDIATE')
+            if config.enabled:
+                from core.execution_quarantine import require_unblocked
+                require_unblocked(db,config.scope)
             db.execute('INSERT INTO manual_leader_configs(scope,body) VALUES(?,?) '
                        'ON CONFLICT(scope) DO UPDATE SET body=excluded.body',
                        (config.scope.model_dump_json(), config.model_dump_json()))
@@ -356,6 +360,9 @@ def execute_manual_leader(*, engine, account, client, operation, event_id, actio
         leader=str(spec['leader']).lower(), alias=str(spec.get('alias') or spec['leader']),
         allocation_pct=float(spec['allocation_pct']), enabled=True,
         created_ms=int(spec.get('created_ms', 0)), updated_ms=int(spec.get('updated_ms', 0)))
+    from core.execution_quarantine import require_unblocked
+    with closing(engine.journal.connect()) as db:
+        require_unblocked(db,policy.scope)
     planner = ManualLeaderCopy(policy)
     if action not in {'OPEN', 'ADD', 'REDUCE', 'CLOSE', 'REVERSE'}:
         raise ValueError('Unsupported manual leader action')
@@ -516,6 +523,10 @@ def recover_pending_manual_leader(engine, account, client, *, limit=3):
     recovered = []
     for row in rows:
         try:
+            from core.execution_quarantine import active_in
+            with store.transaction() as db:
+                if any(q['intent_id']==json.loads(row['body'])['intent_id'] for q in active_in(db,scope)):
+                    continue  # Operator quarantine is not an automatic recovery queue.
             envelope = json.loads(row['envelope'])
             if envelope.get('strategy') != 'MANUAL_LEADER_COPY':
                 continue

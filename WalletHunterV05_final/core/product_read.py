@@ -357,6 +357,17 @@ class ProductReadModel:
             'ACTIVE' if manual.get('enabled') and manual.get('status')=='FOLLOWING' else manual['status'])
         manual['valid_actions']=(['PAUSE'] if manual.get('enabled') else ['RESUME','CHANGE_LEADER'] if manual.get('selected_leader') else ['SELECT_LEADER'])
         if manual['ui_state'] in ('PENDING','UNKNOWN','ERROR'):manual['valid_actions']=['PAUSE'] if manual.get('enabled') else []
+        quarantines=[]
+        try:
+            from core.execution_quarantine import active_in
+            with reader(self.root/'data/executions.sqlite3') as db:quarantines=active_in(db,self.scope)
+        except (OSError,sqlite3.Error,ValueError):pass
+        if quarantines:
+            manual.update(status='PAUSED',ui_state='PAUSED',paused=True,enabled=False,valid_actions=[],
+                quarantine={'count':len(quarantines),'reservation_held':sum(q['reservation']['margin'] for q in quarantines),
+                    'retry_allowed':False,'operator_review_required':True,
+                    'message':'One previous Manual Copy operation has an unresolved exchange outcome. No retry will be submitted automatically.',
+                    'technical_details':quarantines})
         components={name:observed(None,self.clock(),critical=name in {'private_account','allocation','risk','execution','reconciliation'}) for name in
             ('public_data','private_account','discovery','deep_analysis','watchlist','leader_detection','agents','consensus','authorization','allocation','risk','execution','reconciliation','events','database','telegram','web')}
         discovery=self.discovery();components['discovery']={k:v for k,v in discovery.items() if k in {'status','last_success_ms','fresh','heartbeat_ms','reasons','worker_active'}}
@@ -392,6 +403,12 @@ class ProductReadModel:
         except (OSError,ValueError,sqlite3.Error):pass
         components['web']=observed(self.clock(),self.clock());components['database']=observed(self.clock() if account or any(m.get('portfolio') for m in modes) else None,self.clock())
         status='UNHEALTHY' if any(c['status']=='UNHEALTHY' for c in components.values()) else 'DEGRADED' if any(c['status'] in {'UNKNOWN','DEGRADED'} for c in components.values()) else 'HEALTHY'
+        if quarantines:
+            for name in ('execution','reconciliation'):
+                if components[name]['status']!='UNHEALTHY':components[name]['status']='DEGRADED'
+                components[name].update(quarantined_mainnet=len(quarantines),retry_allowed=False,
+                    reasons=list(components[name].get('reasons',[]))+['MANUAL_COPY_QUARANTINED_UNKNOWN'])
+            if status=='HEALTHY':status='DEGRADED'
         return clean({'version':'product-v1','scope':self.scope.model_dump(mode='json'),'checked_ms':self.clock(),'live_auto':False,
             'runtimes':modes,'account':account,'manual_copy':manual,'discovery':discovery,'health':{'status':status,'components':components},
             'history_limit':100,'legacy_paper_substitution':False})

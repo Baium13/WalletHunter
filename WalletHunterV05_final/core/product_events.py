@@ -151,6 +151,12 @@ class ProductEvents:
         with self.store.transaction() as db:
             db.execute("UPDATE product_outbox SET status='DEAD',last_error='DELIVERY_ACK_UNKNOWN' WHERE scope=? AND status='SENDING' AND due<=? AND attempts>=5",(key,now))
             rows=db.execute("SELECT * FROM product_outbox WHERE scope=? AND status IN ('PENDING','SENDING') AND due<=? AND attempts<5 ORDER BY critical DESC,due LIMIT ?",(key,now,limit)).fetchall()
+            # Idle delivery loop readiness is not the last notification time.
+            pending=db.execute("SELECT COUNT(*) FROM product_outbox WHERE scope=? AND status!='SENT'",(key,)).fetchone()[0]
+            old=db.execute('SELECT body FROM product_delivery_health WHERE scope=?',(key,)).fetchone()
+            health=json.loads(old[0]) if old else {}
+            health.update(heartbeat_ms=now,backlog=pending,status='DEGRADED' if pending and health.get('last_error') else 'READY')
+            db.execute('INSERT OR REPLACE INTO product_delivery_health VALUES(?,?)',(key,json.dumps(health)))
             # Lease and consume an attempt durably before any external delivery.
             for r in rows:db.execute("UPDATE product_outbox SET status='SENDING',attempts=attempts+1,due=? WHERE scope=? AND id=?",(now+60000,key,r['id']))
         for r in rows:
@@ -160,4 +166,4 @@ class ProductEvents:
             except Exception:status,error=('DEAD' if r['attempts']+1>=5 else 'PENDING'),'DELIVERY_UNAVAILABLE'
             with self.store.transaction() as db:
                 db.execute('UPDATE product_outbox SET status=?,due=?,last_error=? WHERE scope=? AND id=?',(status,self.clock()+min(3600000,60000*2**r['attempts']),error,key,r['id']))
-                db.execute('INSERT OR REPLACE INTO product_delivery_health VALUES(?,?)',(key,json.dumps({'heartbeat_ms':self.clock(),'status':'ACTIVE' if status=='SENT' else 'DEGRADED','last_error':error})))
+                db.execute('INSERT OR REPLACE INTO product_delivery_health VALUES(?,?)',(key,json.dumps({'heartbeat_ms':self.clock(),'last_success_ms':self.clock() if status=='SENT' else health.get('last_success_ms'),'status':'ACTIVE' if status=='SENT' else 'DEGRADED','last_error':error})))

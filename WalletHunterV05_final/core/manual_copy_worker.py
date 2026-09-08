@@ -111,7 +111,33 @@ class ManualCopyWorker:
                     report['monitored'].append(dict(leader=leader,mode='ADMISSION' if config.enabled and leader==config.leader else 'POSITION_HOLD',
                         exchange_ms=evidence[leader]['exchange_ms'],capital=evidence[leader]['capital']))
                 except Exception: report['errors'].append('LEADER_EVIDENCE_UNAVAILABLE:'+leader)
-            if not config.enabled or config.leader not in evidence:return report
+            if not config.enabled:
+                # Display-only account evidence while paused. Never write the
+                # execution portfolio or infer provenance from a public read.
+                # One bounded refresh per minute, owned by this existing loop.
+                previous=self.diagnostics(scope) or {}
+                cached=previous.get('account_evidence')
+                report['status']='PAUSED'
+                report['account_attempt_ms']=previous.get('account_attempt_ms',0)
+                try:
+                    if not cached or not 0<=self.clock()-cached['received_ms']<60000:
+                        if 0<=self.clock()-report['account_attempt_ms']<60000:
+                            raise ValueError('ACCOUNT_RETRY_BACKOFF')
+                        report['account_attempt_ms']=self.clock()
+                        from core.foundation.data import copy_account_snapshot
+                        cached=copy_account_snapshot(client,scope,self.clock(),self.clock,'').model_dump(mode='json')
+                    report['account_evidence']=cached
+                    report['account_read_error']=None
+                    capital=finite_amount(cached['sizing_capital'],'follower sizing capital')
+                    if capital<0 or cached['completeness']!='COMPLETE':raise ValueError('ACCOUNT_DATA_UNAVAILABLE')
+                    slots=(len(profile.get('leaders',[])[:3]) if profile.get('copy_enabled') else 0)+int(bool(profile.get('ai_slot_selected')))
+                    report['allocatable_capital']=capital*max(0.,1-min(3,slots)/3)
+                    report['allocation_limit']=config.capital_limit(report['allocatable_capital'])
+                except Exception:
+                    report['account_evidence']=cached
+                    report['account_read_error']='ACCOUNT_DATA_UNAVAILABLE'
+                return report
+            if config.leader not in evidence:return report
             follower=client.positions(True,True)
             actual={market_key(p):p for p in follower}
             if len(actual)!=len(follower):raise ValueError('DUPLICATE_POSITIONS')

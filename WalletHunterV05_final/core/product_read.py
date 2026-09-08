@@ -192,7 +192,8 @@ class ProductReadModel:
                 ready = (health.get('readiness_version')=='configured-worker-v1'
                     and health.get('status')=='HEALTHY' and name in health.get('ready_components',[])
                     and 0 <= now-health.get('heartbeat_ms',0) <= 90000)
-                if a is None and ready:state.update(status='READY',ready_observed_ms=health['heartbeat_ms'])
+                if ready:state.update(readiness='READY',ready_observed_ms=health['heartbeat_ms'])
+                if ready and (a is None or not state['fresh']):state.update(status='READY',signal_status='STALE' if a else 'UNAVAILABLE')
                 if a and state['fresh'] and a['direction'] in {'WAIT','BLOCK'}:state['status']='WAITING' if a['direction']=='WAIT' else 'DEGRADED'
                 agents.append(dict(agent_id=name,**state,result=a,heartbeat_ms=None,latency_ms=None))
             return clean(dict(mode=mode,runtime_mode=runtime,configured_mode=mode,last_transition_ms=None,worker=health,allocation=allocation,
@@ -217,9 +218,27 @@ class ProductReadModel:
                 h=db.execute('SELECT last_success,last_attempt,error FROM intelligence_health WHERE network=?',(self.scope.network,)).fetchone()
                 result.update(observed(h['last_success'] if h else None,self.clock(),failed=bool(h and h['error'])))
                 result['heartbeat_ms']=h['last_attempt'] if h else None
+                result['reasons']=(h['error'] or '').split(',') if h and h['error'] else []
                 stamps={r[0]:r[1] for r in db.execute('SELECT kind,MAX(created) FROM intelligence_records WHERE network=? GROUP BY kind',(self.scope.network,))}
                 result['components']={name:observed(stamps.get(kind),self.clock()) for name,kind in
                     [('deep_analysis','LEADER_ANALYZED'),('watchlist','LEADER_PROMOTED'),('leader_detection','LEADER_TRADE')]}
+                if db.execute("SELECT 1 FROM sqlite_master WHERE name='component_health'").fetchone():
+                    for row in db.execute('SELECT component,body FROM component_health WHERE network=?',(self.scope.network,)):
+                        health=body(row);heartbeat=health.get('heartbeat_ms')
+                        state=observed(health.get('last_success_ms'),self.clock(),failed=bool(health.get('error')))
+                        state.update(health,reasons=[health['error']] if health.get('error') else [])
+                        fresh=type(heartbeat) is int and 0<=self.clock()-heartbeat<120000
+                        state['worker_active']=fresh
+                        if fresh and health.get('error')=='HISTORY_INCOMPLETE':state['status']='DEGRADED'
+                        if row['component']=='public_data' and fresh and not health.get('error'):
+                            stamp=health.get('exchange_ms');state['market_fresh']=type(stamp) is int and 0<=self.clock()-stamp<30000
+                            state['status']='ACTIVE' if state['market_fresh'] else 'READY'
+                        if row['component']=='discovery':
+                            result.update(state)
+                            if result['reasons'] or (h and h['error']):
+                                result.update(status='DEGRADED',reasons=(h['error'] or '').split(',') if h else result['reasons'])
+                        else:result['components'][row['component']]=state
+                result['coverage']['meaning']='PUBLIC_ACTIVITY_AND_LEADER_RESEARCH_NOT_PAPER_ADMISSION'
                 result['coverage']['observed_instruments']=[r[0] for r in db.execute("SELECT DISTINCT json_extract(body,'$.instrument.symbol') FROM intelligence_records WHERE network=? AND kind='LEADER_TRADE' AND json_valid(body) LIMIT 100",(self.scope.network,)) if r[0]]
         except (OSError,sqlite3.Error,ValueError,TypeError):result['status']='UNKNOWN'
         return clean(result)
@@ -231,6 +250,13 @@ class ProductReadModel:
                 config=json.loads(self._path(binding.config_path).read_text(encoding='utf-8'))
                 if Scope.model_validate(config['authorization']['scope'])!=self.scope or config['authorization']['mode']!=binding.mode:raise ValueError('CONFIG_SCOPE_MISMATCH')
                 modes.append(self._store(self._path(binding.state_path),binding.mode,config))
+                modes[-1]['allowed_instrument']=config['risk']['instrument']
+                session_path=self._path(binding.config_path).parent/'session.json'
+                if session_path.is_file() and not session_path.is_symlink():
+                    session=json.loads(session_path.read_text(encoding='utf-8'))
+                    # Public, operator-recorded experiment metadata only. No paths/config/secrets.
+                    if session.get('primary_mode')==binding.mode and session.get('network')==self.scope.network:
+                        modes[-1]['session']={k:session.get(k) for k in ('session_id','start_ms','evaluation_end_ms','virtual_starting_capital','allowed_instrument','auto_policy_promotion')}
             except (OSError,sqlite3.Error,ValueError,KeyError,TypeError):modes.append({'mode':binding.mode,'configured_mode':binding.mode,'runtime_mode':None,'status':'UNKNOWN','reason':'CANONICAL_STORE_UNAVAILABLE'})
         manual={'configured':None,'status':'UNKNOWN','committed':None,'reserved':None,'available':None,'positions':[],
             'pnl':None,'outcome_summary':None,'pending_operations':None}
@@ -245,11 +271,22 @@ class ProductReadModel:
                 manual.update(configured=bool(configs),configuration=body(configs[0]) if configs else None,runtime=body(runtime[0]) if runtime else None)
                 if runtime:
                     state=body(runtime[0]);manual.update({k:state.get(k) for k in ('status','committed','available','allocation_limit','allocatable_capital','denominator','monitored','heartbeat_ms')})
+                    manual['runtime']={k:v for k,v in state.items() if k!='account_evidence'}
                     manual['reserved']=None if state.get('reserved_unknown') else 0.
+                    cached=state.get('account_evidence')
+                    if cached:
+                        display=PortfolioSnapshot.model_validate(cached)
+                        if display.scope!=self.scope or display.evidence!='EXCHANGE':raise ValueError('ACCOUNT_SCOPE_MISMATCH')
+                        current=(account or {}).get('portfolio')
+                        if not current or display.received_ms>current['received_ms']:
+                            account=account or {'actions':[]}
+                            account['portfolio']=display.model_dump(mode='json')
+                            account['display_evidence_only']=True
+                        manual['account_read_error']=state.get('account_read_error')
                 if configs:
                     configuration=body(configs[0]);manual['enabled']=configuration['enabled'];manual['paused']=not configuration['enabled']
                     manual.update(selected_leader=configuration['leader'],alias=configuration['alias'],allocation_pct=configuration['allocation_pct'])
-                    if manual['paused']:manual['status']='HOLD'
+                    if manual['paused']:manual['status']='PAUSED'
                     evidence=next((m for m in (manual.get('monitored') or []) if m.get('leader')==configuration['leader']),{})
                     manual['leader_capital_denominator']=evidence.get('capital')
                     manual['denominator_evidence_type']=manual.get('denominator')
@@ -310,11 +347,24 @@ class ProductReadModel:
                     if runtime and body(runtime[0]).get('reserved_unknown'):
                         manual['status']='HOLD'
         except (OSError,sqlite3.Error,ValueError,KeyError,TypeError):pass
+        manual['capital_status']='UNAVAILABLE'
+        if account and account.get('portfolio'):
+            p=account['portfolio'];stamp=p.get('exchange_ms')
+            manual['account_balance']=p.get('equity')
+            manual['capital_status']='FRESH' if p.get('completeness')=='COMPLETE' and type(stamp) is int and 0<=self.clock()-stamp<120000 and not manual.get('account_read_error') else 'STALE'
+        if manual.get('paused') and manual['positions']:manual['status']='HOLD'
+        manual['ui_state']='PENDING' if manual.get('pending_operations') else ('NO_LEADER' if manual.get('configured') is False else
+            'ACTIVE' if manual.get('enabled') and manual.get('status')=='FOLLOWING' else manual['status'])
+        manual['valid_actions']=(['PAUSE'] if manual.get('enabled') else ['RESUME','CHANGE_LEADER'] if manual.get('selected_leader') else ['SELECT_LEADER'])
+        if manual['ui_state'] in ('PENDING','UNKNOWN','ERROR'):manual['valid_actions']=['PAUSE'] if manual.get('enabled') else []
         components={name:observed(None,self.clock(),critical=name in {'private_account','allocation','risk','execution','reconciliation'}) for name in
             ('public_data','private_account','discovery','deep_analysis','watchlist','leader_detection','agents','consensus','authorization','allocation','risk','execution','reconciliation','events','database','telegram','web')}
-        discovery=self.discovery();components['discovery']={k:v for k,v in discovery.items() if k in {'status','last_success_ms','fresh'}}
+        discovery=self.discovery();components['discovery']={k:v for k,v in discovery.items() if k in {'status','last_success_ms','fresh','heartbeat_ms','reasons','worker_active'}}
         components.update(discovery.get('components',{}))
-        if account and account.get('portfolio'):components['private_account']=observed(account['portfolio']['received_ms'],self.clock(),critical=True)
+        if account and account.get('portfolio'):
+            components['private_account']=observed(account['portfolio'].get('exchange_ms'),self.clock())
+            components['private_account'].update(receipt_ms=account['portfolio']['received_ms'],reasons=[manual['account_read_error']] if manual.get('account_read_error') else [])
+            if manual.get('account_read_error'):components['private_account']['status']='DEGRADED'
         for m in modes:
             heartbeat=m.get('worker',{}).get('heartbeat_ms');backlog=m.get('execution',{}).get('reconciliation_backlog',0)
             decision=m.get('latest_decision') or {};actions=m.get('actions',[])
@@ -328,9 +378,11 @@ class ProductReadModel:
                 worker=m.get('worker',{})
                 ready = (worker.get('readiness_version')=='configured-worker-v1' and worker.get('status')=='HEALTHY'
                     and heartbeat is not None and 0<=self.clock()-heartbeat<=90000 and not backlog)
-                if stamp is None and ready and (name in worker.get('ready_components',[]) or
-                        name=='agents' and all(a['status']=='READY' for a in m.get('agents',[]))):
-                    signal.update(status='READY',ready_observed_ms=heartbeat)
+                if ready and not signal['fresh'] and (name in worker.get('ready_components',[]) or
+                        name=='agents' and all(a.get('readiness')=='READY' for a in m.get('agents',[])) or
+                        name in {'authorization','execution'} and m.get('runtime_mode') in {'PAPER_AUTO','SHADOW'} or
+                        name=='allocation' and (m.get('allocation') or {}).get('status')=='VERIFIED' and (m.get('portfolio') or {}).get('evidence')=='FAKE'):
+                    signal.update(status='READY',ready_observed_ms=heartbeat,reasons=['WAITING_FOR_ACTIONABLE_EVENT'])
                 if components[name]['status']!='UNHEALTHY':components[name]=signal
         try:
             with reader(self.root/'data/product.sqlite3') as db:

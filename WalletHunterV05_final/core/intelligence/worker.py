@@ -6,6 +6,7 @@ by importing this module or by installing the code.
 """
 import argparse
 import time
+import math
 from core.hyperliquid import HyperliquidReader
 from .service import PublicTrades, WalletDiscoveryEngine
 
@@ -19,7 +20,19 @@ def tick(engine, reader, stream, now, clock=None):
         engine.cycle(reader,[],now,clock=clock)
         with engine.store.transaction() as db:
             db.execute("UPDATE intelligence_health SET error='PUBLIC_STREAM_UNAVAILABLE',errors=errors+1 WHERE network=?",(engine.network,))
+        engine.health_observation('public_data',clock() if clock else now,error='PUBLIC_STREAM_UNAVAILABLE')
         return False
+    received=clock() if clock else now
+    stamps=[]
+    for row in trades:
+        try:
+            stamp=row['time'];price=float(row['px']);size=float(row['sz'])
+            if type(stamp) is int and 0<=received-stamp<=300000 and math.isfinite(price) and math.isfinite(size) and price>0 and size>0:
+                stamps.append(stamp)
+        except (KeyError,ValueError,TypeError):pass
+    engine.health_observation('public_data',received,details={'source':'PUBLIC_TRADES_WEBSOCKET',
+        'exchange_ms':max(stamps) if stamps else None,'subscriptions':list(getattr(stream,'coins',())),
+        'activity':'RECEIVED' if stamps else 'WAITING_FOR_TRADE'})
     return engine.cycle(reader,trades,now,clock=clock)
 
 

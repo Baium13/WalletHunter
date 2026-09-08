@@ -7,6 +7,74 @@ import test_engine_safety as engine_fixture
 
 
 class RuntimeInitializationTests(unittest.TestCase):
+    def test_paused_follower_read_is_bounded_and_never_writes_execution(self):
+        from test_manual_leader_copy import ManualCopyWorkerTests
+        from core.product_read import ProductReadModel
+        case=ManualCopyWorkerTests();case.setUp()
+        try:
+            case.worker.service.stop(case.account,case.client)
+            scope=case.worker.service._scope(case.account,case.client)
+            from core.foundation.data import copy_account_snapshot
+            with patch('core.foundation.data.copy_account_snapshot',wraps=copy_account_snapshot) as read, \
+                    patch.object(case.client,'submit_copy_ioc') as submit:
+                first=case.cycle();case.cycle()
+                self.assertEqual(read.call_count,1);submit.assert_not_called()
+            self.assertEqual(first['status'],'PAUSED')
+            self.assertEqual(first['account_evidence']['equity'],100.)
+            root=Path(case.case.engine.journal.path).parent.parent
+            view=ProductReadModel(root,scope,clock=lambda:int(case.now*1000))
+            snapshot=view.snapshot();manual=snapshot['manual_copy']
+            self.assertEqual(manual['ui_state'],'PAUSED');self.assertIn('RESUME',manual['valid_actions'])
+            self.assertEqual(manual['account_balance'],100.);self.assertEqual(manual['allocation_limit'],80.)
+            self.assertEqual(manual['committed'],0.);self.assertEqual(manual['reserved'],0.);self.assertEqual(manual['available'],80.)
+            self.assertFalse(case.case.engine.journal.pending(case.f.ACCOUNT))
+            self.assertFalse(case.client.calls)
+            view.clock=lambda:int(case.now*1000)+120001
+            self.assertEqual(view.snapshot()['manual_copy']['capital_status'],'STALE')
+        finally:case.doCleanups()
+
+    def test_paused_read_failure_does_not_invent_capital_or_authority(self):
+        from test_manual_leader_copy import ManualCopyWorkerTests
+        case=ManualCopyWorkerTests();case.setUp()
+        try:
+            case.worker.service.stop(case.account,case.client)
+            with patch('core.foundation.data.copy_account_snapshot',side_effect=ValueError('synthetic private_key')):
+                report=case.cycle()
+            self.assertIsNone(report.get('account_evidence'))
+            self.assertEqual(report['account_read_error'],'ACCOUNT_DATA_UNAVAILABLE')
+            self.assertNotIn('private_key',json.dumps(report));self.assertFalse(case.client.calls)
+        finally:case.doCleanups()
+
+    def test_scan_health_is_not_trade_or_promotion_frequency(self):
+        import test_product
+        case=test_product.ProductTests();case.setUp()
+        try:
+            b,_,_,view=case.setup_view();worker=case.case.worker;now=b.clock()
+            for name in ('discovery','watchlist','leader_detection'):
+                worker.health_observation(name,now,details={'scanned':6,'watched':6})
+            worker.health_observation('deep_analysis',now,error='HISTORY_INCOMPLETE')
+            result=view.discovery()
+            self.assertEqual(result['components']['watchlist']['status'],'ACTIVE')
+            self.assertEqual(result['components']['leader_detection']['status'],'ACTIVE')
+            self.assertEqual(result['components']['deep_analysis']['status'],'DEGRADED')
+            self.assertIsNone(result['components']['deep_analysis']['last_success_ms'])
+            self.assertTrue(result['components']['deep_analysis']['worker_active'])
+            view.clock=lambda:now+120001
+            self.assertEqual(view.discovery()['components']['watchlist']['status'],'DEGRADED')
+        finally:case.doCleanups()
+
+    def test_idle_notification_loop_not_fake_successful_delivery(self):
+        import asyncio,tempfile
+        from unittest.mock import AsyncMock
+        from core.product_events import ProductEvents
+        from core.foundation.contracts import Scope
+        with tempfile.TemporaryDirectory() as root:
+            events=ProductEvents(Path(root)/'events.sqlite',lambda:1000)
+            scope=Scope(tenant='1',account='0x'+'1'*40,network='TESTNET');send=AsyncMock()
+            asyncio.run(events.deliver(scope,send));send.assert_not_called()
+            with events.store.transaction() as db:row=json.loads(db.execute('SELECT body FROM product_delivery_health').fetchone()[0])
+            self.assertEqual(row['status'],'READY');self.assertNotIn('last_success_ms',row)
+
     def test_unexecutable_manual_delta_never_prepares_or_submits(self):
         from core.manual_leader_copy import execute_manual_leader
         for margin in (0., .00000001, .01, 100.):

@@ -106,6 +106,7 @@ class WalletDiscoveryEngine:
                 CREATE INDEX IF NOT EXISTS intelligence_created ON intelligence_records(network,created);
                 CREATE INDEX IF NOT EXISTS intelligence_actionable ON intelligence_records(network,kind);
                 CREATE TABLE IF NOT EXISTS intelligence_health(network TEXT PRIMARY KEY,last_success INTEGER,last_attempt INTEGER,error TEXT,errors INTEGER);
+                CREATE TABLE IF NOT EXISTS component_health(network TEXT,component TEXT,body TEXT NOT NULL,PRIMARY KEY(network,component));
                 CREATE TABLE IF NOT EXISTS intelligence_lease(network TEXT PRIMARY KEY,owner TEXT,until_ms INTEGER);
                 CREATE TABLE IF NOT EXISTS decision_links(event_id TEXT PRIMARY KEY,record_id TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS observed_fills(network TEXT,wallet TEXT,fill_id TEXT,event_id TEXT,
@@ -114,6 +115,18 @@ class WalletDiscoveryEngine:
                 CREATE TRIGGER IF NOT EXISTS research_no_update BEFORE UPDATE ON intelligence_records BEGIN SELECT RAISE(ABORT,'append only'); END;
                 CREATE TRIGGER IF NOT EXISTS research_no_delete BEFORE DELETE ON intelligence_records BEGIN SELECT RAISE(ABORT,'append only'); END;
             ''')
+
+    def health_observation(self,component,now,*,error=None,details=None):
+        """Telemetry only: a scan with no new trade is still a successful scan.
+
+        Never substitutes a heartbeat for a price/fill exchange watermark.
+        """
+        with self.store.transaction() as db:
+            row=db.execute('SELECT body FROM component_health WHERE network=? AND component=?',(self.network,component)).fetchone()
+            old=json.loads(row[0]) if row else {}
+            value=dict(last_success_ms=old.get('last_success_ms') if error else now,
+                heartbeat_ms=now,error=error,error_count=old.get('error_count',0)+int(bool(error)),**(details or {}))
+            db.execute('INSERT OR REPLACE INTO component_health VALUES(?,?,?)',(self.network,component,packed(value)))
 
     def _record(self,db,kind,body,now,instrument=None):
         record_id=identity([self.network,kind,body])
@@ -262,10 +275,15 @@ class WalletDiscoveryEngine:
             if len(lifecycle)>32: raise ValueError('POSITION_WATCH_CAPACITY')
             # Existing episodes have priority; demotion never ends their reads.
             watched=sorted(lifecycle)+[r['wallet'] for r in active if r['wallet'] not in lifecycle]
+            scanned=0
             for address in watched:
                 try:
                     self.detect(address,info,clock(),position_owned=address in lifecycle)
+                    scanned+=1
                 except Exception: errors.append('WATCHLIST_OR_ANALYSIS_UNAVAILABLE')
+            for component in ('watchlist','leader_detection'):
+                self.health_observation(component,clock(),error='WATCH_SCAN_INCOMPLETE' if scanned<len(watched) else None,
+                    details={'watched':len(watched),'scanned':scanned})
             with self.store.transaction() as db:
                 queue=db.execute("SELECT r.body,c.analysis FROM intelligence_records r JOIN candidates c ON c.network=r.network AND c.wallet=json_extract(r.body,'$.wallet') LEFT JOIN decision_links l ON l.event_id=json_extract(r.body,'$.event_id') WHERE r.network=? AND r.kind='LEADER_TRADE' AND l.event_id IS NULL ORDER BY r.rowid LIMIT 4",(self.network,)).fetchall()
             for queued in queue:
@@ -275,15 +293,20 @@ class WalletDiscoveryEngine:
                     self.research(event,leader,info,clock(),clock=clock)
                 except Exception: errors.append('RESEARCH_DEFERRED')
             self.observe(trades,now)
+            self.health_observation('discovery',clock())
             with self.store.transaction() as db:
                 pending=db.execute('SELECT wallet FROM candidates WHERE network=? AND next_eval<=? ORDER BY next_eval,wallet LIMIT ?',
                     (self.network,now,self.policy.deep_per_cycle)).fetchall()
             for row in pending:
-                try: self.analyze_one(row['wallet'],info,clock())
+                try:
+                    self.analyze_one(row['wallet'],info,clock())
+                    self.health_observation('deep_analysis',clock(),details={'queue_checked':True})
                 except Exception:
                     errors.append('HISTORY_INCOMPLETE')
+                    self.health_observation('deep_analysis',clock(),error='HISTORY_INCOMPLETE',details={'queue_checked':True})
                     with self.store.transaction() as db:
                         db.execute("UPDATE candidates SET status='PROBATION',next_eval=? WHERE network=? AND wallet=?",(now+60000,self.network,row['wallet']))
+            if not pending:self.health_observation('deep_analysis',clock(),details={'idle':True,'queue_checked':True})
             self.promote(clock())
         except Exception: errors.append('DISCOVERY_UNAVAILABLE')
         finally:

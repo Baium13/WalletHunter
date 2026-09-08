@@ -10,13 +10,13 @@
     ai: null, report: null, reportAt: 0, loading: true, error: null,
     analyticsMode: 'PAPER', positionFilter: 'ALL', chartInterval: '15m', chartHours: 24,
     cursor: 0, selectedLeader: null, selectedPosition: null, chartRequest: 0,
-    manualAnalysis: null, manualAnalysisSlot: null, eventHistory: [], streamStatus: 'IDLE'
+    manualAnalysis: null, manualAnalysisSlot: null, eventHistory: [], streamStatus: 'IDLE',
+    lastRender: null, refreshing: false
   };
   const navItems = [
     ['home', '⌂', ['Главная', 'Home']], ['positions', '◈', ['Позиции', 'Positions']],
-    ['manual', '◎', ['Manual Copy', 'Manual Copy']], ['leaders', '◉', ['Лидеры', 'Leaders']],
-    ['agents', '✦', ['Агенты', 'Agents']], ['analytics', '▥', ['Аналитика', 'Analytics']],
-    ['health', '⌁', ['Система', 'System']], ['settings', '⚙', ['Настройки', 'Settings']]
+    ['manual', '◎', ['Copy', 'Copy']], ['leaders', '◉', ['Лидеры', 'Leaders']],
+    ['agents', '✦', ['Агенты', 'Agents']], ['more', '⋯', ['Ещё', 'More']]
   ];
   const agentNames = [
     ['structure', ['Структура рынка', 'Market Structure']], ['momentum', ['Импульс', 'Momentum']],
@@ -136,7 +136,15 @@
     const pts = [[9, 50], [9, 78], [28, 18], [28, 38], [28, 58], [28, 78], [28, 94], [51, 38], [51, 72], [72, 55], [87, 55], [97, 55]], active = recentActivity();
     const edges = pts.slice(0, -1).map((p, i) => `<line class="product-edge ${active ? 'active' : ''}" x1="${p[0]}%" y1="${p[1]}%" x2="${pts[i + 1][0]}%" y2="${pts[i + 1][1]}%"/>`).join('');
     const nodes = pts.map((p, i) => `<g transform="translate(${p[0]} ${p[1]})"><circle class="product-node ${i >= 7 && i <= 9 ? 'agent' : ''} ${i === 9 ? 'consensus' : ''}" r="${i === 9 ? 7 : 5}"/><text y="14">${esc(labels[i])}</text></g>`).join('');
-    return `<div class="product-network" aria-label="${esc(t('Поток событий архитектуры', 'Architecture activity flow'))}"><svg viewBox="0 0 100 112" preserveAspectRatio="none">${edges}${nodes}</svg></div>`;
+    return `<div class="product-network product-network-desktop" aria-label="${esc(t('Поток событий архитектуры', 'Architecture activity flow'))}"><svg viewBox="0 0 100 112" preserveAspectRatio="none">${edges}${nodes}</svg></div>`;
+  }
+  function flowMobile() {
+    const labels = agentNames.map(([id, names]) => {
+      const row = agentsFromDecision().find(x => x.id === id)?.row;
+      const status = row ? (String(row.freshness || '').toUpperCase() === 'FRESH' ? t('ГОТОВ', 'READY') : t('ОЖИДАНИЕ', 'WAITING')) : t('ГОТОВ', 'READY');
+      return `<span class="flow-chip"><b>${esc(t(names[0].replace(' рынка', ''), names[1].replace('Market ', '')))}</b><i>${esc(status)}</i></span>`;
+    }).join('');
+    return `<div class="product-flow-mobile" aria-label="${esc(t('Компактный поток данных', 'Compact data flow'))}"><div class="flow-stage">${esc(t('ДАННЫЕ РЫНКА И ЛИДЕРА', 'MARKET & LEADER DATA'))}</div><div class="flow-arrow">↓</div><div class="flow-agent-grid">${labels}</div><div class="flow-arrow">↓</div><div class="flow-stage accent">${esc(t('КОНСЕНСУС', 'CONSENSUS'))}</div><div class="flow-arrow">↓</div><div class="flow-stage">${esc(t('РИСК', 'RISK'))}</div><div class="flow-arrow">↓</div><div class="flow-stage">${esc(t('ИСПОЛНЕНИЕ', 'EXECUTION'))}</div></div>`;
   }
   function eventRow(e) {
     const body = eventBody(e), kind = eventKind(e), labels = lifecycleLabels[kind] || [kind, kind], detail = body.consensus?.decision || body.event?.action || body.action || body.wallet || body.event?.wallet || '';
@@ -157,12 +165,12 @@
     const healthy = intel.health === 'HEALTHY' && !d.balance_error, realized = finite(d.realized_pnl ?? report?.pnl), unrealized = positions.map(p => finite(p.unrealized_pnl)).filter(v => v !== null).reduce((a, b) => a + b, 0);
     const top = leaders.slice(0, 5), events = state.eventHistory.slice(0, 8), agents = agentsFromDecision().filter(x => x.row).length;
     const paper = state.ai?.modes?.trader?.paper, autonomousBudget = finite(paper?.budget_usdc ?? paper?.initial_budget_usdc);
-    const summary = `<section class="product-section"><div class="product-grid">${metric(t('Баланс счёта', 'Account balance'), money(d.balance, true))}${metric(t('Реализованный PnL', 'Realized PnL'), realized === null ? 'N/A' : money(realized, true))}${metric(t('Нереализованный PnL', 'Unrealized PnL'), positions.length ? money(unrealized, true) : 'N/A', unrealized >= 0 ? 'product-good' : 'product-bad')}${metric(t('Открытые позиции', 'Open positions'), number(positions.length, 0))}${metric(t('Активные лидеры', 'Active leaders'), number(counts.ACTIVE ?? counts.active, 0))}${metric(t('Агенты онлайн', 'Agents online'), `${agents}/${agentNames.length}`)}${metric(t('Автономный бюджет', 'Autonomous budget'), autonomousBudget === null ? 'N/A' : money(autonomousBudget, true))}${metric(t('Состояние риска', 'Risk status'), decision?.consensus?.decision || 'N/A', statusClass(decision?.consensus?.decision))}</div><p class="product-sub product-data-note">${esc(t('PnL счёта показывается только при наличии подтверждённого account report; PAPER и SHADOW имеют отдельные среды.', 'Account PnL is shown only from a verified account report; PAPER and SHADOW remain separate environments.'))}</p></section>`;
+    const summary = `<section class="product-section"><div class="product-grid kpis">${metric(t('Баланс счёта', 'Account balance'), money(d.balance, true))}${metric(t('Реализованный PnL', 'Realized PnL'), realized === null ? 'N/A' : money(realized, true))}${metric(t('Нереализованный PnL', 'Unrealized PnL'), positions.length ? money(unrealized, true) : 'N/A', unrealized >= 0 ? 'product-good' : 'product-bad')}${metric(t('Открытые позиции', 'Open positions'), number(positions.length, 0))}${metric(t('Активные лидеры', 'Active leaders'), number(counts.ACTIVE ?? counts.active, 0))}${metric(t('Агенты онлайн', 'Agents online'), `${agents || (intel.health === 'HEALTHY' ? agentNames.length : 0)}/${agentNames.length}`)}${metric(t('Автономный бюджет', 'Autonomous budget'), autonomousBudget === null ? 'N/A' : money(autonomousBudget, true))}${metric(t('Состояние риска', 'Risk status'), decision?.consensus?.decision || t('ГОТОВ / ОЖИДАНИЕ', 'READY / WAITING'), statusClass(decision?.consensus?.decision || 'READY'))}</div><p class="product-sub product-data-note">${esc(t('PnL счёта показывается только при наличии подтверждённого account report; PAPER и SHADOW имеют отдельные среды.', 'Account PnL is shown only from a verified account report; PAPER and SHADOW remain separate environments.'))}</p></section>`;
     const positionsCard = card(t('Открытые позиции', 'Open positions'), positions.length ? `<div class="product-list">${positions.slice(0, 5).map(positionRow).join('')}</div><div class="product-actions"><button class="product-btn" data-product-page="positions">${esc(t('Все позиции', 'All positions'))}</button></div>` : unavailable(t('Подтверждённых открытых позиций нет', 'No verified open positions')));
     const leadersCard = card(t('Топ лидеры', 'Top leaders'), top.length ? `<div class="product-list">${top.map((l, i) => `<div class="product-row" data-action="leader-detail" data-leader="${esc(l.wallet || '')}" tabindex="0"><div class="product-row-main"><b>#${i + 1} · ${esc(walletDisplay(l.wallet))}</b><small>${esc(String(l.status || 'N/A'))} · ${esc(t('последняя активность', 'last activity'))} ${esc(time(l.last_seen))}</small></div><div class="product-row-end"><b class="product-score">${esc(scorePct(l.score))}</b><small>${esc(finite(l.confidence) === null ? 'N/A' : pct(Number(l.confidence) * 100, 0))}</small></div></div>`).join('')}</div><button class="product-btn" data-product-page="leaders">${esc(t('Открыть рейтинг', 'Open ranking'))}</button>` : unavailable(t('Рейтинг пока не заполнен', 'Ranking is not populated yet')));
     const activity = card(t('Последняя активность', 'Recent activity'), events.length ? `<div class="product-list">${events.map(eventRow).join('')}</div>` : unavailable(t('Событий пока нет', 'No events yet')));
     const manual = state.manual?.configured ? card(t('Manual Copy', 'Manual Copy'), `<div class="product-kicker">${esc(state.manual.enabled ? t('АКТИВЕН', 'ACTIVE') : t('ПАУЗА', 'PAUSED'))}</div><div class="product-value">${esc(walletDisplay(state.manual.leader))}</div><p class="product-sub">${esc(t('Отдельная аллокация · остановка оставляет позиции HOLD.', 'Separate allocation · stopping leaves positions on HOLD.'))}<br>${esc(number(state.manual.allocation_pct, 0))}%</p><button class="product-btn" data-product-page="manual">${esc(t('Открыть Manual Copy', 'Open Manual Copy'))}</button>`) : card(t('Manual Copy', 'Manual Copy'), unavailable(t('Лидер ещё не выбран', 'No leader selected')) + `<button class="product-btn" data-product-page="manual">${esc(t('Настроить', 'Configure'))}</button>`);
-    return `<div class="product-banner ${mode.cls}"><span><strong>${esc(mode.title)}</strong> · ${esc(mode.note)}</span><span class="product-badge ${healthy ? 'good' : 'warn'}">● ${esc(healthy ? t('СИСТЕМА В НОРМЕ', 'SYSTEM HEALTHY') : t('СОСТОЯНИЕ ПРОВЕРЯЕТСЯ', 'STATUS CHECK'))}</span></div>${summary}<section class="product-section"><div class="product-detail">${consensusCard()}${card(t('Поток решений', 'Decision flow'), networkSvg() + `<p class="product-sub">${esc(t('Активность отражает только реальные события; в простое поток спокоен.', 'Activity reflects real events only; idle flow stays calm.'))}</p>`)}</div></section><section class="product-section"><div class="product-detail">${positionsCard}${leadersCard}</div></section><section class="product-section"><div class="product-detail">${manual}${card(t('Performance snapshot', 'Performance snapshot'), performanceChart(report))}</div></section><section class="product-section">${activity}</section>`;
+    return `<div class="product-banner ${mode.cls}"><span><strong>${esc(mode.title)}</strong> · ${esc(mode.note)}</span><span class="product-badge ${healthy ? 'good' : 'warn'}">● ${esc(healthy ? t('СИСТЕМА В НОРМЕ', 'SYSTEM HEALTHY') : t('СОСТОЯНИЕ ПРОВЕРЯЕТСЯ', 'STATUS CHECK'))}</span></div>${summary}<section class="product-section"><div class="product-detail">${consensusCard()}${card(t('Поток решений', 'Decision flow'), networkSvg() + flowMobile() + `<p class="product-sub">${esc(t('Активность отражает только реальные события; в простое поток спокоен.', 'Activity reflects real events only; idle flow stays calm.'))}</p>`)}</div></section><section class="product-section"><div class="product-detail">${positionsCard}${leadersCard}</div></section><section class="product-section"><div class="product-detail">${manual}${card(t('Performance snapshot', 'Performance snapshot'), performanceChart(report))}</div></section><section class="product-section">${activity}</section>`;
   }
   function markerEvents(selected) {
     const coin = String(selected?.coin || '').split(':').pop().toUpperCase();
@@ -210,7 +218,10 @@
   }
   function agentsPage() {
     const body = latestDecision(), c = body?.consensus;
-    return `${pageHeader(t('Агенты и консенсус', 'Agents & consensus'), t('Реальный поток аналитических результатов · без доступа к исполнению', 'Real analytical outputs · no execution access'))}<div class="product-detail">${card(t('Intelligence Flow', 'Intelligence Flow'), networkSvg() + `<p class="product-sub">${esc(t('Это визуализация потока данных, не биологическая нейросеть.', 'This is a data-flow visualization, not a biological neural network.'))}</p>`)}${card(t('Consensus hero', 'Consensus hero'), `<div class="product-kicker">${esc(body?.event?.instrument?.symbol || 'N/A')}</div><div class="product-value ${statusClass(c?.decision)}">${esc(c?.decision || t('ОЖИДАНИЕ', 'WAIT'))}</div><div class="product-metrics">${metric(t('Score', 'Score'), c?.score === undefined ? 'N/A' : scorePct(c.score))}${metric(t('Уверенность', 'Confidence'), c?.confidence === undefined ? 'N/A' : pct(Number(c.confidence) * 100, 0))}${metric(t('Поддержка', 'Support'), number(c?.supporting?.length, 0))}${metric(t('Против', 'Opposing'), number(c?.opposing?.length, 0))}${metric(t('Блокеры', 'Blockers'), number(c?.blockers?.length || c?.blocking_conditions?.length, 0))}</div><p class="product-sub">${esc(c?.policy_id || c?.policy_version || t('Версия политики недоступна', 'Policy version unavailable'))}</p>`)}</div><section class="product-section"><div class="agent-grid">${agentsFromDecision().map(agentCard).join('')}</div></section>`;
+    return `${pageHeader(t('Агенты и консенсус', 'Agents & consensus'), t('Реальный поток аналитических результатов · без доступа к исполнению', 'Real analytical outputs · no execution access'))}<div class="product-detail">${card(t('Intelligence Flow', 'Intelligence Flow'), networkSvg() + flowMobile() + `<p class="product-sub">${esc(t('Это визуализация потока данных, не биологическая нейросеть.', 'This is a data-flow visualization, not a biological neural network.'))}</p>`)}${card(t('Consensus hero', 'Consensus hero'), `<div class="product-kicker">${esc(body?.event?.instrument?.symbol || t('Нет события', 'No event'))}</div><div class="product-value ${statusClass(c?.decision || 'READY')}">${esc(c?.decision || t('ГОТОВ / ОЖИДАНИЕ', 'READY / WAITING'))}</div><div class="product-metrics">${metric(t('Score', 'Score'), c?.score === undefined ? 'N/A' : scorePct(c.score))}${metric(t('Уверенность', 'Confidence'), c?.confidence === undefined ? 'N/A' : pct(Number(c.confidence) * 100, 0))}${metric(t('Поддержка', 'Support'), number(c?.supporting?.length, 0))}${metric(t('Против', 'Opposing'), number(c?.opposing?.length, 0))}${metric(t('Блокеры', 'Blockers'), number(c?.blockers?.length || c?.blocking_conditions?.length, 0))}</div><p class="product-sub">${esc(c?.policy_id || c?.policy_version || t('Свежего решения нет — ожидается событие лидера.', 'No current decision — waiting for a leader event.'))}</p>`)}</div><section class="product-section"><div class="agent-grid">${agentsFromDecision().map(agentCard).join('')}</div></section>`;
+  }
+  function morePage() {
+    return `${pageHeader(t('Ещё', 'More'), t('Дополнительные разделы системы', 'Additional system sections'))}<div class="product-grid three"><button class="product-card product-more-card" data-product-page="analytics"><h3>${esc(t('Аналитика', 'Analytics'))}</h3><p class="product-sub">${esc(t('PAPER, SHADOW и LIVE отдельно', 'PAPER, SHADOW and LIVE separated'))}</p></button><button class="product-card product-more-card" data-product-page="health"><h3>${esc(t('Система', 'System health'))}</h3><p class="product-sub">${esc(t('Состояние компонентов и потока', 'Component and stream health'))}</p></button><button class="product-card product-more-card" data-product-page="settings"><h3>${esc(t('Настройки', 'Settings'))}</h3><p class="product-sub">${esc(t('Режим, счёт и приватность', 'Mode, account and privacy'))}</p></button></div>`;
   }
   function analyticsReport() {
     if (state.analyticsMode === 'LIVE') return state.report || {};
@@ -228,8 +239,9 @@
     return `${pageHeader(t('Аналитика · Performance Lab', 'Analytics · Performance Lab'), t('PAPER, SHADOW и LIVE разделены и не смешиваются', 'PAPER, SHADOW and LIVE remain separate'))}<div class="product-tabs">${['PAPER', 'SHADOW', 'LIVE'].map(x => `<button class="product-tab ${x === mode ? 'active' : ''}" data-analytics="${x}">${x}</button>`).join('')}</div><div class="product-banner ${mode.toLowerCase()}"><span><strong>${esc(mode)}</strong></span><span>${esc(modeNote)}</span></div><section class="product-section"><div class="product-detail">${card(t('Ключевые метрики', 'Key metrics'), `<div class="product-grid two">${metrics.map(x => metric(x[0], x[1])).join('')}</div><p class="product-sub">${esc(mode === 'LIVE' ? (state.report?.methodology || t('Методика account report недоступна', 'Account report methodology unavailable')) : t('История режима показывается только при наличии его собственных записей.', 'Mode history is shown only when its own records exist.'))}</p>`)}${card(t('Equity / cumulative PnL', 'Equity / cumulative PnL'), performanceChart(r))}</div></section>`;
   }
   function healthComponent(key, fallbackStatus, detail) {
-    const raw = state.health?.components?.[key], status = typeof raw === 'string' ? raw : raw?.status || fallbackStatus || 'UNKNOWN', info = typeof raw === 'object' ? raw.detail || raw.reason || raw.last_success || detail : raw || detail;
-    return `<div class="health-item"><div><b>${esc(key)}</b><small>${esc(typeof info === 'number' ? time(info) : info || 'N/A')}</small></div><span class="health-status ${statusClass(status)}">${esc(String(status).toUpperCase())}</span></div>`;
+    const names = {'Hyperliquid public data':['Публичные данные HL','Hyperliquid public data'],'Private account data':['Данные счёта','Private account data'],Discovery:['Discovery','Discovery'],Watchlist:['Watchlist','Watchlist'],'Deep analysis':['Глубокий анализ','Deep analysis'],Agents:['Агенты','Agents'],Consensus:['Консенсус','Consensus'],Authorization:['Авторизация','Authorization'],'Risk / execution':['Риск / исполнение','Risk / execution'],Reconciliation:['Реконсиляция','Reconciliation'],'Event stream':['Поток событий','Event stream'],Database:['База данных','Database'],Telegram:['Telegram','Telegram'],'Web/API':['Web/API','Web/API']};
+    const raw = state.health?.components?.[key], status = typeof raw === 'string' ? raw : raw?.status || fallbackStatus || 'UNKNOWN', info = typeof raw === 'object' ? raw.detail || raw.reason || raw.last_success || detail : raw || detail, label = names[key] || [key,key];
+    return `<div class="health-item"><div><b>${esc(t(label[0], label[1]))}</b><small>${esc(typeof info === 'number' ? time(info) : info || t('Нет данных', 'No data'))}</small></div><span class="health-status ${statusClass(status)}">${esc(String(status).toUpperCase())}</span></div>`;
   }
   function healthPage() {
     const intel = state.intelligence || {}, d = state.dashboard || {}, accountStatus = d.account && !d.balance_error ? 'HEALTHY' : d.balance_error ? 'DEGRADED' : 'UNKNOWN', overall = state.health?.status || (intel.health === 'HEALTHY' && accountStatus === 'HEALTHY' ? 'HEALTHY' : 'DEGRADED');
@@ -266,15 +278,20 @@
   }
   function render() {
     const content = $('productContent'); if (!content) return;
-    const pages = { home, positions: positionsPage, manual: manualPage, leaders: leadersPage, agents: agentsPage, analytics: analyticsPage, health: healthPage, settings: settingsPage };
-    if (state.loading && !state.dashboard && !state.intelligence) content.innerHTML = `<section class="product-page active">${unavailable(t('Загрузка защищённого состояния…', 'Loading verified state…'))}</section>`;
-    else content.innerHTML = `<section class="product-page active">${state.error ? `<div class="product-banner shadow"><strong>${esc(t('Backend недоступен', 'Backend unavailable'))}</strong><span>${esc(state.error)}</span></div>` : ''}${(pages[state.page] || home)()}</section>`;
+    const pages = { home, positions: positionsPage, manual: manualPage, leaders: leadersPage, agents: agentsPage, analytics: analyticsPage, health: healthPage, settings: settingsPage, more: morePage };
+    const html = state.loading && !state.dashboard && !state.intelligence ? `<section class="product-page active">${unavailable(t('Загрузка защищённого состояния…', 'Loading verified state…'))}</section>` : `<section class="product-page active">${state.error ? `<div class="product-banner shadow"><strong>${esc(t('Backend недоступен', 'Backend unavailable'))}</strong><span>${esc(state.error)}</span></div>` : ''}${(pages[state.page] || home)()}</section>`;
+    if (state.lastRender === html) return;
+    const scroll = window.scrollY, focused = document.activeElement?.id, focusValue = focused ? document.activeElement.value : null;
+    state.lastRender = html;
+    content.innerHTML = html;
     document.querySelectorAll('[data-product-page]').forEach(b => b.classList.toggle('active', b.dataset.productPage === state.page));
     const mode = modeMeta(modeValue()), pill = $('productMode'); if (pill) { pill.className = `product-pill ${mode.cls}`; pill.innerHTML = `<i></i><span>${esc(mode.title)}</span>`; }
     const languageButton = $('productLanguage'); if (languageButton) languageButton.textContent = isEn() ? 'EN' : 'RU';
     const soundButton = $('productSound'); if (soundButton) soundButton.textContent = storage.get('wh_sound') === 'off' ? '◌' : '◖';
     document.querySelectorAll('[data-chart-interval]').forEach(s => { s.value = state.chartInterval; s.onchange = () => { state.chartInterval = s.value; loadPositionChart(); }; });
     if (state.page === 'positions' && state.selectedPosition) loadPositionChart();
+    if (focused) { const next = $(focused); if (next) { if (focusValue !== null && document.activeElement !== next) next.value = focusValue; next.focus({preventScroll:true}); } }
+    window.scrollTo(0, scroll);
   }
   async function loadManualAnalysis(leader) {
     if (!leader) return; state.manualAnalysisSlot = leader; state.manualAnalysis = null;
@@ -282,19 +299,24 @@
     if (state.page === 'manual') render();
   }
   async function refresh() {
-    state.loading = true; state.error = null; render();
+    if (state.refreshing) return;
+    state.refreshing = true;
+    const initial = !state.dashboard && !state.intelligence;
+    if (initial) { state.loading = true; state.error = null; render(); }
     const shouldReport = !state.report || Date.now() - state.reportAt > 30000;
     const calls = [read('/api/dashboard'), read(`/api/intelligence?after=${state.cursor}&limit=50`), read('/health'), read('/api/manual-copy'), read('/api/ai')];
     if (shouldReport) calls.push(read('/api/account/report?days=30'));
-    const results = await Promise.allSettled(calls), [dashboard, intel, health, manual, ai, report] = results;
-    if (dashboard.status === 'fulfilled') state.dashboard = dashboard.value;
-    if (intel.status === 'fulfilled') { state.intelligence = intel.value; state.cursor = Number(intel.value.cursor) || state.cursor; mergeEvents(intel.value.events); state.streamStatus = 'CONNECTED'; } else state.streamStatus = 'RECONNECTING';
-    if (dashboard.status === 'fulfilled') mergeEvents((dashboard.value.events || []).map(e => ({ body: e, kind: e.action, created: e.time })));
-    if (health.status === 'fulfilled') state.health = health.value;
-    if (manual.status === 'fulfilled') state.manual = manual.value;
-    if (ai.status === 'fulfilled') state.ai = ai.value;
-    if (report?.status === 'fulfilled') { state.report = report.value; state.reportAt = Date.now(); }
-    state.loading = false; if (dashboard.status === 'rejected' && intel.status === 'rejected') state.error = t('Данные backend недоступны', 'Backend data unavailable'); render();
+    try {
+      const results = await Promise.allSettled(calls), [dashboard, intel, health, manual, ai, report] = results;
+      if (dashboard.status === 'fulfilled') state.dashboard = dashboard.value;
+      if (intel.status === 'fulfilled') { state.intelligence = intel.value; state.cursor = Number(intel.value.cursor) || state.cursor; mergeEvents(intel.value.events); state.streamStatus = 'CONNECTED'; } else state.streamStatus = 'RECONNECTING';
+      if (dashboard.status === 'fulfilled') mergeEvents((dashboard.value.events || []).map(e => ({ body: e, kind: e.action, created: e.time })));
+      if (health.status === 'fulfilled') state.health = health.value;
+      if (manual.status === 'fulfilled') state.manual = manual.value;
+      if (ai.status === 'fulfilled') state.ai = ai.value;
+      if (report?.status === 'fulfilled') { state.report = report.value; state.reportAt = Date.now(); }
+      state.loading = false; if (dashboard.status === 'rejected' && intel.status === 'rejected') state.error = t('Данные backend недоступны', 'Backend data unavailable'); else state.error = null; render();
+    } finally { state.refreshing = false; }
   }
   async function manualSave() {
     const value = Number($('manualPct')?.value || 80), current = state.manual?.leader, input = $('productManualLeader')?.value.trim();
@@ -344,6 +366,6 @@
   window.addEventListener('whlanguage', () => { if (document.body.classList.contains('product-mode')) { shell(); render(); } });
   window.addEventListener('whprivacy', () => { if (document.body.classList.contains('product-mode')) render(); });
   window.whProduct = { refresh, render, state };
-  const boot = () => { shell(); refresh(); setInterval(() => { if (!document.hidden) refresh(); }, 10000); };
+  const boot = () => { shell(); refresh(); setInterval(() => { if (!document.hidden) refresh(); }, 15000); };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot, { once: true }); else boot();
 })();

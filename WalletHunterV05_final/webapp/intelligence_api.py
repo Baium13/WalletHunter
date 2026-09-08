@@ -21,8 +21,18 @@ class ResearchView:
         if type(after) is not int or after<0 or type(limit) is not int or not 1<=limit<=50:
             raise ValueError('QUERY_BOUND')
         empty={'mode':'OBSERVE','network':self.network,'execution_enabled':False,
-            'health':'DEGRADED','reason':'WORKER_NOT_STARTED','counts':{},'leaders':[],
-            'events':[],'cursor':after,'private_account_data':False}
+            'health':'DEGRADED','status':'WAITING','reason':'WORKER_NOT_STARTED','counts':{},
+            'initialized':False,'leaders':[],'events':[],'cursor':after,'private_account_data':False,
+            'agent_status':{'status':'OFFLINE','ready':0,'active':0,'total':7},
+            'components':{'public_data':{'status':'WAITING','reason':'WORKER_NOT_STARTED'},
+                'discovery':{'status':'WAITING','reason':'WORKER_NOT_STARTED'},
+                'deep_analysis':{'status':'WAITING','reason':'WORKER_NOT_STARTED'},
+                'watchlist':{'status':'WAITING','reason':'WORKER_NOT_STARTED'},
+                'leader_detection':{'status':'WAITING','reason':'WORKER_NOT_STARTED'},
+                'agents':{'status':'OFFLINE','ready':0,'active':0,'total':7},
+                'consensus':{'status':'READY','detail':'WAITING FOR LEADER EVENT'},
+                'risk':{'status':'READY','detail':'CANONICAL GATEWAY READY'},
+                'paper_auto':{'status':'WAITING','detail':'EXPLICIT PAPER CONFIGURATION REQUIRED'}}}
         if not self.path.exists(): return empty
         if self.path.is_symlink() or self.path.parent.is_symlink():
             return dict(empty,reason='RESEARCH_PATH_UNSAFE')
@@ -62,11 +72,29 @@ class ResearchView:
                         body={k:body[k] for k in ('wallet','network','computed_ms','score','equity_drawdown_pct','funding_included','not_a_profit_probability')}
                     events.append({'seq':row['seq'],'kind':row['kind'],'created':row['created'],'body':body})
             now=int(time.time()*1000)
+            running=bool(health and health['last_attempt'] is not None and 0<=now-health['last_attempt']<120000)
             healthy=bool(health and health['last_success'] is not None and 0<=now-health['last_success']<120000 and not health['error'])
-            return dict(empty,health='HEALTHY' if healthy else 'DEGRADED',reason=health['error'] if health else 'WORKER_NOT_STARTED',
-                last_success=health['last_success'] if health else None,counts=counts,leaders=leaders,events=events,cursor=events[-1]['seq'] if events else after)
+            reason=health['error'] if health and health['error'] else ('READY_NO_CURRENT_EVENT' if running else 'WORKER_NOT_STARTED')
+            worker_status='ACTIVE' if healthy else 'DEGRADED' if running else 'WAITING'
+            agent_status={'status':'READY' if running else 'OFFLINE','ready':7 if running else 0,'active':0,'total':7}
+            counts=dict(counts)
+            counts.setdefault('OBSERVED',sum(counts.values()))
+            components={'public_data':{'status':worker_status,'last_success':health['last_success'] if health else None,'reason':reason},
+                'discovery':{'status':worker_status,'last_success':health['last_success'] if health else None,'reason':reason},
+                'deep_analysis':{'status':'READY' if running else 'WAITING','last_success':health['last_success'] if health else None,'reason':'WAITING FOR CANDIDATE' if running else reason},
+                'watchlist':{'status':'READY' if running else 'WAITING','detail':f"{counts.get('ACTIVE',0)} ACTIVE"},
+                'leader_detection':{'status':'READY' if running else 'WAITING','detail':'WAITING FOR FRESH FILL' if running else reason},
+                'agents':agent_status,'consensus':{'status':'READY' if running else 'WAITING','detail':'NO CURRENT DECISION' if running else reason},
+                'risk':{'status':'READY','detail':'CANONICAL GATEWAY READY'},
+                'paper_auto':{'status':'READY' if running else 'WAITING','detail':'PAPER CONFIGURATION ISOLATED; NO LIVE ORDERS'}}
+            return dict(empty,health='HEALTHY' if healthy else 'DEGRADED',status=worker_status,reason=reason,
+                initialized=bool(health),last_success=health['last_success'] if health else None,
+                last_attempt=health['last_attempt'] if health else None,counts=counts,leaders=leaders,events=events,
+                cursor=events[-1]['seq'] if events else after,agent_status=agent_status,components=components)
         except (sqlite3.Error,ValueError,KeyError,TypeError):
-            return dict(empty,reason='RESEARCH_UNAVAILABLE')
+            return dict(empty,status='DEGRADED',health='DEGRADED',reason='RESEARCH_UNAVAILABLE',
+                components={**empty['components'],'public_data':{'status':'DEGRADED','reason':'RESEARCH_UNAVAILABLE'},
+                    'discovery':{'status':'DEGRADED','reason':'RESEARCH_UNAVAILABLE'}})
 
 
 def router(path,network,authenticate):

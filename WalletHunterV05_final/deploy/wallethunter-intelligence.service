@@ -1,0 +1,22 @@
+[Unit]
+Description=Wallet Hunter public discovery and intelligence worker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/WalletHunterV07/WalletHunterV05_final
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-/home/ubuntu/WalletHunterV07/WalletHunterV05_final/.env
+# OBSERVE is deliberately the production-safe default. PAPER_AUTO requires
+# an explicit isolated configuration and state directory and is never enabled
+# by this unit implicitly.
+ExecStart=/home/ubuntu/WalletHunterV07/WalletHunterV05_final/.venv/bin/python -m core.intelligence.worker --network ${HL_MODE:-MAINNET} --database /home/ubuntu/WalletHunterV07/WalletHunterV05_final/data/intelligence.sqlite
+Restart=always
+RestartSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

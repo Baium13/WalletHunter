@@ -69,8 +69,20 @@ class EpisodeService:
 
     def active_in(self,db,scope,mode,leader,instrument):
         rows=db.execute('SELECT body FROM position_episodes WHERE scope=?',(scope_key(scope),)).fetchall()
-        matches=[e for r in rows if (e:=PositionEpisode.model_validate_json(r[0])).mode==mode and e.leader==leader
-            and e.instrument==instrument and e.state not in {'CLOSED','REJECTED'}]
+        matches=[]
+        for r in rows:
+            e=PositionEpisode.model_validate_json(r[0])
+            if e.mode!=mode or e.leader!=leader or e.instrument!=instrument or e.state=='CLOSED':continue
+            if e.state=='REJECTED':
+                # Read-through repair for the former action/episode conflation.
+                # Only exact canonical order evidence can recover attribution;
+                # an aggregate same-symbol position is not sufficient.
+                portfolio=self.store.portfolio_in(db,scope)
+                position=next((p for p in portfolio.positions if p.instrument==instrument and p.evidence=='VERIFIED'),None)
+                proofs=db.execute("SELECT i.receipt FROM episode_actions a JOIN intents i ON i.id=a.id WHERE a.episode=? AND i.status IN ('FILLED','PARTIAL')",(e.episode_id,)).fetchall()
+                if not position or not any(set(json.loads(p[0])['order_ids']) & set(position.order_ids) for p in proofs):continue
+                e=e.model_copy(update={'state':'RECONCILIATION_REQUIRED'})
+            matches.append(e)
         if len(matches)>1: raise ValueError('Ambiguous position episode')
         return matches[0] if matches else None
 

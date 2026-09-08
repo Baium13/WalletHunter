@@ -66,8 +66,8 @@ class AutonomousBackend:
                 with self.store.transaction() as db:
                     db.execute('INSERT OR IGNORE INTO autonomous_deliveries VALUES(?,?,?,?)',
                         (scope,row['id'],row['seq'],record.get('event',{}).get('event_id')))
-                self.process(record)
-                successes+=1
+                processed=self.process(record)
+                successes+=int(processed.get('status')!='QUARANTINED')
             except Exception as exc:
                 # Financial work is retained by process()/canonical intents;
                 # dead-lettering the delivery never releases its reservation.
@@ -86,8 +86,10 @@ class AutonomousBackend:
                     (discovery.network,rows[-1]['seq'] if rows else after)).fetchone()
             health.update(actionable_backlog=tail[0],actionable_lag_ms=max(0,self.clock()-tail[1]) if tail[1] else 0)
             health['reconciliation_backlog']=health['unresolved_execution_count']
+            health['quarantined_jobs']=db.execute("SELECT COUNT(*) FROM autonomous_jobs WHERE scope=? AND stage='QUARANTINED'",(scope,)).fetchone()[0]
+            health['quarantine_count']+=health['quarantined_jobs']
             health['status']='DEGRADED' if health['quarantine_count'] or health['unresolved_execution_count'] else 'HEALTHY'
-            pending_job=db.execute("SELECT MIN(started_ms) FROM autonomous_jobs WHERE scope=? AND stage IN ('CLAIMED','AUTHORIZED','SUBMISSION_PENDING','RECOVERY_REQUIRED','RECONCILING')",(scope,)).fetchone()[0]
+            pending_job=db.execute("SELECT MIN(started_ms) FROM autonomous_jobs WHERE scope=? AND stage IN ('CLAIMED','ANALYZED','AUTHORIZED','SUBMISSION_PENDING','RECOVERY_REQUIRED','RECONCILING')",(scope,)).fetchone()[0]
             health['processing_lag_ms']=max(0,self.clock()-pending_job) if pending_job else 0
             db.execute('INSERT OR REPLACE INTO autonomous_health VALUES(?,?)',(scope,json.dumps(health)))
         return True
@@ -208,6 +210,9 @@ class AutonomousBackend:
             db.execute('INSERT INTO autonomous_decisions VALUES(?,?,?,?,?)',(auth.decision_id,scope_key(scope),event.event_id,
                 json.dumps(body,allow_nan=False),encoded(intent) if intent else None))
             self.episodes.prepare_in(db,body,intent)
+            if intent is not None and body['status']=='SHADOW_REJECTED':
+                rejected_episode=self.episodes.active_in(db,scope,auth.mode,event.wallet,event.instrument)
+                self.episodes.transition_in(db,rejected_episode,intent.intent_id,'REJECTED',{'risk':body['risk'],'no_submission':True})
             if intent is not None and body['status']=='SHADOW_APPROVED':
                 from core.foundation.contracts import Fill
                 from core.foundation.paper_costs import costed_effect
@@ -248,7 +253,7 @@ class AutonomousBackend:
         scope=self.auth_policy.scope
         with account_guard(Path(self.store.path).parent,scope.account):
             with self.store.transaction() as db:
-                rows=db.execute("SELECT * FROM autonomous_jobs WHERE scope=? AND stage NOT IN ('COMPLETED','QUARANTINED','AWAITING_CONFIRMATION') ORDER BY updated_ms LIMIT ?",(scope_key(scope),limit)).fetchall()
+                rows=db.execute("SELECT * FROM autonomous_jobs j WHERE scope=? AND (stage NOT IN ('COMPLETED','QUARANTINED','AWAITING_CONFIRMATION') OR (stage='AWAITING_CONFIRMATION' AND EXISTS (SELECT 1 FROM authorization_requests r WHERE r.scope=j.scope AND r.event_id=j.event_id AND (json_extract(r.body,'$.expires_ms')<=? OR EXISTS (SELECT 1 FROM authorization_confirmations c WHERE c.id=r.id))))) ORDER BY updated_ms LIMIT ?",(scope_key(scope),self.clock(),limit)).fetchall()
             for job in rows:
                 try:
                     with self.store.transaction() as db:
@@ -265,20 +270,42 @@ class AutonomousBackend:
                             execution=db.execute('SELECT body FROM intents WHERE id=? AND scope=?',(intent.intent_id,scope_key(scope))).fetchone()
                         if execution:
                             receipt=self.gateway.recover(OrderIntent.model_validate_json(execution[0]))
+                        elif self.clock()>=intent.expires_ms:
+                            # No canonical reservation/submission exists, so
+                            # expiry is a definitive action rejection, not loss
+                            # of any existing position owned by the episode.
+                            from core.position_episodes import PositionEpisode
+                            body['status']='EXPIRED_BEFORE_SUBMISSION'
+                            with self.store.transaction() as db:
+                                episode=db.execute('SELECT p.body FROM position_episodes p JOIN episode_actions a ON a.episode=p.id WHERE a.id=?',(row['id'],)).fetchone()
+                                if episode:self.episodes.transition_in(db,PositionEpisode.model_validate_json(episode[0]),row['id'],'REJECTED',{'reason':'EXPIRED_BEFORE_SUBMISSION','no_submission':True})
+                                db.execute('UPDATE autonomous_decisions SET body=? WHERE id=?',(json.dumps(body),row['id']))
+                            self.jobs.stage(job['event_id'],'COMPLETED');continue
                         elif self.auth_policy.mode=='PAPER_AUTO':
                             auth=AuthorizationDecision.model_validate(body['authorization'])
                             # Expired grants cannot be reminted. Preserve a definitive
                             # no-submission expiry, not UNKNOWN exchange evidence.
                             if not self.authorization.verify(auth,self.clock()):
                                 body['status']='EXPIRED_BEFORE_SUBMISSION'
-                                with self.store.transaction() as db:db.execute('UPDATE autonomous_decisions SET body=? WHERE id=?',(json.dumps(body),row['id']))
+                                from core.position_episodes import PositionEpisode
+                                with self.store.transaction() as db:
+                                    episode=db.execute('SELECT p.body FROM position_episodes p JOIN episode_actions a ON a.episode=p.id WHERE a.id=?',(row['id'],)).fetchone()
+                                    if episode:self.episodes.transition_in(db,PositionEpisode.model_validate_json(episode[0]),row['id'],'REJECTED',{'reason':'EXPIRED_BEFORE_SUBMISSION','no_submission':True})
+                                    db.execute('UPDATE autonomous_decisions SET body=? WHERE id=?',(json.dumps(body),row['id']))
                                 self.jobs.stage(job['event_id'],'COMPLETED');continue
                             before=self.store.portfolio(scope)
                             ledger=AutonomousLedger(before,self.allocation_policy)
                             self.gateway.authorize_paper(intent,auth)
                             receipt=self.gateway.execute(intent,MarketSnapshot.model_validate(body['market']),autonomous_ledger=ledger)
                         else:
-                            self.jobs.stage(job['event_id'],'AWAITING_CONFIRMATION');continue
+                            with self.store.transaction() as db:
+                                confirmed=db.execute('SELECT body FROM authorization_confirmations WHERE id=? AND scope=?',(intent.intent_id,scope_key(scope))).fetchone()
+                            if confirmed and self.authorization.verify(AuthorizationDecision.model_validate_json(confirmed[0]),self.clock()):
+                                # Replay the persisted, exact user confirmation,
+                                # never mint authority from a consensus record.
+                                self.confirm(intent.intent_id,authenticated_user=scope.tenant)
+                            else:self.jobs.stage(job['event_id'],'AWAITING_CONFIRMATION')
+                            continue
                         body.update(receipt=receipt.model_dump(mode='json'),status=receipt.status)
                         episode=self.episodes.sync(intent.intent_id,scope)
                         if episode:body['episode']=episode.model_dump(mode='json')
@@ -338,8 +365,11 @@ class AutonomousBackend:
             receipt=self.gateway.recover(OrderIntent.model_validate_json(existing[0]))
             body.update(receipt=receipt.model_dump(mode='json'),status=receipt.status)
             body['episode']=self.episodes.sync(decision_id,scope).model_dump(mode='json')
+            with self.store.transaction() as db:db.execute('UPDATE autonomous_decisions SET body=? WHERE id=?',(json.dumps(body),decision_id))
+            self.jobs.stage(proposal.correlation_id,'RECONCILING' if receipt.status in {'UNKNOWN','PARTIAL','SUBMITTING'} else 'COMPLETED')
             return body
         auth=self.authorization.confirm(decision_id,scope,self.clock(),authenticated_user=authenticated_user)
+        self.jobs.stage(proposal.correlation_id,'SUBMISSION_PENDING')
         before=self.exchange.refresh(revision,proposal.instrument.dex)
         self.store.publish_portfolio(before,proposal.correlation_id)
         intent=proposal.model_copy(update={'created_ms':self.clock()})
@@ -352,6 +382,8 @@ class AutonomousBackend:
             body['risk']=json.loads(risk[0])
             db.execute('UPDATE autonomous_decisions SET body=? WHERE id=?',(json.dumps(body,allow_nan=False),decision_id))
         body['episode']=self.episodes.sync(decision_id,scope).model_dump(mode='json')
+        with self.store.transaction() as db:db.execute('UPDATE autonomous_decisions SET body=? WHERE id=?',(json.dumps(body),decision_id))
+        self.jobs.stage(proposal.correlation_id,'RECONCILING' if receipt.status in {'UNKNOWN','PARTIAL','SUBMITTING'} else 'COMPLETED')
         return body
 
 

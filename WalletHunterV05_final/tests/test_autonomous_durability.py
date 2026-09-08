@@ -151,6 +151,11 @@ class DurabilityTests(unittest.TestCase):
         b.recover();self.assertEqual(b.exchange.calls,0)
         with b.store.transaction() as db:body=json.loads(db.execute('SELECT body FROM autonomous_decisions').fetchone()[0])
         self.assertEqual(body['status'],'EXPIRED_BEFORE_SUBMISSION')
+        with b.store.transaction() as db:self.assertEqual(json.loads(db.execute('SELECT body FROM position_episodes').fetchone()[0])['state'],'REJECTED')
+        fresh=self.follow(r,'OPEN',0,1,'BUY','fresh-after-expiry')
+        fresh['event'].update(exchange_ms=fixture.NOW+100000,received_ms=fixture.NOW+100000)
+        fresh['book']['time']=fixture.NOW+100000;fresh['consensus']['created_ms']=fixture.NOW+100000
+        self.assertEqual(b.process(fresh)['status'],'FILLED')
     def test_paper_costs_and_immutable_numerical_outcome(self):
         b,r=self.build();opened=b.process(r)
         closed=b.process(self.follow(r,'CLOSE',1,0));outcome=self.outcome(b)
@@ -158,6 +163,7 @@ class DurabilityTests(unittest.TestCase):
         size=entry['size'];gross=(exit['price']-entry['price'])*size;fees=(entry['price']+exit['price'])*size*.0005
         self.assertAlmostEqual(outcome['gross_pnl'],gross);self.assertAlmostEqual(outcome['fees'],fees)
         self.assertAlmostEqual(outcome['net_pnl'],gross-fees);self.assertEqual(outcome['mode'],'PAPER')
+        self.assertAlmostEqual(outcome['slippage_vs_reference'],.01*size)
         self.assertEqual(outcome['evidence'],'SIMULATED');self.assertEqual(outcome['exit_ms'],exit['exchange_ms'])
         with self.assertRaises(sqlite3.IntegrityError):
             with b.store.transaction() as db:db.execute("UPDATE autonomous_outcomes SET body='{}'")
@@ -204,6 +210,23 @@ class DurabilityTests(unittest.TestCase):
         restored=self.restart(b);closing=self.follow(r,'CLOSE',1,0);closing['admission_allowed']=False
         self.assertEqual(restored.process(closing)['episode']['state'],'CLOSED')
 
+    def test_legacy_rejected_followup_does_not_hide_proven_open_position(self):
+        b,r=self.build();first=b.process(r)
+        with b.store.transaction() as db:
+            old=json.loads(db.execute('SELECT body FROM position_episodes').fetchone()[0]);old['state']='REJECTED'
+            db.execute('UPDATE position_episodes SET body=?',(json.dumps(old),))
+        closed=b.process(self.follow(r,'CLOSE',1,0))
+        self.assertEqual(closed['episode']['state'],'CLOSED')
+        self.assertEqual(closed['episode']['episode_id'],first['episode']['episode_id'])
+
+    def test_shadow_rejected_open_is_not_an_active_phantom(self):
+        b,r=self.build('SHADOW');policy=b.risk.policy;b.risk.policy=policy.model_copy(update={'enabled':False})
+        rejected=b.process(r);self.assertEqual(rejected['episode']['state'],'REJECTED')
+        b.risk.policy=policy
+        fresh=self.follow(r,'OPEN',0,1,'BUY','fresh')
+        self.assertEqual(b.process(fresh)['episode']['state'],'OPEN')
+        self.assertEqual(b.exchange.calls,0)
+
     def test_confirmed_live_outcome_has_exchange_label_and_no_invented_fees(self):
         from core.foundation.copy_execution import HyperliquidExecutionAdapter,LiveReport
         from core.foundation.contracts import Fill,ExecutionReceipt
@@ -225,6 +248,27 @@ class DurabilityTests(unittest.TestCase):
         outcome=self.outcome(b)
         self.assertEqual(outcome['mode'],'LIVE');self.assertEqual(outcome['evidence'],'EXCHANGE')
         self.assertIsNone(outcome['fees']);self.assertIsNone(outcome['net_pnl']);self.assertIsNone(outcome['cost_model'])
+
+    def test_live_confirmation_crash_before_reservation_uses_only_durable_grant(self):
+        from core.foundation.copy_execution import HyperliquidExecutionAdapter
+        b,r,before=self.case.live_backend();proposal=b.process(r)
+        with patch.object(HyperliquidExecutionAdapter,'refresh',side_effect=Crash()),self.assertRaises(Crash):
+            b.confirm(proposal['authorization']['decision_id'],authenticated_user='7')
+        self.assertEqual(self.count(b,'intents'),0)
+        restored=AutonomousBackend(Store(b.store.path),b.exchange,b.allocation_policy,b.auth_policy,b.risk.policy,b.clock)
+        with patch.object(HyperliquidExecutionAdapter,'refresh',return_value=before.model_copy(update={'revision':2})),patch.object(HyperliquidExecutionAdapter,'submit',side_effect=TimeoutError()) as submit:
+            restored.recover();self.assertEqual(submit.call_count,1)
+            with patch.object(HyperliquidExecutionAdapter,'query',return_value=None):restored.recover()
+            self.assertEqual(submit.call_count,1)
+
+    def test_unconfirmed_live_proposal_expires_without_phantom_exposure(self):
+        from core.foundation.copy_execution import HyperliquidExecutionAdapter
+        b,r,before=self.case.live_backend();b.process(r)
+        b.clock=b.gateway.clock=lambda:fixture.NOW+100000
+        with patch.object(HyperliquidExecutionAdapter,'submit') as submit:b.recover();submit.assert_not_called()
+        with b.store.transaction() as db:
+            self.assertEqual(json.loads(db.execute('SELECT body FROM position_episodes').fetchone()[0])['state'],'REJECTED')
+        self.assertEqual(self.count(b,'intents'),0)
 
     def test_full_runtime_manifest_restore_preserves_unknown_and_outcome(self):
         import importlib.util

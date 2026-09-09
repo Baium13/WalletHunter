@@ -467,7 +467,11 @@ class WalletDiscoveryEngine:
             for address in watched:
                 error=None
                 try:
-                    with priority_scope('position_owned.detect',1) if address in lifecycle else priority_scope('service.detect',3):
+                    # Position-owned monitoring is P1; active-watchlist
+                    # detection is actionable P2 and may use the reserved
+                    # 1050-1180 band. Historical discovery/deep analysis
+                    # remains background and cannot consume that reserve.
+                    with priority_scope('position_owned.detect',1) if address in lifecycle else priority_scope('service.detect',2):
                         self.detect(address,info,clock(),position_owned=address in lifecycle)
                     scanned+=1
                 except Exception as exc:

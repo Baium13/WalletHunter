@@ -49,11 +49,12 @@ class BudgetTests(unittest.TestCase):
         with self.b.db() as db:db.execute('UPDATE limits SET soft=120,hard=240,enforce=1')
         a=self.b.begin('userFillsByTime',{},'deep',5)
         other=Budget(self.path)
-        with self.assertRaises(BudgetUnavailable):other.begin('allMids',{},'research',2)
+        # P2 is actionable and may use the 120-240 critical reserve.
+        other.begin('allMids',{},'research',2)
         other.begin('orderStatus',{},'reconciliation',0)
         self.b.finish(a,'userFillsByTime',{},self.response(body=[]),.1)
         other.begin('allMids',{},'research',2)
-        self.assertEqual(snapshot(self.path)['counters']['budget_deferred'],1)
+        self.assertEqual(snapshot(self.path)['counters'].get('budget_deferred',0),0)
     def test_no_retry_and_no_sensitive_payload_persistence(self):
         with patch('core.hl_budget.configured',return_value=self.b),patch.object(requests.Session,'request',return_value=self.response(429)) as transport:
             BudgetSession().post('https://api.hyperliquid.xyz/exchange',json={'action':{'type':'order'},'signature':'SECRET'})
@@ -61,7 +62,10 @@ class BudgetTests(unittest.TestCase):
         self.assertNotIn(b'SECRET',self.path.read_bytes())
         self.assertEqual(snapshot(self.path)['http_429'],1)
         with self.b.db() as db:db.execute('UPDATE limits SET enforce=1')
-        with self.assertRaises(BudgetUnavailable):self.b.begin('orderStatus',{},'safety',0)
+        # P0 remains available during cooldown for reconciliation/execution
+        # safety; lower-priority work is what the cooldown defers.
+        self.b.begin('orderStatus',{},'safety',0)
+        with self.assertRaises(BudgetUnavailable):self.b.begin('allMids',{},'background',5)
     def test_observe_records_but_does_not_throttle(self):
         with self.b.db() as db:db.execute('UPDATE limits SET enforce=0')
         for _ in range(12):self.b.begin('userFillsByTime',{},'deep',5)
@@ -141,6 +145,24 @@ class BudgetTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,'BACKOFF'):stream.poll()
             self.assertEqual(stream.retry_at,deadline);self.assertEqual(stream.failures,1)
         self.assertEqual(snapshot(self.path)['ws_connections'],0)
+
+    def test_default_adaptive_bands_and_critical_reserve(self):
+        # 525 allMids reservations = 1050 weighted units, including the
+        # admitted/in-flight reservations before any transport finishes.
+        for _ in range(525):self.b.begin('allMids',{},'background',5)
+        with self.assertRaises(BudgetUnavailable):self.b.begin('allMids',{},'background',5)
+        self.b.begin('orderStatus',{},'reconcile',0)
+        snap=snapshot(self.path)
+        self.assertEqual((snap['soft_limit'],snap['elevated_limit'],snap['hard_planned_ceiling']), (850,1050,1180))
+
+    def test_legacy_defaults_migrate_only_once(self):
+        with self.b.db() as db:db.execute('UPDATE limits SET soft=600,hard=840')
+        reopened=Budget(self.path)
+        snap=snapshot(self.path)
+        self.assertEqual((snap['soft_limit'],snap['hard_planned_ceiling']), (850,1180))
+        with reopened.db() as db:db.execute('UPDATE limits SET soft=700,hard=900')
+        Budget(self.path)
+        with self.b.db() as db:self.assertEqual(db.execute('SELECT soft,hard FROM limits').fetchone(),(700,900))
 
 
 if __name__=='__main__':unittest.main()

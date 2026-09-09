@@ -1,7 +1,8 @@
 """Short authenticated Manual Copy review lease, not a trading policy.
 
-1000 is the TOTAL rolling-minute ceiling. Interactive reads may use 760;
-240 remains reserved for reconciliation / position safety. Other background
+1180 is the TOTAL planned rolling-minute ceiling. Interactive reads may use
+760; the remaining capacity stays available to reconciliation / position
+safety. Other background
 REST reads defer while the lease is held. No worker/process is killed.
 """
 from contextlib import contextmanager
@@ -43,7 +44,7 @@ def admission(db,now,priority):
     schema(db)
     row=db.execute('SELECT owner,expires,safety_until FROM interactive_budget WHERE id=1').fetchone()
     if not row:return None
-    if priority<=1 and row[2]>now:return 1000,False
+    if priority<=1 and row[2]>now:return 1180,False
     if row[1]<=now:return None
     if row[0]==_owner.get():return 760,False
     return 0,True

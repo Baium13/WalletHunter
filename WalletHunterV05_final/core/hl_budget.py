@@ -25,7 +25,12 @@ LISTS={'recentTrades','historicalOrders','userFills','userFillsByTime','fundingH
        'nonUserFundingUpdates','twapHistory','userTwapSliceFills','userTwapSliceFillsByTime',
        'delegatorHistory','delegatorRewards','validatorStats'}
 META={'meta','spotMeta','perpDexs'}
-FAIR_CONTENTION_FRACTION=.5  # Scheduling only; never raises soft/hard ceilings.
+# Hyperliquid's documented IP budget is 1200 weighted units/minute. Keep a
+# small accounting margin and plan no more than 1180.
+NORMAL_CEILING=850
+ELEVATED_CEILING=1050
+HARD_PLANNED_CEILING=1180
+FAIR_CONTENTION_FRACTION=.5  # Scheduling only; never raises any band ceiling.
 HOSTS={'api.hyperliquid.xyz','api.hyperliquid-testnet.xyz'}
 _priority=ContextVar('hl_resource_priority',default=None)
 
@@ -59,15 +64,33 @@ def origin():
             frames.append((Path(f.f_code.co_filename).stem,f.f_code.co_name));f=f.f_back
     finally:del f
     for name,priority in [('recover',0),('reconcile_order',0),('recover_pending_manual_leader',0),
-        ('_cycle',1),('execute',0),('research',2),('detect',3),('analyze_one',5),('analyse_wallet',6)]:
+        ('_cycle',1),('execute',0),('research',2),('detect',2),('analyze_one',5),('analyse_wallet',6)]:
         for file,fn in frames:
             if fn==name:return file+'.'+fn,priority
     for file,fn in frames:
-        if file in {'server','hyperliquid','data','manual_copy_worker','capital_snapshot'}:return file+'.'+fn,2
+        # User/account/position reads are P1. Generic metadata and cold data
+        # paths stay background so they cannot consume the critical reserve.
+        if file in {'server','manual_copy_worker','capital_snapshot'}:return file+'.'+fn,1
+        if file in {'hyperliquid','data'}:return file+'.'+fn,3
     return 'sdk_metadata',3
 
 
 class BudgetUnavailable(RuntimeError):pass
+
+
+def band_ceilings(soft,hard):
+    """Return normal/elevated/critical ceilings for one persisted policy.
+
+    ``soft`` and ``hard`` are retained for compatibility with existing
+    operators/read models.  The middle band is derived, which keeps old
+    custom test or operator limits coherent while the default policy is
+    850/1050/1180.
+    """
+    hard=max(1,int(hard));normal=min(hard,max(1,int(soft)))
+    # Small operator/test limits are intentionally respected as a single
+    # band; only the shipped 850/1180 policy expands into 1050 elevated.
+    elevated=normal if normal<NORMAL_CEILING else min(hard,max(normal,ELEVATED_CEILING))
+    return normal,elevated,hard
 
 
 class Budget:
@@ -78,7 +101,7 @@ class Budget:
             db.execute('PRAGMA journal_mode=WAL')
             db.executescript('''
               CREATE TABLE IF NOT EXISTS limits(id INTEGER PRIMARY KEY,soft INTEGER,hard INTEGER,enforce INTEGER,cooldown REAL);
-              INSERT OR IGNORE INTO limits VALUES(1,600,840,1,0);
+              INSERT OR IGNORE INTO limits VALUES(1,850,1180,1,0);
               CREATE TABLE IF NOT EXISTS requests(id TEXT PRIMARY KEY,at REAL,service TEXT,source TEXT,endpoint TEXT,priority INTEGER,weight INTEGER,status INTEGER,elapsed REAL,items INTEGER);
               CREATE INDEX IF NOT EXISTS request_time ON requests(at);
               CREATE TABLE IF NOT EXISTS counters(name TEXT PRIMARY KEY,value INTEGER);
@@ -87,6 +110,10 @@ class Budget:
               CREATE TABLE IF NOT EXISTS ws_events(at REAL,kind TEXT,n INTEGER);
               CREATE TABLE IF NOT EXISTS admission_waiters(id TEXT PRIMARY KEY,service TEXT,source TEXT,priority INTEGER,cost INTEGER,enqueued REAL,last_seen REAL);
             ''')
+            # Migrate only the exact legacy defaults. Operator-tuned values
+            # must not be overwritten by a process restart.
+            db.execute('UPDATE limits SET soft=?,hard=? WHERE id=1 AND soft=600 AND hard=840',
+                       (NORMAL_CEILING,HARD_PLANNED_CEILING))
         if os.name!='nt':os.chmod(path,0o600)
 
     @contextmanager
@@ -135,6 +162,10 @@ class Budget:
         with self.db() as db:
             db.execute('BEGIN IMMEDIATE')
             soft,hard,enforce,cooldown=db.execute('SELECT soft,hard,enforce,cooldown FROM limits WHERE id=1').fetchone()
+            normal,elevated,hard=band_ceilings(soft,hard)
+            # Requests are inserted before the transport call. ``used`` thus
+            # includes completed and in-flight reservations, and this read +
+            # projected check is atomic under BEGIN IMMEDIATE.
             used=db.execute('SELECT COALESCE(SUM(weight),0) FROM requests WHERE at>?',(now-60,)).fetchone()[0]
             fair_defer=False
             if priority>=2:
@@ -143,21 +174,32 @@ class Budget:
                     (waiter,service,source,priority,cost,now,now))
                 # Age low tiers toward P3, never above actionable account/Risk
                 # evidence. Within tiers the least recently served weight wins.
+                waiter_ceiling=hard if priority<=2 else elevated
                 winner=db.execute('''SELECT w.id FROM admission_waiters w WHERE w.cost<=? ORDER BY
                     MAX(3,w.priority-CAST((?-w.enqueued)/60 AS INTEGER))-(w.priority=2)*2,
                     (SELECT COALESCE(SUM(r.weight),0) FROM requests r WHERE r.service=w.service AND r.source=w.source AND r.at>?),
-                    w.enqueued,w.id LIMIT 1''',(soft-used,now,now-60)).fetchone()
+                    w.enqueued,w.id LIMIT 1''',(max(0,waiter_ceiling-used),now,now-60)).fetchone()
                 # A waiter is a demand hint, not a running coroutine. Sequential
                 # SDK reads may have abandoned its later endpoint after an
                 # earlier read deferred. Do not idle free capacity for that
                 # phantom turn: enforce fairness only under actual contention.
                 fair_defer=bool(winner and winner[0]!=waiter and
-                                used+cost>soft*FAIR_CONTENTION_FRACTION)
+                                used+cost>soft*FAIR_CONTENTION_FRACTION*.9)
             from core.interactive_budget import admission
-            ceiling=hard if priority<=1 else soft
+            # P0/P1 and actionable P2 may use the reserved 1050-1180 band.
+            # Ordinary discovery/history work is capped at 1050 and can never
+            # consume the critical reserve.
+            ceiling=hard if priority<=2 else elevated
             interactive=admission(db,now,priority)
-            if interactive is not None:ceiling,fair_defer=interactive
-            if enforce and (now<cooldown or used+cost>ceiling or fair_defer):
+            if interactive is not None:
+                interactive_ceiling,fair_defer=interactive
+                # A temporary lease can narrow admission, never widen the
+                # persisted operator hard ceiling or the 1180 plan.
+                ceiling=min(ceiling,interactive_ceiling)
+            # 429 opens a shared cooldown. Preserve P0/P1 access for
+            # reconciliation and execution safety; defer lower priorities.
+            rate_limited=now<cooldown and priority>1
+            if enforce and (rate_limited or used+cost>ceiling or fair_defer):
                 db.execute("INSERT INTO counters VALUES('budget_deferred',1) ON CONFLICT(name) DO UPDATE SET value=value+1")
                 db.commit();raise BudgetUnavailable('HL_API_BUDGET_DEFERRED')
             db.execute('DELETE FROM admission_waiters WHERE id=?',(waiter,))
@@ -259,6 +301,7 @@ def snapshot(path):
             while rows[lo][0]<=r[0]-60:running-=rows[lo][1];lo+=1
             peak=max(peak,running)
         soft,hard,enforce,cooldown=db.execute('SELECT soft,hard,enforce,cooldown FROM limits').fetchone()
+        normal,elevated,hard=band_ceilings(soft,hard)
         sockets=db.execute('SELECT pid,heartbeat,subscriptions FROM ws').fetchall()
         alive=[]
         for pid,heartbeat,subscriptions in sockets:
@@ -266,7 +309,8 @@ def snapshot(path):
             except OSError:pass
         return dict(version='hl-budget-v1',checked_ms=int(now*1000),window_start_ms=int(rows[0][0]*1000) if rows else None,
             retention_seconds=86400,weight_evidence='DOCUMENTED_RESPONSE_WEIGHT_CONSERVATIVE_ROUNDING',
-            rest_limit=1200,soft_limit=soft,safety_limit=hard,enforced=bool(enforce),
+            rest_limit=1200,soft_limit=normal,elevated_limit=elevated,
+            safety_limit=hard,hard_planned_ceiling=HARD_PLANNED_CEILING,
             rest_requests_total=len(rows),rest_weight_total=sum(r[1] for r in rows),rest_weight_1m=current,
             rest_weight_peak_1m=peak,http_429=sum(r[2]==429 for r in rows),transport_errors=sum(r[2]==-1 for r in rows),
             timeouts=sum(r[2]==-2 for r in rows),

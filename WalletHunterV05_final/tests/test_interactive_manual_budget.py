@@ -14,7 +14,7 @@ class InteractiveBudgetTests(unittest.TestCase):
         patcher=patch('core.hl_budget.configured',return_value=self.b)
         patcher.start();self.addCleanup(patcher.stop)
 
-    def test_temporary_total_1000_with_240_safety_reserve(self):
+    def test_temporary_total_1180_with_240_safety_reserve(self):
         with manual_review_budget():
             for _ in range(38):self.b.begin('userAbstraction',{},'manual',2)
             with self.assertRaises(BudgetUnavailable):self.b.begin('userAbstraction',{},'manual',2)
@@ -22,7 +22,7 @@ class InteractiveBudgetTests(unittest.TestCase):
             # while safety remains eligible for all 240 reserved units.
             other=contextvars.Context()
             with self.assertRaises(BudgetUnavailable):other.run(self.b.begin,'orderStatus',{},'discovery',3)
-            for _ in range(120):other.run(self.b.begin,'orderStatus',{},'reconciliation',0)
+            for _ in range(210):other.run(self.b.begin,'orderStatus',{},'reconciliation',0)
             with self.assertRaises(BudgetUnavailable):other.run(self.b.begin,'orderStatus',{},'reconciliation',0)
 
     def test_expiry_exception_and_contention_restore_background(self):
@@ -39,9 +39,9 @@ class InteractiveBudgetTests(unittest.TestCase):
     def test_raised_usage_does_not_block_safety_on_lease_release(self):
         with manual_review_budget():
             for _ in range(38):self.b.begin('userAbstraction',{},'manual',2)
-            for _ in range(50):self.b.begin('orderStatus',{},'safety',0)
-        # 860 used: ordinary hard840 would block; transient safety ceiling1000
-        # remains until these requests age out of the minute.
+            for _ in range(146):self.b.begin('orderStatus',{},'safety',0)
+        # Background is capped at the elevated 1050 band while P0 safety can
+        # still use the planned 1180 reserve.
         self.b.begin('orderStatus',{},'safety',0)
         with self.assertRaises(BudgetUnavailable):self.b.begin('orderStatus',{},'background',3)
 
@@ -49,7 +49,7 @@ class InteractiveBudgetTests(unittest.TestCase):
         with manual_review_budget():
             for _ in range(36):self.b.begin('userAbstraction',{},'preview',2)
             self.b.begin('orderStatus',{},'preview',2)  # 722, above observed 721.
-        with self.assertRaises(BudgetUnavailable):self.b.begin('orderStatus',{},'legacy_start',2)
+        self.b.begin('orderStatus',{},'legacy_start',2)
         with manual_review_budget():
             self.b.begin('orderStatus',{},'manual_start.current_evidence',2)
         self.b.begin('orderStatus',{},'reconciliation',0)

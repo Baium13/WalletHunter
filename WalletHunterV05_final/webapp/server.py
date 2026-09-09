@@ -24,6 +24,7 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from core.hyperliquid import HyperliquidReader
+from core.hl_budget import priority_scope
 from core.settings import load
 from core.storage import Storage, default_profile
 from core.state_snapshot import StateConflict
@@ -911,7 +912,12 @@ def price(coin: str, dex: str = "", x_telegram_init_data: str | None = Header(de
     if cached and now - cached[0] < 1.5:
         value = cached[1]
     else:
-        value = float(reader.mid(coin, dex))
+        # A current mark is a lightweight, read-only product datum. Give it
+        # the interactive evidence priority so a queued candle/history scan
+        # cannot make every open position render without a price. This does
+        # not bypass the shared host budget or alter any trading admission.
+        with priority_scope("product.price", 1):
+            value = float(reader.mid(coin, dex))
         price_cache[key] = (now, value)
     return {"coin": coin, "dex": dex or None, "price": value, "time": int(now * 1000)}
 

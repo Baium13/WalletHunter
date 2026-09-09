@@ -126,51 +126,38 @@ from integrations.product_confirmation import confirmed_backend
 def product_view(uid):
     _,profile=storage.profile(uid)
     view=view_for(ROOT,uid,profile,settings.hl_mode)
-    payload=view.snapshot()
-    # The persisted portfolio is authoritative for lifecycle/provenance, but
-    # can be older than the paused Manual Copy loop.  Overlay a bounded,
-    # read-only public account snapshot so Home and the account card do not
-    # display stale collateral/positions.  No credentials or signing client
-    # are reachable from this path; failures retain the last good snapshot.
-    key=(view.scope.tenant,view.scope.account,view.scope.network)
-    now=time.monotonic()
-    live=None
-    with _account_snapshot_lock:
-        cached=account_snapshot_cache.get(key)
-        if cached and now-cached[0] < ACCOUNT_SNAPSHOT_TTL:
-            live=cached[1]
-    if live is None:
-        try:
-            current=(payload.get('account') or {}).get('portfolio') or {}
-            revision=int(current.get('revision') or 1)
-            live=reader.account_snapshot(view.scope,revision=revision,clock_ms=lambda:int(time.time()*1000))
-            with _account_snapshot_lock:
-                account_snapshot_cache[key]=(now,live)
-        except Exception:
-            with _account_snapshot_lock:
-                cached=account_snapshot_cache.get(key)
-            live=cached[1] if cached else None
-    if live is not None:
-        portfolio=live.model_dump(mode='json')
-        account=dict(payload.get('account') or {})
-        account['portfolio']=portfolio
-        account['portfolio_source']='PUBLIC_ACCOUNT_READER'
-        payload['account']=account
-        manual=dict(payload.get('manual_copy') or {})
-        manual['account_balance']=portfolio.get('equity')
-        manual['capital_status']='FRESH' if portfolio.get('completeness')=='COMPLETE' else 'STALE'
-        payload['manual_copy']=manual
-        try:
+    base_snapshot=view.snapshot
+    def refreshed_snapshot():
+        payload=base_snapshot()
+        # The persisted portfolio is authoritative for lifecycle/provenance,
+        # but can be older than the paused Manual Copy loop. Overlay a bounded,
+        # read-only public account snapshot so Home/account cards stay current.
+        key=(view.scope.tenant,view.scope.account,view.scope.network)
+        now=time.monotonic();live=None
+        with _account_snapshot_lock:
+            cached=account_snapshot_cache.get(key)
+            if cached and now-cached[0] < ACCOUNT_SNAPSHOT_TTL: live=cached[1]
+        if live is None:
+            try:
+                current=(payload.get('account') or {}).get('portfolio') or {}
+                revision=int(current.get('revision') or 1)
+                live=reader.account_snapshot(view.scope,revision=revision,clock_ms=lambda:int(time.time()*1000))
+                with _account_snapshot_lock: account_snapshot_cache[key]=(now,live)
+            except Exception:
+                with _account_snapshot_lock: cached=account_snapshot_cache.get(key)
+                live=cached[1] if cached else None
+        if live is not None:
+            portfolio=live.model_dump(mode='json');account=dict(payload.get('account') or {})
+            account['portfolio']=portfolio;account['portfolio_source']='PUBLIC_ACCOUNT_READER';payload['account']=account
+            manual=dict(payload.get('manual_copy') or {})
+            manual['account_balance']=portfolio.get('equity');manual['capital_status']='FRESH' if portfolio.get('completeness')=='COMPLETE' else 'STALE';payload['manual_copy']=manual
             from core.product_read import observed
-            health=dict(payload.get('health') or {})
-            components=dict(health.get('components') or {})
-            components['private_account']=observed(portfolio.get('exchange_ms'),int(time.time()*1000))
-            components['private_account']['receipt_ms']=portfolio.get('received_ms')
-            health['components']=components
-            payload['health']=health
-        except Exception:
-            pass
-    return payload
+            health=dict(payload.get('health') or {});components=dict(health.get('components') or {})
+            components['private_account']=observed(portfolio.get('exchange_ms'),int(time.time()*1000));components['private_account']['receipt_ms']=portfolio.get('received_ms')
+            health['components']=components;payload['health']=health
+        return payload
+    view.snapshot=refreshed_snapshot
+    return view
 
 def product_market(scope,coin,interval,hours,token):
     # Read-only compatibility boundary: reuse existing bounded chart/price caches,

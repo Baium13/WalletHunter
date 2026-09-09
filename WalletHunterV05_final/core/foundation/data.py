@@ -4,7 +4,8 @@ The existing reader has bounded REST transport and deliberately disables SDK WS.
 Do not create per-dashboard pollers. A gap requires a new REST snapshot.
 """
 import threading
-from .contracts import DomainEvent, InstrumentId, MarketSnapshot, PortfolioSnapshot, Position
+import math
+from .contracts import DomainEvent, InstrumentId, MarketSnapshot, PortfolioSnapshot, Position, OpenOrder
 from .store import digest
 
 
@@ -120,6 +121,87 @@ def account_snapshot(client, scope, revision, clock_ms, *, dex=None, require_col
     return PortfolioSnapshot(scope=scope, revision=revision, exchange_ms=None, received_ms=clock_ms(),
         equity=None, sizing_capital=capital.sizing_base_usdc, available_collateral=None,
         positions=positions, completeness="UNKNOWN", evidence="EXCHANGE")
+
+
+def reader_account_snapshot(reader, scope, revision, clock_ms):
+    """Compose account evidence through the existing public Hyperliquid reader.
+
+    The product read path must be able to refresh a follower account while the
+    Manual Copy writer is paused.  This bridge is deliberately read-only: it
+    uses the reader's existing bounded ``_info`` calls, never credentials or a
+    signing adapter, and leaves ownership/provenance UNKNOWN until the journal
+    proves it.
+    """
+    from core.capital_snapshot import finite_amount, strict_spot_usdc
+    if reader.network != scope.network:
+        raise DataUnavailable("NETWORK_MISMATCH")
+    if not isinstance(revision, int) or revision < 1:
+        raise DataUnavailable("INVALID_REVISION")
+    now = clock_ms()
+    if not isinstance(now, int) or now < 0:
+        raise DataUnavailable("INVALID_RECEIPT_TIME")
+    states = {}
+    stamps = []
+    for dex in ("", "xyz"):
+        state = reader.state(scope.account, dex)
+        if not isinstance(state, dict):
+            raise DataUnavailable("ACCOUNT_STATE_UNAVAILABLE")
+        stamp = state.get("time")
+        if type(stamp) is not int or stamp < 0:
+            raise DataUnavailable("ACCOUNT_WATERMARK_UNAVAILABLE")
+        states[dex] = state
+        stamps.append(stamp)
+
+    positions = []
+    for dex, market_type in (("", "CRYPTO"), ("xyz", "STOCKS")):
+        limits = reader.leverage_limits(dex)
+        for row in reader._positions(states[dex], market_type, dex, limits):
+            lev = finite_amount(row.get("leverage"), "position leverage")
+            if lev != int(lev):
+                raise DataUnavailable("INVALID_LEVERAGE")
+            positions.append(Position(
+                instrument=InstrumentId(network=scope.network, dex=dex,
+                    symbol=str(row["coin"]).split(":")[-1]),
+                side=row["side"], size=row["size"], entry_price=row["entry_price"],
+                notional=row["position_value"], margin=row.get("margin_used"),
+                leverage=int(lev), evidence="UNKNOWN"))
+
+    orders = []
+    for dex in ("", "xyz"):
+        for row in reader.frontend_open_orders(scope.account, dex):
+            if type(row.get("reduceOnly")) is not bool:
+                raise DataUnavailable("ORDER_SCOPE_UNKNOWN")
+            oid = row.get("oid")
+            if oid is None:
+                raise DataUnavailable("ORDER_ID_UNAVAILABLE")
+            orders.append(OpenOrder(
+                instrument=InstrumentId(network=scope.network, dex=dex,
+                    symbol=str(row["coin"]).split(":")[-1]),
+                order_id=str(oid), size=finite_amount(row.get("sz"), "order size"),
+                reduce_only=row["reduceOnly"]))
+
+    # Reuse the canonical capital semantics.  Unified accounts use the single
+    # USDC pool; standard accounts sum the supported DEX account values while
+    # available collateral remains the requested core pool's withdrawable.
+    mode = reader._info({"type": "userAbstraction", "user": scope.account})
+    if mode == "unifiedAccount":
+        spot = strict_spot_usdc(reader._info({"type": "spotClearinghouseState", "user": scope.account}))
+        sizing = finite_amount(spot.total, "sizing capital")
+        capacity = finite_amount(spot.available, "available collateral")
+    elif mode == "disabled":
+        values = [finite_amount((states[dex].get("marginSummary") or {}).get("accountValue"), "account value")
+                  for dex in ("", "xyz")]
+        sizing = math.fsum(values)
+        capacity = finite_amount((states[""].get("withdrawable")), "available collateral")
+    else:
+        raise DataUnavailable("CAPITAL_MODE_UNSUPPORTED")
+    if sizing < 0 or capacity < 0 or capacity > sizing:
+        raise DataUnavailable("INCONSISTENT_COLLATERAL")
+    return PortfolioSnapshot(scope=scope, revision=revision,
+        exchange_ms=min(stamps), received_ms=now, equity=sizing,
+        sizing_capital=sizing, available_collateral=capacity,
+        collateral_dex="", positions=tuple(positions), orders=tuple(orders),
+        completeness="COMPLETE", evidence="EXCHANGE")
 
 
 def copy_account_snapshot(client, scope, revision, clock_ms, dex, require_collateral=True):

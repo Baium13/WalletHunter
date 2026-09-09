@@ -178,6 +178,24 @@ class DataTests(unittest.TestCase):
         with self.assertRaises(DataUnavailable): hub.get(scope(), instrument())
         with self.assertRaises(DataUnavailable): hub.get(scope("MAINNET"), instrument("MAINNET"))
 
+    def test_public_reader_account_snapshot_is_complete_and_scoped(self):
+        from core.foundation.data import reader_account_snapshot
+        from core.hyperliquid import HyperliquidReader
+        class PublicReader:
+            network = "TESTNET"
+            def _info(self, payload):
+                if payload["type"] == "userAbstraction": return "disabled"
+                raise AssertionError(payload)
+            def state(self, wallet, dex=""):
+                return {"time": 1000, "withdrawable": "2000", "marginSummary": {"accountValue": "3000"}, "assetPositions": []}
+            def leverage_limits(self, dex=""): return {}
+            def _positions(self, state, market_type, dex, limits): return HyperliquidReader._positions(state, market_type, dex, limits)
+            def frontend_open_orders(self, wallet, dex=""): return []
+        row=reader_account_snapshot(PublicReader(),scope(),1,lambda:1000)
+        self.assertEqual(row.scope,scope());self.assertEqual(row.exchange_ms,1000)
+        self.assertEqual(row.completeness,"COMPLETE");self.assertEqual(row.equity,6000.)
+        self.assertEqual(row.available_collateral,2000.)
+
 
 def market(**changes):
     return MarketSnapshot(**dict(dict(instrument=instrument(), exchange_ms=1000, received_ms=1000,

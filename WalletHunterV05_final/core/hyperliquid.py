@@ -1,7 +1,8 @@
 import time
 import requests
 from core.fill_history import fetch_fills, filter_perp_fills
-from core.capital_snapshot import read_capital_snapshot, strict_spot_usdc, finite_amount
+from core.capital_snapshot import read_capital_snapshot, available_margin_usdc, strict_spot_usdc, finite_amount
+from core.foundation.contracts import InstrumentId, OpenOrder, PortfolioSnapshot, Position
 
 
 class HyperliquidReader:
@@ -120,6 +121,26 @@ class HyperliquidReader:
                 raise RuntimeError("Cannot read leader xyz positions") from e
 
         return out
+
+    def frontend_open_orders(self, wallet, dex=""):
+        """Read-only open-order evidence for a public account snapshot."""
+        if dex not in ("", "xyz"):
+            raise ValueError("Unsupported perpetual DEX")
+        result = self._info({"type": "frontendOpenOrders", "user": wallet, "dex": dex})
+        if not isinstance(result, list) or any(not isinstance(row, dict) for row in result):
+            raise ValueError("Invalid open-order snapshot")
+        return result
+
+    def account_snapshot(self, scope, revision=1, clock_ms=None):
+        """Compose a fresh, credential-free account evidence snapshot.
+
+        This uses the same bounded public ``info`` transport as the existing
+        reader.  It intentionally does not infer ownership/provenance and does
+        not create a signing client; callers must link any ownership from the
+        journal separately.
+        """
+        from core.foundation.data import reader_account_snapshot
+        return reader_account_snapshot(self, scope, revision, clock_ms or (lambda: int(time.time() * 1000)))
 
     def leverage_limits(self, dex=""):
         """Live per-market leverage ceilings advertised by Hyperliquid."""

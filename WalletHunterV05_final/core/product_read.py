@@ -459,6 +459,12 @@ class ProductReadModel:
             with reader(self.root/'data/executions.sqlite3') as db:quarantines=active_in(db,self.scope)
         except (OSError,sqlite3.Error,ValueError):pass
         if quarantines:
+            from core.manual_recovery_review import assess
+            with reader(self.root/'data/executions.sqlite3') as db:
+                review=assess(db,self.scope,(account or {}).get('portfolio'),manual.get('allocation_limit'),self.clock())
+            manual['operator_review']=review
+            manual.update(quarantined_reserve=review['quarantined_reserve'],available_for_new=review['available_for_new'])
+            if review['committed'] is not None:manual.update(committed=review['committed'],reserved=review['reserved'])
             manual.update(status='PAUSED',ui_state='PAUSED',paused=True,enabled=False,valid_actions=[],
                 quarantine={'count':len(quarantines),'reservation_held':sum(q['reservation']['margin'] for q in quarantines),
                     'retry_allowed':False,'operator_review_required':True,

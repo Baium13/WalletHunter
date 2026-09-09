@@ -43,6 +43,40 @@ class RegistryTests(unittest.TestCase):
         self.assertEqual(q['size'],10)
         self.assertGreaterEqual(q['p95_ms'],q['p50_ms'])
 
+class HistoryTests(unittest.TestCase):
+    def test_incremental_tail_does_not_refresh_by_cache(self):
+        from core.intelligence.history import IncrementalHistory
+        from core.foundation.store import Store
+        from test_trade_analyzer import fill
+        with tempfile.TemporaryDirectory() as tmp:
+            h=IncrementalHistory(Store(Path(tmp)/'h.sqlite'),'TESTNET');calls=[]
+            rows=[fill(1,time=1000),fill(2,time=100000)]
+            def info(p):
+                calls.append(p)
+                return [r for r in rows if p['startTime']<=r['time']<=p['endTime']]
+            self.assertEqual(len(h.fetch(info,'wallet',0,100000,2,'deep')),2)
+            rows.append(fill(3,time=110000))
+            self.assertEqual(len(h.fetch(info,'wallet',0,110000,2,'deep')),3)
+            self.assertEqual(calls[-1]['startTime'],40000)
+            self.assertEqual(calls[-1]['endTime'],110000)
+    def test_resume_partial_pages_and_network_isolation(self):
+        from core.intelligence.history import IncrementalHistory
+        from core.foundation.store import Store
+        from core.fill_history import HistoryIncomplete
+        from test_trade_analyzer import fill
+        with tempfile.TemporaryDirectory() as tmp:
+            store=Store(Path(tmp)/'h.sqlite');h=IncrementalHistory(store,'TESTNET');calls=[]
+            rows=[fill(i+1,time=i) for i in range(2000)]
+            def info(p):
+                calls.append((p['startTime'],p['endTime']))
+                return [r for r in rows if p['startTime']<=r['time']<=p['endTime']][:2000]
+            with self.assertRaises(HistoryIncomplete):h.fetch(info,'wallet',0,4000,2,'deep')
+            first=list(calls)
+            got=IncrementalHistory(store,'TESTNET').fetch(info,'wallet',0,4000,8,'deep')
+            self.assertEqual(len(got),2000)
+            self.assertFalse(set(first)&set(calls[len(first):]))
+            self.assertEqual(IncrementalHistory(store,'MAINNET').fetch(lambda p:[],'wallet',0,4000,2,'deep'),[])
+
 class StreamTests(unittest.TestCase):
     def test_bounded_priority_dedup_and_order(self):
         import threading

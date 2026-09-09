@@ -275,16 +275,18 @@ class WalletDiscoveryEngine:
 
     def analyze_one(self,address,info,now):
         address=wallet(address)
-        cheap=fetch_fills(info,address,max(0,now-DAY),now,now_ms=now,max_requests=2)
+        from .history import IncrementalHistory
+        history=IncrementalHistory(self.store,self.network)
+        cheap=history.fetch(info,address,max(0,now-DAY),now,2,'cheap')
         if len(cheap)<self.policy.cheap_min_fills:
             with self.store.transaction() as db:
                 db.execute("UPDATE candidates SET status='CANDIDATE',next_eval=? WHERE network=? AND wallet=?",(now+self.policy.reevaluate_ms,self.network,address))
             return None
-        fills=filter_perp_fills(fetch_fills(info,address,max(0,now-180*DAY),now,now_ms=now,max_requests=self.policy.history_requests))
+        fills=filter_perp_fills(history.fetch(info,address,max(0,now-180*DAY),now,self.policy.history_requests,'deep'))
         windows=reports(fills,now)
         ranked=score(address,self.network,windows,now,self.policy)
         analysis={'wallet':address,'network':self.network,'computed_ms':now,'score':ranked.model_dump(mode='json'),
-            'windows':windows,'history_method':'bounded-fill-history','equity_drawdown_pct':None,
+            'windows':windows,'history_method':'incremental-validated-fill-history-v1','equity_drawdown_pct':None,
             'funding_included':False,'not_a_profit_probability':True}
         with self.store.transaction() as db:
             old=db.execute('SELECT status FROM candidates WHERE network=? AND wallet=?',(self.network,address)).fetchone()

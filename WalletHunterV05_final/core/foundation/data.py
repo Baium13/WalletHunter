@@ -117,7 +117,9 @@ def account_snapshot(client, scope, revision, clock_ms, *, dex=None, require_col
     positions = tuple(Position(instrument=InstrumentId(
         network=scope.network, dex=p.get("dex") or "", symbol=p["coin"].split(":")[-1]),
         side=p["side"], size=p["size"], entry_price=p["entry_price"], notional=p["position_value"],
-        margin=p.get("margin_used"), leverage=int(p["leverage"]), evidence="EXTERNAL") for p in rows)
+        margin=p.get("margin_used"), leverage=int(p["leverage"]),
+        initial_entry_price=p.get("initial_entry_price"), liquidation_price=p.get("liquidation_price"),
+        margin_mode=p.get("margin_mode"), evidence="EXTERNAL") for p in rows)
     return PortfolioSnapshot(scope=scope, revision=revision, exchange_ms=None, received_ms=clock_ms(),
         equity=None, sizing_capital=capital.sizing_base_usdc, available_collateral=None,
         positions=positions, completeness="UNKNOWN", evidence="EXCHANGE")
@@ -164,7 +166,9 @@ def reader_account_snapshot(reader, scope, revision, clock_ms):
                     symbol=str(row["coin"]).split(":")[-1]),
                 side=row["side"], size=row["size"], entry_price=row["entry_price"],
                 notional=row["position_value"], margin=row.get("margin_used"),
-                leverage=int(lev), evidence="UNKNOWN"))
+                leverage=int(lev), initial_entry_price=row.get("initial_entry_price"),
+                liquidation_price=row.get("liquidation_price"),
+                margin_mode=row.get("margin_mode"), evidence="UNKNOWN"))
 
     orders = []
     for dex in ("", "xyz"):
@@ -235,7 +239,9 @@ def copy_account_snapshot(client, scope, revision, clock_ms, dex, require_collat
         positions.append(Position(instrument=InstrumentId(network=scope.network,
             dex=p.get("dex") or "", symbol=p["coin"].split(":")[-1]),
             side=p["side"], size=p["size"], entry_price=p["entry_price"],
-            notional=p["position_value"], margin=p.get("margin_used"), leverage=int(lev), evidence="UNKNOWN"))
+            notional=p["position_value"], margin=p.get("margin_used"), leverage=int(lev),
+            initial_entry_price=p.get("initial_entry_price"), liquidation_price=p.get("liquidation_price"),
+            margin_mode=p.get("margin_mode"), evidence="UNKNOWN"))
     orders = []
     for pool in ("", "xyz"):
         raw = client.frontend_open_orders(pool)

@@ -71,6 +71,11 @@ class Position(Contract):
     notional: Positive
     margin: Amount | None
     leverage: Annotated[int, Field(strict=True, ge=1)]
+    # Exchange position basis/equity evidence.  These are optional because
+    # PAPER and older persisted snapshots do not always expose them.
+    initial_entry_price: Positive | None = None
+    liquidation_price: Positive | None = None
+    margin_mode: Literal["cross", "isolated"] | None = None
     held: bool = False
     evidence: Literal["VERIFIED", "EXTERNAL", "UNKNOWN"]
     order_ids: tuple[Name, ...] = ()

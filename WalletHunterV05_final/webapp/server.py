@@ -141,6 +141,8 @@ def product_market(scope,coin,interval,hours,token):
         # Budget deferral must not erase a previously proven chart history.
         # The mark remains independently available through the P1 price path.
         cached = chart_cache.get(cache_key)
+        if not cached:
+            raise
         data={'coin':coin,'interval':interval,'hours':hours,
               'candles':list(cached[1]) if cached else []}
     dex,symbol=coin.split(':',1) if ':' in coin else ('',coin)

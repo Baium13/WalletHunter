@@ -5,6 +5,7 @@ share one database; the parent envelope remains the P1.2 reservation authority.
 """
 import math
 import time
+import json
 from dataclasses import dataclass
 from .contracts import Scope, InstrumentId, SourceContribution, OrderIntent, MarketSnapshot, ExecutionReceipt
 from .data import account_snapshot
@@ -188,11 +189,23 @@ def recover_pending_copy(engine, account, client):
     scope = Scope(tenant=str(account['_tenant']), account=account['address'].lower(), network=client.network)
     store = Store(engine.journal.path)
     with store.transaction() as db:
-        rows = db.execute("SELECT i.body,p.body AS pre,r.body AS policy FROM intents i JOIN intent_prestate p ON p.id=i.id JOIN policies r ON r.hash=json_extract(i.decision,'$.policy_hash') WHERE i.scope=? AND i.status IN ('UNKNOWN','SUBMITTING') LIMIT 3", (scope_key(scope),)).fetchall()
+        rows = db.execute("SELECT i.body,i.receipt,p.body AS pre,r.body AS policy FROM intents i JOIN intent_prestate p ON p.id=i.id JOIN policies r ON r.hash=json_extract(i.decision,'$.policy_hash') WHERE i.scope=? AND i.status IN ('UNKNOWN','SUBMITTING') LIMIT 3", (scope_key(scope),)).fetchall()
     recovered = set()
     for row in rows:
         intent = OrderIntent.model_validate_json(row['body'])
         if intent.version != 2: continue
+        # Query-only recovery remains required, but repeated UNKNOWN reads must
+        # not monopolize the shared API budget. The durable receipt timestamp
+        # provides a restart-safe backoff; it never releases the reservation or
+        # authorizes a resubmission.
+        try:
+            prior=json.loads(row['receipt'] or '{}')
+            received=int(prior.get('received_ms') or 0)
+            age=int(time.time()*1000)-received if received else 0
+            if prior.get('status')=='UNKNOWN' and 5000<=age<60000:
+                continue
+        except (TypeError,ValueError,json.JSONDecodeError):
+            pass
         before = PortfolioSnapshot.model_validate_json(row['pre'])
         clock = lambda: int(time.time()*1000)
         adapter = HyperliquidExecutionAdapter(client, scope, clock, before)

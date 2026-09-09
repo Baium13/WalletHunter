@@ -561,7 +561,7 @@ def recover_pending_manual_leader(engine, account, client, *, limit=3):
     store = Store(engine.journal.path)
     with store.transaction() as db:
         rows = db.execute(
-            "SELECT i.body,i.status,p.body AS pre,r.body AS policy,o.id AS parent,o.intent AS envelope "
+            "SELECT i.body,i.receipt,i.status,p.body AS pre,r.body AS policy,o.id AS parent,o.intent AS envelope "
             "FROM intents i JOIN intent_prestate p ON p.id=i.id JOIN policies r "
             "ON r.hash=json_extract(i.decision,'$.policy_hash') JOIN operations o "
             "ON o.id=json_extract(i.body,'$.parent_intent_id') "
@@ -574,6 +574,14 @@ def recover_pending_manual_leader(engine, account, client, *, limit=3):
     recovered = []
     for row in rows:
         try:
+            # Keep UNKNOWN query recovery restart-safe without polling the same
+            # unresolved intent every watcher tick. This is only a read backoff;
+            # it never releases its reservation or permits a retry.
+            prior=json.loads(row['receipt'] or '{}')
+            received=int(prior.get('received_ms') or 0)
+            age=int(time.time()*1000)-received if received else 0
+            if prior.get('status')=='UNKNOWN' and 5000<=age<60000:
+                continue
             from core.execution_quarantine import active_in
             with store.transaction() as db:
                 if any(q['intent_id']==json.loads(row['body'])['intent_id'] for q in active_in(db,scope)):

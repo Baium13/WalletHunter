@@ -21,6 +21,7 @@ class ProductEvents:
                 due INTEGER,critical INTEGER,last_error TEXT,PRIMARY KEY(scope,id));
                 CREATE TABLE IF NOT EXISTS product_delivery_health(scope TEXT PRIMARY KEY,body TEXT);
                 CREATE TABLE IF NOT EXISTS product_notification_policy(scope TEXT PRIMARY KEY,started_ms INTEGER,body TEXT);
+                CREATE TABLE IF NOT EXISTS product_budget_incidents(scope TEXT PRIMARY KEY,started INTEGER,last_sent INTEGER);
                 CREATE INDEX IF NOT EXISTS product_outbox_delivery ON product_outbox(scope,status,due);''')
 
     def preferences(self,scope,changes=None):
@@ -161,9 +162,30 @@ class ProductEvents:
                 db.execute('INSERT OR IGNORE INTO product_outbox VALUES(?,?,?,?,?,?,?,?)',(key,nid,json.dumps({'type':kind,'data':clean(payload)}),'PENDING',0,self.clock(),int(category=='CRITICAL'),None))
             db.execute('DELETE FROM product_events WHERE scope=? AND seq NOT IN (SELECT seq FROM product_events WHERE scope=? ORDER BY seq DESC LIMIT ?)',(key,key,self.RETENTION))
 
+    def budget_alert(self,scope,budget):
+        """Persistent red/429 only; durable one-hour cooldown per tenant."""
+        now=self.clock();key=scope_key(scope)
+        fresh=0<=now-budget.get('checked_ms',0)<=30000
+        dangerous=fresh and (budget.get('state')=='RATE_LIMITED' or budget.get('rest_weight_1m',0)>1020)
+        with self.store.transaction() as db:
+            row=db.execute('SELECT started,last_sent FROM product_budget_incidents WHERE scope=?',(key,)).fetchone()
+            started,last_sent=tuple(row) if row else (0,0)
+            started=(started or now) if dangerous else 0
+            alert=dangerous and now-started>=120000 and now-last_sent>=3600000
+            # Publish and cooldown commit atomically through the same store
+            # is not possible with nested transactions. Stable hour identity
+            # below makes a crash before cooldown persistence idempotent.
+            db.execute('INSERT OR REPLACE INTO product_budget_incidents VALUES(?,?,?)',(key,started,last_sent))
+        if alert:
+            self.publish(scope,'api-critical:'+str(started),'CRITICAL_TRADING_FAILURE',
+                {'reason':'API_BUDGET_CRITICAL','mode':'UNVERIFIED'},notify=True,critical=True)
+            with self.store.transaction() as db:
+                db.execute('UPDATE product_budget_incidents SET last_sent=? WHERE scope=?',(now,key))
+
     def collect(self,snapshot):
         from core.foundation.contracts import Scope
         scope=Scope.model_validate(snapshot['scope'])
+        self.budget_alert(scope,snapshot['health'].get('api_budget',{}))
         self.publish(scope,'health','HEALTH_UPDATED',snapshot['health'],notify=snapshot['health']['status']=='UNHEALTHY',critical=True)
         components=snapshot['health'].get('components',{})
         financial_failures=[name for name in ('private_account','allocation','risk','execution','reconciliation') if components.get(name,{}).get('status')=='UNHEALTHY']

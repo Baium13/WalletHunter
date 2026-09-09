@@ -171,6 +171,9 @@ class WalletDiscoveryEngine:
                 CREATE TABLE IF NOT EXISTS candidate_retirements(network TEXT,wallet TEXT,retired INTEGER,prior_status TEXT,reason TEXT,
                     PRIMARY KEY(network,wallet,retired));
                 CREATE TABLE IF NOT EXISTS discovery_schedule(network TEXT PRIMARY KEY,turn INTEGER NOT NULL);
+                CREATE TABLE IF NOT EXISTS watch_scan_state(network TEXT,wallet TEXT,last_success INTEGER,last_attempt INTEGER,error TEXT,PRIMARY KEY(network,wallet));
+                CREATE TABLE IF NOT EXISTS research_archive(id TEXT PRIMARY KEY,archived_ms INTEGER,reason TEXT);
+                CREATE VIEW IF NOT EXISTS research_hot AS SELECT r.* FROM intelligence_records r WHERE NOT EXISTS (SELECT 1 FROM research_archive a WHERE a.id=r.id);
                 CREATE TRIGGER IF NOT EXISTS research_no_update BEFORE UPDATE ON intelligence_records BEGIN SELECT RAISE(ABORT,'append only'); END;
                 CREATE TRIGGER IF NOT EXISTS research_no_delete BEFORE DELETE ON intelligence_records BEGIN SELECT RAISE(ABORT,'append only'); END;
             ''')
@@ -193,8 +196,13 @@ class WalletDiscoveryEngine:
         if old:
             if old[0]!=packed(body): raise ValueError('IDENTITY_COLLISION')
             return record_id
-        if db.execute('SELECT COUNT(*) FROM intelligence_records').fetchone()[0]>=100000:
-            raise ValueError('EVENT_STORAGE_BUDGET_ARCHIVE_REQUIRED')
+        if db.execute('SELECT COUNT(*) FROM research_hot').fetchone()[0]>=100000:
+            # Logical hot/archive separation preserves original immutable rows,
+            # IDs, replay cursors and all financial/decision references.
+            eligible=db.execute("SELECT id FROM research_hot WHERE kind IN ('WALLET_DISCOVERED','LEADER_ANALYZED') AND created<? AND id NOT IN (SELECT record_id FROM decision_links) ORDER BY created,id LIMIT 20000",(now-7*DAY,)).fetchall()
+            db.executemany('INSERT OR IGNORE INTO research_archive VALUES(?,?,?)',
+                [(r['id'],now,'COLD_PUBLIC_RESEARCH') for r in eligible])
+            if not eligible:raise ValueError('RESEARCH_HOT_CAPACITY_PROTECTED')
         db.execute('INSERT INTO intelligence_records VALUES(?,?,?,?,?)',(record_id,self.network,kind,now,packed(body)))
         correlation=body.get('event_id') or body.get('event',{}).get('event_id') or record_id
         reference=AnalysisResult(instrument=instrument or InstrumentId(network=self.network,symbol='BTC'),
@@ -386,16 +394,30 @@ class WalletDiscoveryEngine:
             if len(lifecycle)>32: raise ValueError('POSITION_WATCH_CAPACITY')
             # Existing episodes have priority; demotion never ends their reads.
             watched=sorted(lifecycle)+[r['wallet'] for r in active if r['wallet'] not in lifecycle]
+            with self.store.transaction() as db:
+                scan_state={r['wallet']:dict(r) for r in db.execute('SELECT * FROM watch_scan_state WHERE network=?',(self.network,))}
+            watched.sort(key=lambda address:(address not in lifecycle,scan_state.get(address,{}).get('last_success') or 0,address))
             scanned=0
             for address in watched:
+                error=None
                 try:
                     with priority_scope('position_owned.detect',1) if address in lifecycle else priority_scope('service.detect',3):
                         self.detect(address,info,clock(),position_owned=address in lifecycle)
                     scanned+=1
-                except Exception: errors.append('WATCHLIST_OR_ANALYSIS_UNAVAILABLE')
+                except Exception as exc:
+                    error='BUDGET_DEFERRED' if isinstance(exc,BudgetUnavailable) or isinstance(exc.__cause__,BudgetUnavailable) else type(exc).__name__
+                    errors.append('WATCHLIST_OR_ANALYSIS_UNAVAILABLE')
+                with self.store.transaction() as db:
+                    old=scan_state.get(address,{})
+                    db.execute('INSERT OR REPLACE INTO watch_scan_state VALUES(?,?,?,?,?)',
+                        (self.network,address,old.get('last_success') if error else clock(),clock(),error))
+            with self.store.transaction() as db:
+                stamps={r['wallet']:r['last_success'] for r in db.execute('SELECT wallet,last_success FROM watch_scan_state WHERE network=?',(self.network,))}
+            completed=min((stamps.get(a) or 0 for a in watched),default=clock())
             for component in ('watchlist','leader_detection'):
                 self.health_observation(component,clock(),error='WATCH_SCAN_INCOMPLETE' if scanned<len(watched) else None,
-                    details={'watched':len(watched),'scanned':scanned})
+                    details={'watched':len(watched),'scanned':scanned,'last_completed_cycle_ms':completed or None,
+                        'scan_lag_ms':max(0,clock()-completed) if completed else None})
             with self.store.transaction() as db:
                 queue=db.execute("SELECT r.body,c.analysis FROM intelligence_records r JOIN candidates c ON c.network=r.network AND c.wallet=json_extract(r.body,'$.wallet') LEFT JOIN decision_links l ON l.event_id=json_extract(r.body,'$.event_id') WHERE r.network=? AND r.kind='LEADER_TRADE' AND l.event_id IS NULL ORDER BY r.rowid LIMIT 4",(self.network,)).fetchall()
             for queued in queue:
@@ -436,7 +458,7 @@ class WalletDiscoveryEngine:
     def snapshot(self,now):
         with self.store.transaction() as db:
             health=db.execute('SELECT * FROM intelligence_health WHERE network=?',(self.network,)).fetchone()
-            leaders=db.execute('SELECT wallet,status,score,confidence,last_seen,analysis FROM candidates WHERE network=? ORDER BY score DESC,wallet LIMIT 32',(self.network,)).fetchall()
+            leaders=db.execute("SELECT wallet,status,score,confidence,last_seen,analysis FROM candidates WHERE network=? AND status!='ARCHIVED' ORDER BY score DESC,wallet LIMIT 32",(self.network,)).fetchall()
             counts={r['status']:r['n'] for r in db.execute('SELECT status,COUNT(*) n FROM candidates WHERE network=? GROUP BY status',(self.network,))}
         healthy=bool(health and health['last_success'] is not None and 0<=now-health['last_success']<120000 and not health['error'])
         return {'network':self.network,'mode':'OBSERVE','execution_enabled':False,'health':'HEALTHY' if healthy else 'DEGRADED',

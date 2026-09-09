@@ -1,5 +1,5 @@
 [Unit]
-Description=Wallet Hunter encrypted state backup
+Description=Wallet Hunter owner-permission-protected state backup (not encrypted)
 
 [Service]
 Type=oneshot

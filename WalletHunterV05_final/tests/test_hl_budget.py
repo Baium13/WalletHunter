@@ -94,6 +94,19 @@ class BudgetTests(unittest.TestCase):
         with priority_scope('position_owned.detect',1):self.assertEqual(origin(),('position_owned.detect',1))
         self.assertEqual(origin(),before)
 
+    def test_deferred_low_priority_ages_without_using_safety_reserve(self):
+        with patch('core.hl_budget.time.time',return_value=1000):
+            with self.b.db() as db:db.execute('UPDATE limits SET soft=120,hard=240')
+            self.b.begin('userFillsByTime',{},'busy',3)
+            with self.assertRaises(BudgetUnavailable):self.b.begin('userFillsByTime',{},'deep',5)
+            self.b.begin('orderStatus',{},'reconcile',0)
+        with patch('core.hl_budget.time.time',return_value=1061):
+            # Waiter survives, then receives service after rolling budget frees.
+            self.b.begin('userFillsByTime',{},'deep',5)
+            with self.assertRaises(BudgetUnavailable):self.b.begin('allMids',{},'new-discovery',6)
+            self.b.begin('orderStatus',{},'reconcile',0)
+            self.assertLessEqual(snapshot(self.path)['rest_weight_1m'],240)
+
     def test_websocket_failure_backoff_and_jitter_no_tight_retry(self):
         from core.intelligence.service import PublicTrades
         stream=PublicTrades('TESTNET')

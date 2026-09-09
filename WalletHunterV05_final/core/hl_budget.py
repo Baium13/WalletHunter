@@ -58,7 +58,7 @@ def origin():
             frames.append((Path(f.f_code.co_filename).stem,f.f_code.co_name));f=f.f_back
     finally:del f
     for name,priority in [('recover',0),('reconcile_order',0),('recover_pending_manual_leader',0),
-        ('_cycle',1),('execute',1),('research',2),('detect',3),('analyze_one',4),('analyse_wallet',5)]:
+        ('_cycle',1),('execute',0),('research',2),('detect',3),('analyze_one',5),('analyse_wallet',6)]:
         for file,fn in frames:
             if fn==name:return file+'.'+fn,priority
     for file,fn in frames:
@@ -84,6 +84,7 @@ class Budget:
               CREATE TABLE IF NOT EXISTS metadata(key TEXT PRIMARY KEY,body TEXT,expires REAL,lease REAL);
               CREATE TABLE IF NOT EXISTS ws(id TEXT PRIMARY KEY,pid INTEGER,heartbeat REAL,subscriptions INTEGER);
               CREATE TABLE IF NOT EXISTS ws_events(at REAL,kind TEXT,n INTEGER);
+              CREATE TABLE IF NOT EXISTS admission_waiters(id TEXT PRIMARY KEY,service TEXT,source TEXT,priority INTEGER,cost INTEGER,enqueued REAL,last_seen REAL);
             ''')
         if os.name!='nt':os.chmod(path,0o600)
 
@@ -128,15 +129,30 @@ class Budget:
 
     def begin(self,endpoint,payload,source,priority):
         now=time.time();identity=uuid.uuid4().hex;cost=weights(endpoint,payload,maximum=True)
+        service=os.getenv('HL_API_SOURCE','unspecified')
+        waiter=hashlib.sha256((service+'|'+source+'|'+endpoint).encode()).hexdigest()
         with self.db() as db:
             db.execute('BEGIN IMMEDIATE')
             soft,hard,enforce,cooldown=db.execute('SELECT soft,hard,enforce,cooldown FROM limits WHERE id=1').fetchone()
             used=db.execute('SELECT COALESCE(SUM(weight),0) FROM requests WHERE at>?',(now-60,)).fetchone()[0]
-            if enforce and (now<cooldown or used+cost>(hard if priority<=1 else soft)):
+            fair_defer=False
+            if priority>=2:
+                db.execute('DELETE FROM admission_waiters WHERE last_seen<?',(now-120,))
+                db.execute('INSERT INTO admission_waiters VALUES(?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET last_seen=excluded.last_seen,cost=excluded.cost',
+                    (waiter,service,source,priority,cost,now,now))
+                # Age low tiers toward P3, never above actionable account/Risk
+                # evidence. Within tiers the least recently served weight wins.
+                winner=db.execute('''SELECT w.id FROM admission_waiters w WHERE w.cost<=? ORDER BY
+                    MAX(3,w.priority-CAST((?-w.enqueued)/60 AS INTEGER))-(w.priority=2)*2,
+                    (SELECT COALESCE(SUM(r.weight),0) FROM requests r WHERE r.service=w.service AND r.source=w.source AND r.at>?),
+                    w.enqueued,w.id LIMIT 1''',(soft-used,now,now-60)).fetchone()
+                fair_defer=bool(winner and winner[0]!=waiter)
+            if enforce and (now<cooldown or used+cost>(hard if priority<=1 else soft) or fair_defer):
                 db.execute("INSERT INTO counters VALUES('budget_deferred',1) ON CONFLICT(name) DO UPDATE SET value=value+1")
                 db.commit();raise BudgetUnavailable('HL_API_BUDGET_DEFERRED')
+            db.execute('DELETE FROM admission_waiters WHERE id=?',(waiter,))
             db.execute('INSERT INTO requests VALUES(?,?,?,?,?,?,?,?,?,?)',(identity,now,
-                os.getenv('HL_API_SOURCE','unspecified'),source,endpoint,priority,cost,0,0,0))
+                service,source,endpoint,priority,cost,0,0,0))
             # Bounded metrics retention; no financial evidence is stored here.
             db.execute('DELETE FROM requests WHERE at<?',(now-86400,))
             db.execute('DELETE FROM ws_events WHERE at<?',(now-86400,))

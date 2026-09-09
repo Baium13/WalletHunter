@@ -1,5 +1,5 @@
 [Unit]
-Description=Daily Wallet Hunter encrypted state backup
+Description=Daily Wallet Hunter state backup (not encrypted)
 
 [Timer]
 OnCalendar=daily

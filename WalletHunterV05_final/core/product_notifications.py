@@ -182,6 +182,9 @@ def notice_text(event,identity=None,en=True):
     tr=lambda a,b:a if en else b
     mode='⚠️ LIVE' if d.get('mode') in {'LIVE','LIVE_CONFIRM'} else '🧪 PAPER' if d.get('mode')=='PAPER' else tr('MODE UNVERIFIED','РЕЖИМ НЕ ПОДТВЕРЖДЁН')
     if category=='CRITICAL':
+        if d.get('reason')=='API_BUDGET_CRITICAL':
+            return tr('⚠️ API RATE LIMIT CRITICAL\nPersistent API pressure may delay safety checks. Low-priority work is deferred. Check System Health.',
+                '⚠️ КРИТИЧЕСКАЯ НАГРУЗКА API\nДлительная перегрузка API может задержать проверки безопасности. Фоновая работа отложена. Проверьте Систему.')
         if d.get('reverse_incomplete'):
             return '\n'.join(['⚠️ '+tr('REVERSAL NOT COMPLETED','РАЗВОРОТ НЕ ЗАВЕРШЁН'),mode,d.get('symbol',''),
                 tr('Old side closed. Opposite entry was not completed. Review the position in the app.','Прежняя позиция закрыта. Вход в другую сторону не выполнен. Проверьте позицию в приложении.')])

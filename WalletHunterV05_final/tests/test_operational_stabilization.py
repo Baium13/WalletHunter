@@ -90,6 +90,25 @@ class StreamTests(unittest.TestCase):
         self.assertEqual(b.metrics()['dropped_critical'],0)
         self.assertEqual(b.take(1)[0]['tid'],20)
         self.assertEqual([r['time'] for r in b.take()],[8,9])
+
+class OperationalAlertTests(unittest.TestCase):
+    def test_critical_budget_only_persistent_and_restart_dedup(self):
+        from core.product_events import ProductEvents
+        from core.foundation.contracts import Scope
+        with tempfile.TemporaryDirectory() as tmp:
+            now=[NOW];path=Path(tmp)/'p.sqlite';scope=Scope(tenant='1',account='0x'+'a'*40,network='TESTNET')
+            p=ProductEvents(path,lambda:now[0])
+            def signal(state):p.budget_alert(scope,{'state':state,'checked_ms':now[0]})
+            signal('ELEVATED');signal('RATE_LIMITED')
+            with p.store.transaction() as db:self.assertEqual(db.execute('SELECT COUNT(*) FROM product_outbox').fetchone()[0],0)
+            now[0]+=120001;signal('RATE_LIMITED')
+            p=ProductEvents(path,lambda:now[0]);signal('RATE_LIMITED')
+            with p.store.transaction() as db:self.assertEqual(db.execute('SELECT COUNT(*) FROM product_outbox').fetchone()[0],1)
+    def test_cache_bounded_without_timestamp_refresh(self):
+        from core.bounded_cache import BoundedCache
+        c=BoundedCache(2);c['a']=(1,'old');c['b']=(2,'value')
+        self.assertEqual(c.get('a')[0],1)
+        c['c']=(3,'new');self.assertNotIn('a',c);self.assertEqual(len(c),2)
     def test_critical_backpressure_no_loss(self):
         import threading,time
         from core.intelligence.stream_buffer import TradeBuffer

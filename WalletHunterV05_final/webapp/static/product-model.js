@@ -24,8 +24,10 @@
    // and the mark feed may be temporarily unavailable.  Do not turn that
    // known exchange exposure into an UNKNOWN lifecycle badge.  Keep the
    // evidence field untouched so the audit state remains truthful.
-   const lifecycle=(p.state&&p.state!=='UNKNOWN')?p.state:
-    (p.origin||p.evidence==='EXCHANGE'||p.evidence==='VERIFIED'||current!==null?'OPEN':'UNKNOWN');
+   // Every row here came from the authoritative LIVE account portfolio, so
+   // its lifecycle is OPEN even when ownership/provenance and the mark feed
+   // are temporarily unavailable.  Keep those evidence fields untouched.
+   const lifecycle=(p.state&&p.state!=='UNKNOWN')?p.state:'OPEN';
    return {...p,id:liveId(s.scope,p),mode:'LIVE',entry:p.entry_price,current_price:current,pnl:markedPnl,state:lifecycle,actions,
     timeline:actions.flatMap(a=>[
      {type:'ORDER_INTENT',timestamp:a.timestamp,intent_id:a.intent_id,correlation_id:a.correlation_id,evidence:a.intent},

@@ -57,7 +57,7 @@ class PublicTrades:
         self.telemetry_id=uuid.uuid4().hex
         self.failures=0;self.retry_at=0;self.last_disconnect_reason=None
         self.buffer=TradeBuffer();self.stop=threading.Event();self.thread=None
-        self.connected_at=None;self.reconnects=0;self.connections=0
+        self.connected_at=None;self.reconnects=0;self.connections=0;self.messages_received=0
 
     def _disconnect(self):
         sock,self.socket=self.socket,None
@@ -89,6 +89,7 @@ class PublicTrades:
                 try:raw=sock.recv()
                 except websocket.WebSocketTimeoutException:continue
                 if not raw or len(raw)>262144:raise ValueError('STREAM_DISCONNECTED_OR_OVERSIZED')
+                self.messages_received+=1
                 message=json.loads(raw)
                 if message.get('channel')!='trades':continue
                 rows=message.get('data')
@@ -129,7 +130,8 @@ class PublicTrades:
     def metrics(self):
         value=self.buffer.metrics()
         value.update(connection_age_ms=int((time.monotonic()-self.connected_at)*1000) if self.socket and self.connected_at else None,
-            reconnects=self.reconnects,connected=self.socket is not None)
+            reconnects=self.reconnects,connected=self.socket is not None,messages_received=self.messages_received,
+            messages_per_second=self.messages_received/max(1,time.monotonic()-self.buffer.started))
         return value
 
     def close(self):

@@ -173,7 +173,7 @@ class ProductEvents:
             started=(started or now) if dangerous else 0
             alert=dangerous and now-started>=120000 and now-last_sent>=3600000
             # Publish and cooldown commit atomically through the same store
-            # is not possible with nested transactions. Stable hour identity
+            # is not possible with nested transactions. Stable incident identity
             # below makes a crash before cooldown persistence idempotent.
             db.execute('INSERT OR REPLACE INTO product_budget_incidents VALUES(?,?,?)',(key,started,last_sent))
         if alert:

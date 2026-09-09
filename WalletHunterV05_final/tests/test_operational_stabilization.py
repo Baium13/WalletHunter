@@ -129,6 +129,52 @@ class StreamTests(unittest.TestCase):
         self.assertEqual(b.take(1)[0]['tid'],20)
         self.assertEqual([r['time'] for r in b.take()],[8,9])
 
+    def test_user_fills_stream_delivers_incremental_rows_without_rest(self):
+        import json,queue,threading
+        from unittest.mock import patch
+        import websocket
+        from core.intelligence.service import UserFillsStream
+        address='0x'+'a'*40
+        class Socket:
+            def __init__(self):
+                self.items=queue.Queue();self.ready=threading.Event();self.sent=[]
+                self.items.put(json.dumps({'channel':'user','data':{'user':address,'isSnapshot':True,'fills':[]}}))
+                self.items.put(json.dumps({'channel':'user','data':{'user':address,'fills':[{
+                    'time':NOW+1,'coin':'BTC','side':'B','px':'100','sz':'1','startPosition':'0',
+                    'closedPnl':'0','fee':'0','tid':7,'oid':8}]}}))
+            def send(self,value):self.sent.append(json.loads(value))
+            def settimeout(self,value):pass
+            def close(self):pass
+            def recv(self):
+                try:
+                    value=self.items.get(timeout=.05);self.ready.set();return value
+                except queue.Empty:raise websocket.WebSocketTimeoutException()
+        sock=Socket();stream=UserFillsStream('TESTNET')
+        with patch('websocket.create_connection',return_value=sock),patch('core.hl_budget.configured',return_value=None):
+            first=stream.poll([address])
+            self.assertTrue(sock.ready.wait(1))
+            result=first
+            for _ in range(20):
+                if result.get(address):break
+                threading.Event().wait(.01)
+                result=stream.poll([address])
+            self.assertEqual(result[address][0]['tid'],7)
+            self.assertTrue(any(x.get('subscription',{}).get('type')=='userFills' for x in sock.sent))
+            stream.close()
+
+    def test_detect_uses_stream_rows_and_does_not_call_rest(self):
+        address='0x'+'b'*40
+        with tempfile.TemporaryDirectory() as tmp:
+            engine=WalletDiscoveryEngine(Path(tmp)/'research.sqlite','TESTNET')
+            with engine.store.transaction() as db:
+                db.execute('INSERT INTO candidates VALUES(?,?,?,?,?,?,?,?,?,?)',('TESTNET',address,NOW,NOW,'ACTIVE',NOW,0,None,None,None))
+                db.execute('INSERT INTO watch_epochs VALUES(?,?,?)',('TESTNET',address,NOW))
+            fill={'time':NOW+1,'coin':'BTC','side':'B','px':'100','sz':'1','startPosition':'0','closedPnl':'0','fee':'0','tid':9,'oid':10}
+            def no_rest(_):raise AssertionError('REST MUST NOT BE USED FOR LIVE USER-FILLS')
+            events=engine.detect(address,no_rest,NOW+2,fills=[fill])
+            self.assertEqual(len(events),1)
+            self.assertEqual(events[0].action,'OPEN')
+
 class OperationalAlertTests(unittest.TestCase):
     def test_critical_budget_only_persistent_and_restart_dedup(self):
         from core.product_events import ProductEvents

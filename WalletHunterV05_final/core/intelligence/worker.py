@@ -8,10 +8,10 @@ import argparse
 import time
 import math
 from core.hyperliquid import HyperliquidReader
-from .service import PublicTrades, WalletDiscoveryEngine
+from .service import PublicTrades, UserFillsStream, WalletDiscoveryEngine
 
 
-def tick(engine, reader, stream, now, clock=None,on_decision=None):
+def tick(engine, reader, stream, now, clock=None,on_decision=None,leader_stream=None):
     if hasattr(stream,'buffer'):
         with engine.store.transaction() as db:
             active={r[0] for r in db.execute("SELECT wallet FROM candidates WHERE network=? AND status='ACTIVE'",(engine.network,))}
@@ -38,7 +38,7 @@ def tick(engine, reader, stream, now, clock=None,on_decision=None):
     engine.health_observation('public_data',received,details={**telemetry,'source':'PUBLIC_TRADES_WEBSOCKET',
         'exchange_ms':max(stamps) if stamps else None,'subscriptions':list(getattr(stream,'coins',())),
         'activity':'RECEIVED' if stamps else 'WAITING_FOR_TRADE'})
-    return engine.cycle(reader,trades,now,clock=clock,on_decision=on_decision)
+    return engine.cycle(reader,trades,now,clock=clock,on_decision=on_decision,leader_stream=leader_stream)
 
 
 def main(argv=None):
@@ -57,6 +57,7 @@ def main(argv=None):
     engine=WalletDiscoveryEngine(args.database,args.network,operations=operations)
     reader=HyperliquidReader(args.network)
     stream=PublicTrades(args.network)
+    leader_stream=UserFillsStream(args.network)
     backend=None
     if args.paper_config:
         from core.autonomous import load_paper_backend
@@ -80,7 +81,8 @@ def main(argv=None):
                 # reaches PAPER before optional historical research can age it.
                 if backend is not None:backend.drain(engine)
                 ok=tick(engine,reader,stream,int(time.time()*1000),clock=lambda:int(time.time()*1000),
-                    on_decision=(lambda:backend.drain(engine)) if backend is not None else None)
+                    on_decision=(lambda:backend.drain(engine)) if backend is not None else None,
+                    leader_stream=leader_stream)
                 if backend is not None: backend.drain(engine)
                 mode=backend.auth_policy.mode if backend is not None else 'OBSERVE'
                 print(mode+(' HEALTHY' if ok else ' DEGRADED'),flush=True)
@@ -92,6 +94,7 @@ def main(argv=None):
         pass
     finally:
         stream.close()
+        leader_stream.close()
         reader.s.close()
 
 

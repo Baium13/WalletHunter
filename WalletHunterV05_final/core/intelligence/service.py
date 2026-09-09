@@ -146,6 +146,141 @@ class PublicTrades:
         if self.thread is not None:self.thread.join(timeout=3)
 
 
+class UserFillsStream:
+    """Shared user-fills stream for the bounded active-leader watchlist.
+
+    Public leader addresses are safe subscription identifiers; this stream has
+    no signing or account authority.  It intentionally returns ``None`` once
+    after a reconnect so the caller performs an incremental REST recovery
+    before trusting the live cursor again.
+    """
+    def __init__(self, network, max_users=10):
+        import threading
+        from collections import defaultdict, deque
+        self.network=validated_network(network)
+        self.max_users=max(1,min(10,int(max_users)))
+        self.socket=None;self.thread=None;self.stop=threading.Event();self.lock=threading.RLock()
+        self.users=set();self.buffers=defaultdict(deque);self.failures=0;self.retry_at=0
+        self.connections=0;self.reconnects=0;self.messages_received=0;self.invalid_messages=0
+        self.needs_recovery=False;self.connected_at=None
+
+    def _disconnect(self):
+        sock,self.socket=self.socket,None
+        if sock is not None:
+            try:sock.close()
+            except Exception:pass
+        from core.hl_budget import configured
+        budget=configured()
+        if budget:budget.websocket('leader-fills','close')
+
+    def _failed(self,exc):
+        self.failures+=1
+        self.retry_at=time.monotonic()+min(300,2**min(self.failures,8)+random.uniform(0,2))
+        self.needs_recovery=True
+        self._disconnect()
+
+    @staticmethod
+    def _rows(message):
+        if message.get('channel') not in {'user','userFills'}:return None,None
+        data=message.get('data')
+        if not isinstance(data,dict):return None,None
+        user=data.get('user')
+        rows=data.get('fills')
+        if rows is None:rows=data.get('userFills')
+        return user,rows
+
+    def _consume(self):
+        import websocket
+        try:
+            while not self.stop.is_set():
+                sock=self.socket
+                if sock is None:return
+                try:raw=sock.recv()
+                except websocket.WebSocketTimeoutException:continue
+                if not raw or len(raw)>262144:raise ValueError('STREAM_DISCONNECTED_OR_OVERSIZED')
+                self.messages_received+=1
+                message=json.loads(raw)
+                user,rows=self._rows(message)
+                if not user or not isinstance(rows,list):continue
+                try:user=wallet(user)
+                except ValueError:self.invalid_messages+=1;continue
+                # Reconnect acks contain historical snapshots.  They are used
+                # only for recovery detection; REST fills close the gap.
+                if isinstance(message.get('data'),dict) and message['data'].get('isSnapshot'):
+                    continue
+                with self.lock:
+                    if user not in self.users:continue
+                    for row in rows:
+                        if not isinstance(row,dict):self.invalid_messages+=1;continue
+                        try:
+                            stamp=row.get('time');px=float(row.get('px'));size=float(row.get('sz'))
+                            if type(stamp) is not int or stamp<0 or not math.isfinite(px) or px<=0 or not math.isfinite(size) or size<=0:raise ValueError()
+                            if row.get('side') not in {'A','B'} or not isinstance(row.get('coin'),str) or not row['coin']:raise ValueError()
+                        except (TypeError,ValueError,OverflowError):self.invalid_messages+=1;continue
+                        self.buffers[user].append(dict(row))
+                self.failures=0
+        except Exception as exc:
+            if not self.stop.is_set():self._failed(exc)
+
+    def _ensure(self,users):
+        import threading
+        import websocket
+        requested={wallet(u) for u in users}
+        if len(requested)>self.max_users:raise ValueError('USER_STREAM_LIMIT')
+        if time.monotonic()<self.retry_at:raise ValueError('USER_STREAM_BACKOFF')
+        old=set(self.users)
+        fresh_connection=False
+        if self.thread is None or not self.thread.is_alive():
+            had_connection=self.connections>0
+            fresh_connection=True
+            from core.hl_budget import configured
+            budget=configured()
+            if budget:budget.websocket('leader-fills','attempt')
+            host='api.hyperliquid.xyz' if self.network=='MAINNET' else 'api.hyperliquid-testnet.xyz'
+            try:
+                self.socket=websocket.create_connection('wss://'+host+'/ws',timeout=2,enable_multithread=True)
+                self.socket.settimeout(.5)
+            except Exception as exc:
+                self._failed(exc)
+                raise ValueError('USER_STREAM_UNAVAILABLE') from None
+            self.connected_at=time.monotonic()
+            self.reconnects+=int(had_connection);self.connections+=1
+            if budget:budget.websocket('leader-fills','connect',0)
+            with self.lock:self.users=requested
+            self.thread=threading.Thread(target=self._consume,name='leader-fills-reader',daemon=True)
+            self.thread.start()
+            if had_connection:self.needs_recovery=True
+        removed=old-requested if not fresh_connection else set()
+        added=requested if fresh_connection else requested-old
+        for user in sorted(removed):
+            self.socket.send(packed({'method':'unsubscribe','subscription':{'type':'userFills','user':user}}))
+        for user in sorted(added):
+            self.socket.send(packed({'method':'subscribe','subscription':{'type':'userFills','user':user}}))
+        self.users=requested
+        from core.hl_budget import configured
+        budget=configured()
+        if budget:budget.websocket('leader-fills','send',len(removed)+len(added))
+
+    def poll(self,users):
+        if self.stop.is_set():raise ValueError('USER_STREAM_CLOSED')
+        self._ensure(users)
+        if self.needs_recovery:
+            self.needs_recovery=False
+            return None
+        with self.lock:
+            return {u:list(self.buffers.pop(u,())) for u in self.users}
+
+    def metrics(self):
+        with self.lock:depth=sum(len(v) for v in self.buffers.values())
+        return {'connected':self.socket is not None,'connections':self.connections,'reconnects':self.reconnects,
+            'messages_received':self.messages_received,'invalid_messages':self.invalid_messages,'queue_depth':depth,
+            'watched_users':len(self.users),'connection_age_ms':int((time.monotonic()-self.connected_at)*1000) if self.connected_at else None}
+
+    def close(self):
+        self.stop.set();self._disconnect()
+        if self.thread is not None:self.thread.join(timeout=3)
+
+
 class WalletDiscoveryEngine:
     def __init__(self, path, network, policy=None, operations=None):
         from .discovery_operations import DiscoveryOperations
@@ -385,15 +520,20 @@ class WalletDiscoveryEngine:
                     db.execute('INSERT OR REPLACE INTO watch_epochs VALUES(?,?,?)',(self.network,row['wallet'],now))
                     self._record(db,'LEADER_PROMOTED',{'wallet':row['wallet'],'at':now},now)
 
-    def detect(self,address,info,now,*,position_owned=False):
+    def detect(self,address,info,now,*,position_owned=False,fills=None):
         with self.store.transaction() as db:
             saved=db.execute("SELECT cursor,status FROM candidates WHERE network=? AND wallet=?",(self.network,address)).fetchone()
         if not saved or (saved['status']!='ACTIVE' and not position_owned): return []
         cursor=saved['cursor']
         if now<cursor: raise ValueError('CLOCK_REGRESSION')
         # Re-read a bounded overlap for delayed visibility and same-millisecond
-        # fills. A durable fill identity, not wall-clock cursor alone, dedupes.
-        fills=filter_perp_fills(fetch_fills(info,address,max(0,cursor-60000),now,now_ms=now,max_requests=4))
+        # fills when no live user-fills stream is available. A durable fill
+        # identity, not wall-clock cursor alone, dedupes. Live stream rows are
+        # already incremental and therefore must not trigger another REST read.
+        if fills is None:
+            fills=filter_perp_fills(fetch_fills(info,address,max(0,cursor-60000),now,now_ms=now,max_requests=4))
+        else:
+            fills=filter_perp_fills([f for f in fills if isinstance(f,dict) and type(f.get('time')) is int and f['time']<=now])
         with self.store.transaction() as db:
             epoch=db.execute('SELECT started FROM watch_epochs WHERE network=? AND wallet=?',(self.network,address)).fetchone()
             if epoch is None: raise ValueError('WATCH_EPOCH_UNKNOWN')
@@ -444,7 +584,7 @@ class WalletDiscoveryEngine:
             db.execute('INSERT INTO decision_links VALUES(?,?)',(event.event_id,record_id))
         return decision
 
-    def cycle(self,reader,trades,now,clock=None,on_decision=None):
+    def cycle(self,reader,trades,now,clock=None,on_decision=None,leader_stream=None):
         if reader.network!=self.network: raise ValueError('NETWORK_MISMATCH')
         clock=clock or (lambda:now)
         with self.store.transaction() as db:
@@ -463,6 +603,16 @@ class WalletDiscoveryEngine:
             with self.store.transaction() as db:
                 scan_state={r['wallet']:dict(r) for r in db.execute('SELECT * FROM watch_scan_state WHERE network=?',(self.network,))}
             watched.sort(key=lambda address:(address not in lifecycle,scan_state.get(address,{}).get('last_success') or 0,address))
+            leader_fills=None
+            if leader_stream is not None and (watched or getattr(leader_stream,'users',())):
+                try:
+                    # A reconnect returns ``None`` once and deliberately
+                    # selects the existing REST path for gap recovery.
+                    leader_fills=leader_stream.poll(watched)
+                except Exception:
+                    errors.append('LEADER_STREAM_UNAVAILABLE')
+            elif leader_stream is not None:
+                leader_fills={}
             scanned=0
             for address in watched:
                 error=None
@@ -472,7 +622,8 @@ class WalletDiscoveryEngine:
                     # 1050-1180 band. Historical discovery/deep analysis
                     # remains background and cannot consume that reserve.
                     with priority_scope('position_owned.detect',1) if address in lifecycle else priority_scope('service.detect',2):
-                        self.detect(address,info,clock(),position_owned=address in lifecycle)
+                        self.detect(address,info,clock(),position_owned=address in lifecycle,
+                            fills=(leader_fills.get(address,[]) if leader_fills is not None else None))
                     scanned+=1
                 except Exception as exc:
                     error='BUDGET_DEFERRED' if isinstance(exc,BudgetUnavailable) or isinstance(exc.__cause__,BudgetUnavailable) else type(exc).__name__
@@ -484,10 +635,12 @@ class WalletDiscoveryEngine:
             with self.store.transaction() as db:
                 stamps={r['wallet']:r['last_success'] for r in db.execute('SELECT wallet,last_success FROM watch_scan_state WHERE network=?',(self.network,))}
             completed=min((stamps.get(a) or 0 for a in watched),default=clock())
+            stream_details=leader_stream.metrics() if leader_stream is not None else {}
             for component in ('watchlist','leader_detection'):
                 self.health_observation(component,clock(),error='WATCH_SCAN_INCOMPLETE' if scanned<len(watched) else None,
                     details={'watched':len(watched),'scanned':scanned,'last_completed_cycle_ms':completed or None,
-                        'scan_lag_ms':max(0,clock()-completed) if completed else None})
+                        'scan_lag_ms':max(0,clock()-completed) if completed else None,
+                        'fill_stream':stream_details})
             with self.store.transaction() as db:
                 queue=db.execute("SELECT r.body,c.analysis FROM intelligence_records r JOIN candidates c ON c.network=r.network AND c.wallet=json_extract(r.body,'$.wallet') LEFT JOIN decision_links l ON l.event_id=json_extract(r.body,'$.event_id') WHERE r.network=? AND r.kind='LEADER_TRADE' AND l.event_id IS NULL ORDER BY r.rowid LIMIT 4",(self.network,)).fetchall()
             for queued in queue:

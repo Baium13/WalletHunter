@@ -58,6 +58,14 @@ class ManualCopyWorker:
         return dict(positions=rows,capital=capitals,exchange_ms=min(stamps),received_ms=now,
             denominator='PER_DEX_MARGIN_SUMMARY_ACCOUNT_VALUE')
 
+    def start_baseline(self, account, client, leader):
+        from core.foundation.data import copy_account_snapshot
+        scope=self.service._scope(account,client)
+        if self.reader.network!=scope.network: raise ValueError('LEADER_NETWORK_MISMATCH')
+        leader_state=self.leader_snapshot(leader)
+        portfolio=copy_account_snapshot(client,scope,1,self.clock,'')
+        return dict(wallet=leader,leader=leader_state,account=portfolio.model_dump(mode='json'))
+
     def prove(self,account,client,key,record,current):
         if (record.get('network')!=client.network or not record.get('managed') or current is None
                 or record.get('side')!=current['side']): return False
@@ -86,13 +94,29 @@ class ManualCopyWorker:
         scope=self.service._scope(account,client)
         if self.reader.network!=scope.network: raise ValueError('READER_NETWORK_MISMATCH')
         config=self.service.config(account,client)
-        if config is None:return None
+        if config is None:
+            previous=self.diagnostics(scope) or {}
+            if previous.get('reset_epoch') and self.clock()-previous.get('account_attempt_ms',0)>=60000:
+                from core.foundation.data import copy_account_snapshot
+                previous['account_attempt_ms']=self.clock()
+                try:
+                    p=copy_account_snapshot(client,scope,self.clock(),self.clock,'')
+                    previous.update(account_evidence=p.model_dump(mode='json'),account_read_error=None,
+                                    allocatable_capital=p.sizing_capital,heartbeat_ms=self.clock())
+                except Exception:previous['account_read_error']='ACCOUNT_DATA_UNAVAILABLE'
+                self.save(scope,previous)
+            return None  # No leader subscriptions, recovery or execution.
         from core.execution_quarantine import active_in
         with closing(self.engine.journal.connect()) as db:
             quarantines=active_in(db,scope)
         if quarantines:config=config.model_copy(update={'enabled':False})
         report=dict(enabled=config.enabled,leader=config.leader,status='HOLD',heartbeat_ms=self.clock(),
             denominator='PER_DEX_MARGIN_SUMMARY_ACCOUNT_VALUE',monitored=[],results=[],errors=[])
+        if not config.enabled and not config.generation_id and not quarantines:
+            # A selected draft is not permission to follow or replay a leader.
+            report['status']='READY'
+            self.save(scope,report)
+            return report
         try:
             report['recovery']=list(recover_pending_manual_leader(self.engine,account,client))
             owned=self.engine.journal.owned(scope.account)

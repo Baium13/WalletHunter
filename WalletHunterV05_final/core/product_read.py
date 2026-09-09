@@ -449,6 +449,13 @@ class ProductReadModel:
             manual['account_balance']=p.get('equity')
             manual['capital_status']='FRESH' if p.get('completeness')=='COMPLETE' and type(stamp) is int and 0<=self.clock()-stamp<120000 and not manual.get('account_read_error') else 'STALE'
         if manual.get('paused') and manual['positions']:manual['status']='HOLD'
+        if manual.get('configured') is False:
+            manual.update(status='OFF',enabled=False,selected_leader=None,generation_id=None,allocation_pct=0.,
+                          allocation_limit=0.,available=0.)
+            if account and account.get('portfolio') and not account['portfolio']['positions']:
+                manual.update(committed=0.,reserved=0.)
+        elif manual.get('configuration'):
+            manual['generation_id']=manual['configuration'].get('generation_id')
         manual['ui_state']='PENDING' if manual.get('pending_operations') else ('NO_LEADER' if manual.get('configured') is False else
             'ACTIVE' if manual.get('enabled') and manual.get('status')=='FOLLOWING' else manual['status'])
         manual['valid_actions']=(['PAUSE'] if manual.get('enabled') else ['RESUME','CHANGE_LEADER'] if manual.get('selected_leader') else ['SELECT_LEADER'])
@@ -456,7 +463,13 @@ class ProductReadModel:
         quarantines=[]
         try:
             from core.execution_quarantine import active_in
-            with reader(self.root/'data/executions.sqlite3') as db:quarantines=active_in(db,self.scope)
+            from core.manual_copy_reset import history
+            with reader(self.root/'data/executions.sqlite3') as db:
+                quarantines=active_in(db,self.scope)
+                archived=history(db,self.scope)
+            manual['reset_epoch']=archived[-1]['reset_epoch'] if archived else None
+            manual['archived_operations']=[{k:a[k] for k in ('intent_id','state','financial_outcome',
+                'retry_allowed','capital_administration','released_margin','created_ms')} for a in archived]
         except (OSError,sqlite3.Error,ValueError):pass
         if quarantines:
             from core.manual_recovery_review import assess

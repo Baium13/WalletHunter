@@ -51,7 +51,7 @@ def classification(kind, data):
 
 def _intent(db, scope, identity):
     row=db.execute('SELECT * FROM intents WHERE scope=? AND id=?',(scope_key(scope),identity)).fetchone()
-    if not row: return None
+    if not row or row['status']=='ARCHIVED_UNRESOLVED': return None
     intent=OrderIntent.model_validate_json(row['body'])
     if intent.scope != scope: raise ValueError('NOTICE_SCOPE_MISMATCH')
     receipt=ExecutionReceipt.model_validate_json(row['receipt']) if row['receipt'] else None

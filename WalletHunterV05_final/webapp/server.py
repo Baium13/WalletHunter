@@ -618,7 +618,9 @@ def configure_manual_copy(payload: ManualCopyInput, x_telegram_init_data: str | 
                 raise ValueError("Manual leader is required")
             allocation = payload.allocation_pct if payload.allocation_pct is not None else (config.allocation_pct if config else 80.0)
             config = controller.configure(scoped, client, leader, allocation, alias=leader)
-            if payload.action == "start": config = controller.start(scoped, client)
+            if payload.action == "start":
+                baseline = ManualCopyWorker(engine,reader).start_baseline(scoped,client,leader)
+                config = controller.start(scoped, client, baseline=baseline)
             elif payload.action == "stop": config, _ = controller.stop(scoped, client)
     except OSError:
         raise HTTPException(409, "Account action in progress; refresh before changing Manual Copy") from None
@@ -627,6 +629,37 @@ def configure_manual_copy(payload: ManualCopyInput, x_telegram_init_data: str | 
     return {"configured": True, "enabled": bool(config.enabled), "allocation_pct": config.allocation_pct,
             "leader": config.leader, "alias": config.alias, "updated_ms": config.updated_ms,
             "network": config.scope.network}
+
+
+@app.post("/api/manual-copy/preview")
+def preview_manual_copy(payload: ManualCopyInput, x_telegram_init_data: str | None = Header(default=None)):
+    """Read-only analysis. No configuration, generation, grant or order created."""
+    user=require_user(x_telegram_init_data)
+    _,profile=storage.profile(user['id'])
+    scoped,client=manual_leader_account(user['id'],profile)
+    leader=(payload.leader or '').strip().lower()
+    if not re.fullmatch(r'0x[0-9a-f]{40}',leader): raise HTTPException(400,'Invalid Hyperliquid leader address')
+    try:
+        analysis=analyse_for_user(user['id'],leader)
+        baseline=ManualCopyWorker(engine,reader).start_baseline(scoped,client,leader)
+        p=baseline['account']
+        if p['completeness']!='COMPLETE': raise ValueError('ACCOUNT_EVIDENCE_UNAVAILABLE')
+        pct=float(payload.allocation_pct or 0)
+        if not math.isfinite(pct) or not 0<pct<=100: raise ValueError('INVALID_ALLOCATION')
+        slots=(len(profile.get('leaders',[])[:3]) if profile.get('copy_enabled') else 0)+int(bool(profile.get('ai_slot_selected')))
+        capital=p['sizing_capital']*max(0.,1-min(3,slots)/3)
+        limit=capital*pct/100
+        pending=bool(engine.journal.pending(scoped['address']))
+        # No position attribution is invented during preview. Current execution
+        # still rebuilds ownership and capacity through the canonical ledger.
+        clear=not p['positions'] and not p['orders'] and not pending
+        return dict(leader=leader,analysis=analysis,capital=baseline['leader']['capital'],
+                    account_balance=p['equity'],allocatable_capital=capital,allocation_limit=limit,
+                    committed=0. if clear else None,reserved=0. if clear else None,
+                    available=min(limit,p['available_collateral']) if clear else None,
+                    account_capacity=p['available_collateral'],network=scoped.get('network',client.network),
+                    timestamp=baseline['leader']['exchange_ms'],execution_authorized=False)
+    except (ValueError,TypeError): raise HTTPException(400,'Fresh leader/account evidence unavailable') from None
 
 
 def own_position(profile: dict, coin: str, dex: str) -> dict:

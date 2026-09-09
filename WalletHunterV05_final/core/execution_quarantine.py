@@ -15,8 +15,11 @@ from core.foundation.store import scope_key
 def active_in(db, scope):
     if not db.execute("SELECT 1 FROM sqlite_master WHERE name='execution_quarantines'").fetchone():
         return []
-    return [json.loads(r[0]) for r in db.execute(
-        'SELECT body FROM execution_quarantines WHERE scope=? ORDER BY intent_id', (scope_key(scope),))]
+    from core.manual_copy_reset import history
+    retired = {a['intent_id'] for a in history(db, scope)}
+    return [q for r in db.execute(
+        'SELECT body FROM execution_quarantines WHERE scope=? ORDER BY intent_id', (scope_key(scope),))
+        if (q := json.loads(r[0]))['intent_id'] not in retired]
 
 
 def require_unblocked(db, scope):

@@ -195,7 +195,11 @@ class ManualLeaderCopyTests(unittest.TestCase):
             service = ManualLeaderCopyService(case.engine)
             configured = service.configure(account, case.client, fixture.SOURCE_A, 80., now=10)
             self.assertFalse(configured.enabled)
-            self.assertTrue(service.start(account, case.client, now=11).enabled)
+            from core.foundation.data import copy_account_snapshot
+            now=int(time.time()*1000)
+            baseline=dict(wallet=fixture.SOURCE_A,leader={'exchange_ms':now},
+                account=copy_account_snapshot(case.client,configured.scope,1,lambda:now,'').model_dump(mode='json'))
+            self.assertTrue(service.start(account, case.client, baseline=baseline).enabled)
             restarted = ManualLeaderCopyService(case.engine)
             self.assertTrue(restarted.config(account, case.client).enabled)
             switched = restarted.configure(account, case.client, fixture.SOURCE_B, 60., now=12)
@@ -298,7 +302,7 @@ class ManualCopyWorkerTests(unittest.TestCase):
         self.reader=Reader();self.worker=ManualCopyWorker(self.case.engine,self.reader)
         self.account={'address':f.ACCOUNT,'_tenant':'1'}
         self.worker.service.configure(self.account,self.client,f.SOURCE_A,80.)
-        self.worker.service.start(self.account,self.client)
+        self.worker.service.start(self.account,self.client,baseline=self.worker.start_baseline(self.account,self.client,f.SOURCE_A))
     def cycle(self):return self.worker.cycle(1,self.case.store.profile(1)[1],self.client)
     def assert_action(self,action):
         report=self.cycle()
@@ -364,7 +368,7 @@ class ManualCopyWorkerTests(unittest.TestCase):
     def test_switch_retains_old_source_and_charges_its_capital(self):
         self.assert_action('OPEN')
         self.worker.service.configure(self.account,self.client,self.f.SOURCE_B,80.)
-        self.worker.service.start(self.account,self.client)
+        self.worker.service.start(self.account,self.client,baseline=self.worker.start_baseline(self.account,self.client,self.f.SOURCE_B))
         self.leaders[self.f.SOURCE_B]['ETH']=(100000.,'LONG',5)
         report=self.cycle()
         self.assertIn(self.f.SOURCE_A,[r['leader'] for r in report['monitored']])

@@ -10,6 +10,7 @@ import json
 import os
 import sqlite3
 import time
+import uuid
 from contextlib import closing
 from typing import Literal
 from pydantic import Field
@@ -24,6 +25,9 @@ class ManualLeaderConfig(Contract):
     enabled: bool = False
     created_ms: Millis
     updated_ms: Millis
+    generation_id: Name | None = None
+    watermark_ms: Millis | None = None
+    start_evidence: dict | None = None
     strategy: Literal['MANUAL_LEADER_COPY'] = 'MANUAL_LEADER_COPY'
 
     def capital_limit(self, allocatable_capital: Amount) -> float:
@@ -217,18 +221,43 @@ class ManualLeaderCopyService:
         config = ManualLeaderConfig(scope=scope, leader=str(leader).lower(),
             alias=str(alias or leader), allocation_pct=float(allocation_pct),
             enabled=False if changed else bool(old.enabled) if old else False,
+            generation_id=old.generation_id if old and not changed else None,
+            watermark_ms=old.watermark_ms if old and not changed else None,
+            start_evidence=old.start_evidence if old and not changed else None,
             created_ms=old.created_ms if old else stamp, updated_ms=stamp)
         return self._write(config)
 
     def config(self, account, client):
         return self._read(self._scope(account, client))
 
-    def start(self, account, client, *, now=None):
+    def start(self, account, client, *, now=None, baseline=None):
         config = self.config(account, client)
         if config is None:
             raise ValueError('Manual Leader is not configured')
         stamp = int(time.time() * 1000) if now is None else int(now)
-        return self._write(ManualLeaderCopy(config).start(stamp))
+        from core.foundation.contracts import PortfolioSnapshot
+        from core.execution_quarantine import require_unblocked
+        from core.foundation.store import scope_key
+        from core.foundation.store import Store
+        Store(self.path)  # Fresh installs have no canonical grant tables yet.
+        with closing(sqlite3.connect(self.path, timeout=10)) as db:
+            require_unblocked(db,config.scope)
+            if db.execute("SELECT 1 FROM operations WHERE account=? AND status IN ('PREPARED','UNKNOWN')",
+                          (config.scope.account,)).fetchone(): raise ValueError('UNRESOLVED_EXECUTION')
+            if db.execute('SELECT 1 FROM grants WHERE scope=?',(scope_key(config.scope),)).fetchone():
+                raise ValueError('OUTSTANDING_LIVE_GRANT')
+        if not baseline: raise ValueError('FRESH_START_BASELINE_REQUIRED')
+        portfolio=PortfolioSnapshot.model_validate(baseline['account'])
+        watermark=baseline['leader']['exchange_ms']
+        if (portfolio.scope!=config.scope or portfolio.completeness!='COMPLETE'
+                or portfolio.evidence!='EXCHANGE' or baseline['wallet']!=config.leader
+                or portfolio.sizing_capital is None or portfolio.available_collateral is None
+                or any(type(t) is not int or not 0<=stamp-t<=30000 for t in
+                       (portfolio.exchange_ms,portfolio.received_ms,watermark))):
+            raise ValueError('FRESH_START_BASELINE_REQUIRED')
+        # Explicit START is a new execution generation, not replay/requeue.
+        return self._write(ManualLeaderCopy(config).start(stamp).model_copy(update={
+            'generation_id':uuid.uuid4().hex,'watermark_ms':watermark,'start_evidence':baseline}))
 
     def stop(self, account, client, *, now=None, close_positions=False):
         config = self.config(account, client)
@@ -245,8 +274,12 @@ class ManualLeaderCopyService:
         config = self.config(account, client)
         if config is None:
             raise ValueError('Manual Leader is not configured')
+        if config.enabled and (not config.generation_id or event_ms is None
+                               or event_ms < config.watermark_ms):
+            return {'status':'STALE_GENERATION_EVENT','event_id':event_id}
         values = dict(spec or {}, leader=config.leader, alias=config.alias,
-                      allocation_pct=config.allocation_pct, enabled=config.enabled)
+                      allocation_pct=config.allocation_pct, enabled=config.enabled,
+                      generation_id=config.generation_id)
         return execute_manual_leader(engine=self.engine, account=account,
             client=client, operation=None, event_id=event_id, action=action,
             leader_margin=leader_margin, leader_capital=leader_capital,
@@ -330,6 +363,7 @@ def _finish_manual(engine, operation, receipt, client, spec, coin, dex, *, final
         'source_targets': list(spec.get('sources') or ()),
         'strategy': 'MANUAL_LEADER_COPY',
         'attribution': 'manual_leader_copy_provenance',
+        'generation_id': spec.get('generation_id'),
         'execution_evidence': {'intent_id': receipt.intent_id,
                                'order_ids': list(receipt.order_ids),
                                'trade_ids': [fill.trade_id for fill in receipt.fills],
@@ -380,7 +414,8 @@ def execute_manual_leader(*, engine, account, client, operation, event_id, actio
             max(1.0, float(before_position.get('leverage', spec.get('leverage', 1)))))
     now = int(time.time() * 1000)
     book = event_book or ManualLeaderEventBook(engine.journal.path if engine and engine.journal else None)
-    if not book.accept(event_id, scope=policy.scope, event_ms=event_ms):
+    event_scope = policy.scope.model_dump_json()+'|'+spec['generation_id'] if spec.get('generation_id') else policy.scope
+    if not book.accept(event_id, scope=event_scope, event_ms=event_ms):
         return {'event_id': event_id, 'status': 'DUPLICATE', 'action': action}
     plan = planner.plan_event(event_id, action, leader_margin=leader_margin,
         leader_capital=leader_capital, allocatable_capital=allocatable_capital,
@@ -421,6 +456,7 @@ def execute_manual_leader(*, engine, account, client, operation, event_id, actio
             'action': f'MANUAL_LEADER_{action}', 'network': network,
             'strategy': 'MANUAL_LEADER_COPY', 'leader': policy.leader,
             'event_id': event_id, 'allocation_pct': policy.allocation_pct,
+            'generation_id': spec.get('generation_id'),
             'before': before_position,
         })
 
@@ -542,6 +578,7 @@ def recover_pending_manual_leader(engine, account, client, *, limit=3):
                 notional = (position.get('position_value') if position else intent.size * intent.limit_price)
                 margin = (position.get('margin_used') if position else notional / intent.leverage)
                 spec = {'action': intent.action, 'side': old_side,
+                        'generation_id': json.loads(row['envelope']).get('generation_id'),
                         'sources': [{'wallet': intent.source, 'signed_notional':
                                      float(notional) * (1 if old_side == 'LONG' else -1),
                                      'margin': float(margin)}]}

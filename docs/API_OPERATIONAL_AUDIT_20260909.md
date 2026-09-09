@@ -39,7 +39,7 @@ Unsafe BEFORE observation was stopped after 114.76 seconds rather than deliberat
 | Initial settled protection | 11.811 min | 30.99 | 420.20 | 594 | 49.50% | 0 / 0 |
 | Final deployed build, 07:05:51–07:15:51 UTC | 10.000 min | 30.80 | 440.20 | 601 | 50.08% | 0 / 0 |
 
-Final sample: 308 requests, 4402 weight, zero HTTP/transport errors and zero inflight requests at completion. Rolling peak includes every observed request, not only 30-second samples. Sampled peak was 581; exact peak was 601. A separate protected cold restart peaked at 739 (61.58%); it was outside this settled window.
+Final sample: 308 requests, 4402 weight, zero HTTP/transport errors and zero inflight requests at completion. Rolling peak includes every observed request, not only 30-second samples. Sampled peak was 581; exact peak was 601. A separate protected cold restart peaked at 739 (61.58%); it was outside this settled window. Under the requested bands (GREEN up to 50%, YELLOW 50–70%, ORANGE 70–85%, RED above 85%), the final window is YELLOW at 50.08%, although the runtime admission component itself reports HEALTHY.
 
 Final window: 106 requests deferred **before** transport, zero metadata-cache hits (four observed over the full instrumented audit). Cache/singleflight is tested, but this steady-state window does not demonstrate a material metadata-cache saving. Most improvement comes from admission control. One WS connection, three subscriptions, zero reconnects/new connections/outbound messages during the final window.
 
@@ -180,4 +180,3 @@ Backup manifests were validated before each deployment; latest archive `runtime-
 - Zero real MAINNET orders. No production financial state administration during this audit.
 
 **PARTIAL; fourteen-day unattended full-product readiness NO.** Resource protection is deployed and current weighted API load has headroom. Registry saturation, historical coverage, WS draining, incomplete scans and unproven deployed PAPER lifecycle remain. Continue only monitored PAPER collection with the unchanged baseline; no profitability/live certification is implied.
-

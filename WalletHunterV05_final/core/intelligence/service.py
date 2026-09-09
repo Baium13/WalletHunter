@@ -54,14 +54,22 @@ class PublicTrades:
         if not 1<=len(coins)<=4: raise ValueError('SUBSCRIPTION_LIMIT')
         for coin in coins: InstrumentId(network=self.network,symbol=coin)
         self.coins,self.socket=coins,None
+        self.telemetry_id=uuid.uuid4().hex
     def poll(self):
         import websocket
         try:
             if self.socket is None:
                 host='api.hyperliquid.xyz' if self.network=='MAINNET' else 'api.hyperliquid-testnet.xyz'
                 self.socket=websocket.create_connection('wss://'+host+'/ws',timeout=2,enable_multithread=True)
+                from core.hl_budget import configured
+                budget=configured()
+                if budget:budget.websocket(self.telemetry_id,'connect',0)
                 for coin in self.coins:
                     self.socket.send(packed({'method':'subscribe','subscription':{'type':'trades','coin':coin}}))
+                if budget:budget.websocket(self.telemetry_id,'send',len(self.coins))
+            from core.hl_budget import configured
+            budget=configured()
+            if budget:budget.websocket(self.telemetry_id,'heartbeat',len(self.coins))
             self.socket.settimeout(.2)
             found=[]
             for _ in range(5):
@@ -81,6 +89,9 @@ class PublicTrades:
         if self.socket is not None:
             try: self.socket.close()
             finally: self.socket=None
+            from core.hl_budget import configured
+            budget=configured()
+            if budget:budget.websocket(self.telemetry_id,'close')
 
 
 class WalletDiscoveryEngine:

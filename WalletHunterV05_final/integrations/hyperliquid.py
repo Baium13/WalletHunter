@@ -42,6 +42,8 @@ def verify_account_control(address, private_key, info):
 
 class HyperliquidAccount:
     def __init__(self, address, private_key, mode="MAINNET", slippage_pct=0.5):
+        from core.hl_budget import install_sdk
+        install_sdk()
         from core.settings import validated_network
         self.network = mode = validated_network(mode)
         self.close_slippage_pct = slippage_pct

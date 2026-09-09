@@ -13,7 +13,8 @@ class HyperliquidReader:
             if mode != "TESTNET"
             else "https://api.hyperliquid-testnet.xyz/info"
         )
-        self.s = requests.Session()
+        from core.hl_budget import BudgetSession
+        self.s = BudgetSession()
         self._leverage_cache = {}
 
     def _info(self, payload):

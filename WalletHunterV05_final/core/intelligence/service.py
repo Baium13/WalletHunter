@@ -257,9 +257,12 @@ class WalletDiscoveryEngine:
         with self.store.transaction() as db:
             row=db.execute('SELECT turn FROM discovery_schedule WHERE network=?',(self.network,)).fetchone()
             turn=row[0] if row else 0
-            order='next_eval,wallet' if turn%4==3 else "CASE WHEN status='ACTIVE' THEN 0 WHEN status='QUALIFIED' THEN 1 ELSE 2 END,last_seen DESC,COALESCE(score,0) DESC,next_eval,wallet"
+            protected=sorted(set(getattr(self,'position_owned_leaders',())))
+            if len(protected)>32:raise ValueError('POSITION_WATCH_CAPACITY')
+            slots=','.join('?' for _ in protected) or 'NULL'
+            order='next_eval,wallet' if turn%4==3 else "CASE WHEN status='ACTIVE' THEN 0 WHEN wallet IN ("+slots+") THEN 1 WHEN status='QUALIFIED' THEN 2 ELSE 3 END,last_seen DESC,COALESCE(score,0) DESC,next_eval,wallet"
             rows=db.execute("SELECT wallet FROM candidates WHERE network=? AND status!='ARCHIVED' AND next_eval<=? ORDER BY "+order+' LIMIT ?',
-                (self.network,now,self.policy.deep_per_cycle)).fetchall()
+                (self.network,now,*([] if turn%4==3 else protected),self.policy.deep_per_cycle)).fetchall()
             db.execute('INSERT OR REPLACE INTO discovery_schedule VALUES(?,?)',(self.network,turn+1))
             return rows
 

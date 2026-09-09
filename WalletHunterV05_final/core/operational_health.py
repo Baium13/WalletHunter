@@ -1,9 +1,18 @@
 """Read-only resource observations, independent of financial policy."""
 from pathlib import Path
 import shutil
+from functools import lru_cache
 
 
 def storage_health(root,now):
+    # Storage is operational telemetry, not execution/account evidence. A fixed
+    # one-minute sample avoids an event for every changing free-disk byte.
+    return dict(_sample(str(Path(root)),now//60000))
+
+
+@lru_cache(maxsize=64)
+def _sample(root,minute):
+    now=minute*60000
     root=Path(root)
     try:
         disk=shutil.disk_usage(root)

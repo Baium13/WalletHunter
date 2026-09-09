@@ -48,6 +48,7 @@ class IncrementalHistory:
                     if lo==hi:raise HistoryIncomplete('RESPONSE_CAP:SAME_TIMESTAMP')
                     mid=(lo+hi)//2
                     pending['work'].pop();pending['work'].extend([[mid+1,hi],[lo,mid]])
+                    pending['gaps']=[list(x) for x in pending['work']]
                 else:
                     for key,f in valid:
                         stable=str((f.get('tid',f.get('id',f.get('hash'))),f['coin'],f['side']))

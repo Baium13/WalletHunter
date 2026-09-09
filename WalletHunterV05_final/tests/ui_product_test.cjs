@@ -22,6 +22,11 @@ test('live mark makes exchange exposure visible without inventing provenance',()
  const row=M.positions({...s,account:{...s.account,portfolio:{positions:[marked]}}},'LIVE')[0];
  assert.equal(row.state,'OPEN');assert.equal(row.evidence,'UNKNOWN');
 });
+test('live portfolio exposure stays open while mark and provenance are unavailable',()=>{
+ const exchangeRow={...p,evidence:'UNKNOWN',origin:'MANUAL_LEADER_COPY',current_price:null,mark_price:null};
+ const row=M.positions({...s,account:{...s.account,portfolio:{positions:[exchangeRow]}}},'LIVE')[0];
+ assert.equal(row.state,'OPEN');assert.equal(row.current_price,null);assert.equal(row.evidence,'UNKNOWN');
+});
 test('live identity includes tenant',()=>assert.notEqual(M.liveId(scope,p),M.liveId({...scope,tenant:'8'},p)));
 test('live identity includes network',()=>assert.notEqual(M.liveId(scope,p),M.liveId({...scope,network:'MAINNET'},p)));
 test('live identity includes order proof',()=>assert.notEqual(M.liveId(scope,p),M.liveId(scope,{...p,order_ids:['other']})));

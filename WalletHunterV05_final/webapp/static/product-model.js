@@ -19,7 +19,13 @@
    // Exchange-observed exposure is an open position even when provenance is
    // still UNKNOWN. Keep provenance/evidence separate from the lifecycle
    // badge so a missing ownership link cannot hide a real live position.
-   const lifecycle=p.state|| (current!==null?'OPEN':p.evidence==='VERIFIED'?'OPEN':'UNKNOWN');
+   // A row in the LIVE account portfolio is already proof that exposure exists.
+   // Ownership/provenance may still be UNKNOWN (for example after a restart),
+   // and the mark feed may be temporarily unavailable.  Do not turn that
+   // known exchange exposure into an UNKNOWN lifecycle badge.  Keep the
+   // evidence field untouched so the audit state remains truthful.
+   const lifecycle=(p.state&&p.state!=='UNKNOWN')?p.state:
+    (p.origin||p.evidence==='EXCHANGE'||p.evidence==='VERIFIED'||current!==null?'OPEN':'UNKNOWN');
    return {...p,id:liveId(s.scope,p),mode:'LIVE',entry:p.entry_price,current_price:current,pnl:markedPnl,state:lifecycle,actions,
     timeline:actions.flatMap(a=>[
      {type:'ORDER_INTENT',timestamp:a.timestamp,intent_id:a.intent_id,correlation_id:a.correlation_id,evidence:a.intent},

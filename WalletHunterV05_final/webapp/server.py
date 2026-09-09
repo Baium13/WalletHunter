@@ -563,19 +563,30 @@ def manual_leader_controller() -> ManualLeaderCopyService:
     return manual_leader_service
 
 
-def manual_leader_account(user_id: int, profile: dict) -> tuple[dict, HyperliquidAccount]:
+def manual_leader_account(user_id: int, profile: dict, *, read_exchange=True):
     account = profile.get("account")
     if not account:
         raise HTTPException(400, "Hyperliquid account is not connected")
+    from core.settings import validated_network
+    from types import SimpleNamespace
+    network = validated_network(settings.hl_mode)
+    scoped = {"address": account["address"], "_tenant": str(user_id)}
+    if not read_exchange:
+        # Saving a public wallet, reading configuration and pausing need no
+        # exchange metadata/history request (and no signing credentials).
+        return scoped, SimpleNamespace(network=network, address=account["address"])
     try:
         # Configuration/start/stop are public strategy mutations; no signer is
         # required and the private key must not be loaded for these endpoints.
         client = HyperliquidAccount(account["address"], None, settings.hl_mode)
     except Exception as exc:
+        from core.hl_budget import BudgetUnavailable
+        if isinstance(exc, BudgetUnavailable):
+            raise
         raise HTTPException(400, "Hyperliquid account is unavailable") from exc
     # ManualLeaderCopyService uses the tenant in Scope; do not persist secrets
     # or return this enriched dictionary to the client.
-    return {**account, "_tenant": str(user_id)}, client
+    return scoped, client
 
 
 @app.get("/api/manual-copy")
@@ -586,17 +597,17 @@ def manual_copy_config(x_telegram_init_data: str | None = Header(default=None)):
     if not account:
         return {"configured": False, "enabled": False, "allocation_pct": None, "leader": None}
     try:
-        scoped, client = manual_leader_account(user["id"], profile)
+        scoped, client = manual_leader_account(user["id"], profile, read_exchange=False)
         config = manual_leader_controller().config(scoped, client)
     except HTTPException:
         raise
     except Exception:
-        config = None
+        raise HTTPException(503, {"code": "MANUAL_STATE_UNAVAILABLE"}) from None
     if not config:
         return {"configured": False, "enabled": False, "allocation_pct": None, "leader": None}
     return {"configured": True, "enabled": bool(config.enabled), "allocation_pct": config.allocation_pct,
             "leader": config.leader, "alias": config.alias, "updated_ms": config.updated_ms,
-            "network": config.scope.network,
+            "network": config.scope.network, "generation_id": config.generation_id,
             "runtime": ManualCopyWorker(engine,reader).diagnostics(config.scope)}
 
 
@@ -604,7 +615,7 @@ def manual_copy_config(x_telegram_init_data: str | None = Header(default=None)):
 def configure_manual_copy(payload: ManualCopyInput, x_telegram_init_data: str | None = Header(default=None)):
     user = require_user(x_telegram_init_data)
     _, profile = storage.profile(user["id"])
-    scoped, client = manual_leader_account(user["id"], profile)
+    scoped, client = manual_leader_account(user["id"], profile, read_exchange=False)
     controller = manual_leader_controller()
     try:
         with account_guard(ROOT, scoped['address']):
@@ -618,18 +629,35 @@ def configure_manual_copy(payload: ManualCopyInput, x_telegram_init_data: str | 
             else:
                 raise ValueError("Manual leader is required")
             allocation = payload.allocation_pct if payload.allocation_pct is not None else (config.allocation_pct if config else 80.0)
-            config = controller.configure(scoped, client, leader, allocation, alias=leader)
             if payload.action == "start":
-                baseline = ManualCopyWorker(engine,reader).start_baseline(scoped,client,leader)
-                config = controller.start(scoped, client, baseline=baseline)
+                from core.hl_budget import priority_scope
+                from core.interactive_budget import manual_review_budget
+                from webapp.manual_preview import current_evidence
+                # The same bounded interactive budget as preview, including
+                # client construction. START still re-reads all safety evidence.
+                with manual_review_budget(), priority_scope('manual_start.current_evidence', 2):
+                    scoped, client = manual_leader_account(user['id'], profile)
+                    baseline = current_evidence(ManualCopyWorker(engine,reader),scoped,client,leader)
+                    config = controller.start(scoped, client, baseline=baseline,
+                                              leader=leader, allocation_pct=allocation)
             elif payload.action == "stop": config, _ = controller.stop(scoped, client)
+            else: config = controller.configure(scoped, client, leader, allocation, alias=leader)
     except OSError:
         raise HTTPException(409, "Account action in progress; refresh before changing Manual Copy") from None
     except (ValueError, TypeError) as exc:
-        raise HTTPException(400, str(exc)) from None
+        safe_codes = {'UNRESOLVED_EXECUTION', 'OUTSTANDING_LIVE_GRANT',
+                      'MANUAL_COPY_ALREADY_ACTIVE', 'FRESH_START_BASELINE_REQUIRED',
+                      'MANUAL_COPY_MAINNET_BLOCKED', 'LEADER_NETWORK_MISMATCH'}
+        raise HTTPException(400, {'code': str(exc) if str(exc) in safe_codes else 'MANUAL_VALIDATION_FAILED'}) from None
+    except HTTPException:
+        raise
+    except Exception as exc:
+        from webapp.manual_preview import failure
+        raise HTTPException(503, failure(exc, getattr(exc, 'preview_stage', 'START_EVIDENCE')),
+                            headers={'Retry-After': '15'}) from None
     return {"configured": True, "enabled": bool(config.enabled), "allocation_pct": config.allocation_pct,
             "leader": config.leader, "alias": config.alias, "updated_ms": config.updated_ms,
-            "network": config.scope.network}
+            "network": config.scope.network, "generation_id": config.generation_id}
 
 
 @app.post("/api/manual-copy/preview")
@@ -637,12 +665,22 @@ def preview_manual_copy(payload: ManualCopyInput, x_telegram_init_data: str | No
     """Read-only analysis. No configuration, generation, grant or order created."""
     user=require_user(x_telegram_init_data)
     _,profile=storage.profile(user['id'])
-    scoped,client=manual_leader_account(user['id'],profile)
     leader=(payload.leader or '').strip().lower()
     if not re.fullmatch(r'0x[0-9a-f]{40}',leader): raise HTTPException(400,'Invalid Hyperliquid leader address')
+    from core.hl_budget import priority_scope
+    from core.interactive_budget import manual_review_budget
+    from webapp.manual_preview import current_evidence,failure
+    stage='FOLLOWER_ACCOUNT'
     try:
-        analysis=analyse_for_user(user['id'],leader)
-        baseline=ManualCopyWorker(engine,reader).start_baseline(scoped,client,leader)
+        # Interactive current evidence uses P2, not discovery history priority,
+        # and never borrows the P0/P1 reconciliation reserve. History analysis
+        # is a separate read request; it is not the START safety contract.
+        with manual_review_budget(),priority_scope('manual_preview.current_evidence',2):
+            scoped,client=manual_leader_account(user['id'],profile)
+            stage='LEADER_ACCOUNT'
+            baseline=current_evidence(ManualCopyWorker(engine,reader),scoped,client,leader)
+        cached=analysis_cache.get(leader)
+        analysis=cached[1] if cached and 0<=time.time()-cached[0]<300 else None
         p=baseline['account']
         if p['completeness']!='COMPLETE': raise ValueError('ACCOUNT_EVIDENCE_UNAVAILABLE')
         pct=float(payload.allocation_pct or 0)
@@ -654,13 +692,30 @@ def preview_manual_copy(payload: ManualCopyInput, x_telegram_init_data: str | No
         # No position attribution is invented during preview. Current execution
         # still rebuilds ownership and capacity through the canonical ledger.
         clear=not p['positions'] and not p['orders'] and not pending
-        return dict(leader=leader,analysis=analysis,capital=baseline['leader']['capital'],
+        return dict(leader=leader,analysis=analysis,analysis_status='AVAILABLE' if analysis is not None else 'PENDING',
+                    capital=baseline['leader']['capital'],leader_positions=baseline['leader']['positions'],
                     account_balance=p['equity'],allocatable_capital=capital,allocation_limit=limit,
                     committed=0. if clear else None,reserved=0. if clear else None,
                     available=min(limit,p['available_collateral']) if clear else None,
                     account_capacity=p['available_collateral'],network=scoped.get('network',client.network),
-                    timestamp=baseline['leader']['exchange_ms'],execution_authorized=False)
-    except (ValueError,TypeError): raise HTTPException(400,'Fresh leader/account evidence unavailable') from None
+                    timestamp=baseline['leader']['exchange_ms'],account_timestamp=p['exchange_ms'],
+                    received_ms=p['received_ms'],execution_authorized=False)
+    except Exception as exc:
+        if isinstance(exc,HTTPException) and exc.__cause__ is None:raise
+        detail=failure(exc,getattr(exc,'preview_stage',stage))
+        raise HTTPException(503,detail,headers={'Retry-After':'15'}) from None
+
+
+@app.post('/api/manual-copy/analysis')
+def manual_copy_analysis(payload: ManualCopyInput,x_telegram_init_data: str | None = Header(default=None)):
+    """Separate optional quality read; cannot configure, start or sign."""
+    from core.interactive_budget import manual_review_budget
+    from core.hl_budget import priority_scope
+    user=require_user(x_telegram_init_data)
+    leader=(payload.leader or '').strip().lower()
+    if not re.fullmatch(r'0x[0-9a-f]{40}',leader):raise HTTPException(400,'Invalid Hyperliquid leader address')
+    with manual_review_budget(),priority_scope('manual_preview.history',2):
+        return analyse_for_user(user['id'],leader)
 
 
 def own_position(profile: dict, coin: str, dex: str) -> dict:

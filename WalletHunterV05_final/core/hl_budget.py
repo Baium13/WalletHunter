@@ -147,7 +147,11 @@ class Budget:
                     (SELECT COALESCE(SUM(r.weight),0) FROM requests r WHERE r.service=w.service AND r.source=w.source AND r.at>?),
                     w.enqueued,w.id LIMIT 1''',(soft-used,now,now-60)).fetchone()
                 fair_defer=bool(winner and winner[0]!=waiter)
-            if enforce and (now<cooldown or used+cost>(hard if priority<=1 else soft) or fair_defer):
+            from core.interactive_budget import admission
+            ceiling=hard if priority<=1 else soft
+            interactive=admission(db,now,priority)
+            if interactive is not None:ceiling,fair_defer=interactive
+            if enforce and (now<cooldown or used+cost>ceiling or fair_defer):
                 db.execute("INSERT INTO counters VALUES('budget_deferred',1) ON CONFLICT(name) DO UPDATE SET value=value+1")
                 db.commit();raise BudgetUnavailable('HL_API_BUDGET_DEFERRED')
             db.execute('DELETE FROM admission_waiters WHERE id=?',(waiter,))

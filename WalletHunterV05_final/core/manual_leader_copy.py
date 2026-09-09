@@ -207,13 +207,19 @@ class ManualLeaderCopyService:
             if config.enabled:
                 from core.execution_quarantine import require_unblocked
                 require_unblocked(db,config.scope)
+                from core.foundation.store import scope_key
+                if db.execute("SELECT 1 FROM operations WHERE account=? AND status IN ('PREPARED','UNKNOWN')",
+                              (config.scope.account,)).fetchone():
+                    raise ValueError('UNRESOLVED_EXECUTION')
+                if db.execute('SELECT 1 FROM grants WHERE scope=?', (scope_key(config.scope),)).fetchone():
+                    raise ValueError('OUTSTANDING_LIVE_GRANT')
             db.execute('INSERT INTO manual_leader_configs(scope,body) VALUES(?,?) '
                        'ON CONFLICT(scope) DO UPDATE SET body=excluded.body',
                        (config.scope.model_dump_json(), config.model_dump_json()))
             db.commit()
         return config
 
-    def configure(self, account, client, leader, allocation_pct, *, alias=None, now=None):
+    def _configuration(self, account, client, leader, allocation_pct, *, alias=None, now=None):
         scope = self._scope(account, client)
         stamp = int(time.time() * 1000) if now is None else int(now)
         old = self._read(scope)
@@ -225,13 +231,22 @@ class ManualLeaderCopyService:
             watermark_ms=old.watermark_ms if old and not changed else None,
             start_evidence=old.start_evidence if old and not changed else None,
             created_ms=old.created_ms if old else stamp, updated_ms=stamp)
-        return self._write(config)
+        return config
+
+    def configure(self, account, client, leader, allocation_pct, *, alias=None, now=None):
+        return self._write(self._configuration(account, client, leader, allocation_pct, alias=alias, now=now))
 
     def config(self, account, client):
         return self._read(self._scope(account, client))
 
-    def start(self, account, client, *, now=None, baseline=None):
-        config = self.config(account, client)
+    def start(self, account, client, *, now=None, baseline=None, leader=None, allocation_pct=None):
+        # Build proposed configuration in memory. Failed fresh evidence or safety
+        # checks must not persist a half-applied leader/allocation change.
+        old = self.config(account, client)
+        if old and old.enabled:
+            raise ValueError('MANUAL_COPY_ALREADY_ACTIVE')
+        config = (self._configuration(account, client, leader, allocation_pct, now=now)
+                  if leader is not None else old)
         if config is None:
             raise ValueError('Manual Leader is not configured')
         stamp = int(time.time() * 1000) if now is None else int(now)

@@ -60,10 +60,11 @@ ai_position_actions = AiPositionActions(os.path.dirname(os.path.dirname(storage.
 ai_review = AiReview(ROOT)
 execution_journal = ExecutionJournal(os.path.dirname(os.path.dirname(storage.path)))
 manual_leader_service: ManualLeaderCopyService | None = None
-analysis_cache: dict[str, tuple[float, dict]] = {}
+from core.bounded_cache import BoundedCache
+analysis_cache: dict[str, tuple[float, dict]] = BoundedCache(256)
 analysis_requests: dict[int, deque[float]] = defaultdict(deque)
-chart_cache: dict[tuple[str, str, str], tuple[float, list[dict]]] = {}
-price_cache: dict[tuple[str, str], tuple[float, float]] = {}
+chart_cache: dict[tuple[str, str, str], tuple[float, list[dict]]] = BoundedCache(256)
+price_cache: dict[tuple[str, str], tuple[float, float]] = BoundedCache(256)
 markets_cache: tuple[float, list[str]] | None = None
 app = FastAPI(docs_url=None, redoc_url=None)
 

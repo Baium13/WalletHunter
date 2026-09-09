@@ -399,6 +399,17 @@ class ProductTests(unittest.TestCase):
         self.assertIn('snapshot',first);self.assertEqual(second['events'],[])
         self.assertEqual(second['cursor'],first['cursor'])
 
+    def test_market_budget_deferral_is_503_not_zero_or_internal_error(self):
+        from core.hl_budget import BudgetUnavailable
+        b,r,_,view=self.setup_view()
+        market=Mock(side_effect=BudgetUnavailable('HL_API_BUDGET_DEFERRED'))
+        client,_=self.api(view,market=market)
+        response=client.get('/api/product/market/candles?coin=BTC&network=TESTNET',headers={'x-telegram-init-data':'valid'})
+        self.assertEqual(response.status_code,503)
+        self.assertEqual(response.json()['detail'],'MARKET_API_BUDGET_DEFERRED')
+        self.assertEqual(response.headers['Retry-After'],'30')
+        self.assertNotIn('candles',response.json());self.assertEqual(market.call_count,1)
+
     def test_outbox_attempt_bound_and_critical_priority(self):
         b,_,_,_=self.setup_view();now=[b.clock()];events=ProductEvents(self.root/'events.sqlite',lambda:now[0]);scope=b.auth_policy.scope
         events.publish(scope,'normal','LEADER_PROMOTED',{'status':'ACTIVE'},notify=True)

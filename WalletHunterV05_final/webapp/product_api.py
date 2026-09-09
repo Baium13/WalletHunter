@@ -8,6 +8,7 @@ from fastapi import APIRouter,Header,HTTPException,Query,Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel,ConfigDict,Field,StrictBool
 from core.product_control import ProductConfirmations
+from core.hl_budget import BudgetUnavailable
 
 
 class ConfirmationInput(BaseModel):
@@ -89,6 +90,8 @@ def router(authenticate,resolve,event_service,backend_factory,market_reader=None
             if mark is not None and (not finite(mark.get('price')) or mark['price']<=0 or not finite(mark.get('time'))):mark=None
             return {'version':'product-market-v1','scope':v.scope.model_dump(mode='json'),'coin':coin,'interval':interval,
                 'candles':candles,'mark':mark,'exchange_timestamp':None,'timestamp_evidence':'REST_RECEIPT_NOT_EXCHANGE_TIME'}
+        except BudgetUnavailable:
+            raise HTTPException(503,'MARKET_API_BUDGET_DEFERRED',headers={'Retry-After':'30'}) from None
         except HTTPException:raise
         except (ValueError,TypeError,KeyError,OSError):raise HTTPException(503,'MARKET_EVIDENCE_UNAVAILABLE') from None
 

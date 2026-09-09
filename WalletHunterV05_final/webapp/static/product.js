@@ -156,7 +156,7 @@ else if(b.dataset.manualAnalysis){const leader=b.dataset.manualAnalysis;showShee
 else if(b.hasAttribute('data-stop'))manualConfirm('stop');else if(b.dataset.manualAction)await saveManual(b.dataset.manualAction);
 }catch{toast(t('Действие недоступно. Обновите данные перед повторным действием.','Action unavailable. Refresh evidence before another action.'));}});
 document.addEventListener('keydown',e=>{if(e.key==='Enter'&&e.target.matches('[data-agent]'))e.target.dispatchEvent(new MouseEvent('click',{bubbles:true}));});
-document.addEventListener('change',e=>{if(e.target.id==='view-mode'){S.mode=e.target.value;S.position=null;S.filter='ALL';if(S.page==='detail')S.page='positions';render();}});
+document.addEventListener('change',e=>{if(e.target.id==='view-mode'){S.mode=e.target.value;S.position=null;S.filter='ALL';if(S.page==='detail')S.page='positions';render();void refreshLiveMarks(true);}});
 document.addEventListener('input',e=>{if(['manual-wallet','allocation'].includes(e.target.id)){S.manualDirty=true;S.manualDraft={leader:$('manual-wallet').value,allocation_pct:Number($('allocation').value)};}if(e.target.id==='allocation')$('allocation-output').textContent=e.target.value;});
 document.addEventListener('submit',e=>{if(e.target.id==='manual-form'){e.preventDefault();void saveManualDraft();}});
 function manualEvidenceMessage(code){const messages={

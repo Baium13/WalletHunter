@@ -64,7 +64,10 @@ manual_leader_service: ManualLeaderCopyService | None = None
 from core.bounded_cache import BoundedCache
 analysis_cache: dict[str, tuple[float, dict]] = BoundedCache(256)
 analysis_requests: dict[int, deque[float]] = defaultdict(deque)
-chart_cache: dict[tuple[str, str, str], tuple[float, list[dict]]] = BoundedCache(256)
+chart_cache: dict[tuple[str, str, str, str], tuple[float, list[dict]]] = BoundedCache(256)
+CHART_CACHE_TTL = 300.0
+CHART_CACHE_PATH = os.path.join(ROOT, "data", "product-market-cache.json")
+_chart_cache_loaded = False
 price_cache: dict[tuple[str, str], tuple[float, float]] = BoundedCache(256)
 markets_cache: tuple[float, list[str]] | None = None
 app = FastAPI(docs_url=None, redoc_url=None)
@@ -130,10 +133,16 @@ def product_market(scope,coin,interval,hours,token):
     # price/PnL instead of falling back to UNKNOWN. The product API will show
     # an empty candle history for that refresh and the next refresh can fill it.
     from core.hl_budget import BudgetUnavailable
+    _load_chart_cache()
+    cache_key = (scope.network, coin, interval, str(hours))
     try:
         data=chart(coin,interval,hours,token)
     except BudgetUnavailable:
-        data={'coin':coin,'interval':interval,'hours':hours,'candles':[]}
+        # Budget deferral must not erase a previously proven chart history.
+        # The mark remains independently available through the P1 price path.
+        cached = chart_cache.get(cache_key)
+        data={'coin':coin,'interval':interval,'hours':hours,
+              'candles':list(cached[1]) if cached else []}
     dex,symbol=coin.split(':',1) if ':' in coin else ('',coin)
     try:mark=price(symbol,dex,token,scope.network)
     except Exception:mark=None
@@ -883,18 +892,80 @@ def chart(coin: str, interval: str = "15m", hours: int = 24, x_telegram_init_dat
     coin = coin.strip()
     if not re.fullmatch(r"(?:[a-z0-9]+:)?[A-Za-z0-9._/-]{1,32}", coin):
         raise HTTPException(400, "Неверный инструмент.")
-    cache_key = (coin, interval, str(hours))
+    _load_chart_cache()
+    cache_key = (settings.hl_mode, coin, interval, str(hours))
     now = time.time()
     cached = chart_cache.get(cache_key)
-    if cached and now - cached[0] < 20:
+    if cached and now - cached[0] < CHART_CACHE_TTL:
         candles = cached[1]
     else:
         end = int(now * 1000)
-        raw = reader._info({"type": "candleSnapshot", "req": {"coin": coin, "interval": interval,
-                           "startTime": end - hours * 3600 * 1000, "endTime": end}})
-        candles = [{"t": int(x["t"]), "o": float(x["o"]), "h": float(x["h"]), "l": float(x["l"]), "c": float(x["c"])} for x in raw[-500:]]
+        start = end - hours * 3600 * 1000
+        # Once a bounded history exists, request only the missing tail and
+        # merge it with last-good rows.  This keeps Home cheap while retaining
+        # the requested historical window.
+        if cached and cached[1]:
+            latest = max(int(row.get("t", 0)) for row in cached[1])
+            if latest > start:
+                start = latest
+        from core.hl_budget import priority_scope
+        with priority_scope("product.chart.initial", 2):
+            raw = reader._info({"type": "candleSnapshot", "req": {"coin": coin, "interval": interval,
+                               "startTime": start, "endTime": end}})
+        fresh = [{"t": int(x["t"]), "o": float(x["o"]), "h": float(x["h"]), "l": float(x["l"]), "c": float(x["c"])} for x in raw]
+        merged = {int(row["t"]): row for row in (cached[1] if cached else [])}
+        merged.update({int(row["t"]): row for row in fresh})
+        candles = [merged[key] for key in sorted(merged)][-500:]
         chart_cache[cache_key] = (now, candles)
+        _persist_chart_cache()
     return {"coin": coin, "interval": interval, "hours": hours, "candles": candles}
+
+
+def _load_chart_cache():
+    """Load only bounded, finite public candle history from disk once per process."""
+    global _chart_cache_loaded
+    if _chart_cache_loaded:
+        return
+    _chart_cache_loaded = True
+    try:
+        with open(CHART_CACHE_PATH, "r", encoding="utf-8") as fh:
+            payload = json.load(fh)
+        entries = payload.get("entries", []) if isinstance(payload, dict) else []
+        for item in entries[-256:]:
+            key = item.get("key")
+            rows = item.get("candles")
+            received = float(item.get("received", 0))
+            if not isinstance(key, list) or len(key) != 4 or not isinstance(rows, list) or not math.isfinite(received):
+                continue
+            clean = []
+            for row in rows[-500:]:
+                try:
+                    parsed = {"t": int(row["t"]), "o": float(row["o"]), "h": float(row["h"]),
+                              "l": float(row["l"]), "c": float(row["c"])}
+                    if parsed["t"] > 0 and all(math.isfinite(parsed[k]) and parsed[k] > 0 for k in ("o", "h", "l", "c")):
+                        clean.append(parsed)
+                except (KeyError, TypeError, ValueError):
+                    continue
+            if clean:
+                chart_cache[tuple(str(part) for part in key)] = (received, clean)
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        return
+
+
+def _persist_chart_cache():
+    entries = []
+    for key, (received, rows) in list(chart_cache.items())[-256:]:
+        entries.append({"key": list(key), "received": received, "candles": rows[-500:]})
+    payload = {"version": 1, "entries": entries}
+    try:
+        os.makedirs(os.path.dirname(CHART_CACHE_PATH), exist_ok=True)
+        tmp = CHART_CACHE_PATH + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(payload, fh, separators=(",", ":"), allow_nan=False)
+        os.replace(tmp, CHART_CACHE_PATH)
+    except OSError:
+        # Cache persistence is best-effort; the live read remains authoritative.
+        return
 
 
 @app.get("/api/price")

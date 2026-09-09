@@ -49,8 +49,29 @@ def weights(endpoint,payload,response=None,maximum=False):
         return 1+batch//40
     base=2 if endpoint in LIGHT else 60 if endpoint=='userRole' else 20
     if endpoint in LISTS or endpoint=='candleSnapshot':
-        n=(5000 if endpoint=='candleSnapshot' else 2000 if endpoint in
-           {'userFills','userFillsByTime','historicalOrders','recentTrades'} else 10000) if maximum else len(response) if isinstance(response,list) else 0
+        if endpoint == 'candleSnapshot' and maximum:
+            # A planned candleSnapshot is bounded by the requested interval
+            # and time range.  Reserving the protocol maximum (5,000 rows)
+            # for every Home chart made a valid 24h/15m read look like a
+            # 1180-budget breach even though the exchange could return only
+            # ~97 rows.  Keep the conservative 5,000 cap for malformed
+            # requests, but charge the actual bounded request shape.
+            req = payload.get('req', {}) if isinstance(payload, dict) else {}
+            interval_ms = {'1m': 60_000, '5m': 300_000, '15m': 900_000,
+                           '1h': 3_600_000, '4h': 14_400_000,
+                           '1d': 86_400_000}
+            interval = interval_ms.get(req.get('interval'))
+            try:
+                start, end = float(req.get('startTime')), float(req.get('endTime'))
+            except (TypeError, ValueError):
+                start = end = None
+            if interval and start is not None and end is not None and math.isfinite(start) and math.isfinite(end) and end >= start:
+                n = min(5000, max(1, math.ceil((end - start) / interval) + 1))
+            else:
+                n = 5000
+        else:
+            n=(2000 if endpoint in
+               {'userFills','userFillsByTime','historicalOrders','recentTrades'} else 10000) if maximum else len(response) if isinstance(response,list) else 0
         base+=math.ceil(n/(60 if endpoint=='candleSnapshot' else 20))
     return base
 
@@ -309,7 +330,7 @@ def snapshot(path):
             except OSError:pass
         return dict(version='hl-budget-v1',checked_ms=int(now*1000),window_start_ms=int(rows[0][0]*1000) if rows else None,
             retention_seconds=86400,weight_evidence='DOCUMENTED_RESPONSE_WEIGHT_CONSERVATIVE_ROUNDING',
-            rest_limit=1200,soft_limit=normal,elevated_limit=elevated,
+            rest_limit=1200,soft_limit=normal,elevated_limit=elevated,enforced=bool(enforce),
             safety_limit=hard,hard_planned_ceiling=HARD_PLANNED_CEILING,
             rest_requests_total=len(rows),rest_weight_total=sum(r[1] for r in rows),rest_weight_1m=current,
             rest_weight_peak_1m=peak,http_429=sum(r[2]==429 for r in rows),transport_errors=sum(r[2]==-1 for r in rows),

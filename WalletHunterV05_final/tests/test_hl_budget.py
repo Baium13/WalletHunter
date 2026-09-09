@@ -21,6 +21,12 @@ class BudgetTests(unittest.TestCase):
         self.assertEqual(weights('candleSnapshot',{},[{}]*61),22)
         self.assertEqual(weights('exchange',{'action':{'orders':[{}]*79}}),2)
 
+    def test_candle_plan_is_bounded_by_requested_range(self):
+        # A 15m/24h Home request is only ~97 rows, not the 5,000-row maximum.
+        planned = weights('candleSnapshot', {'req': {'interval': '15m', 'startTime': 0, 'endTime': 24*3600*1000}}, maximum=True)
+        self.assertEqual(planned, 22)
+        self.assertEqual(weights('candleSnapshot', {}, maximum=True), 104)
+
     def test_abandoned_later_sdk_read_cannot_idle_free_budget(self):
         import time
         now=time.time()

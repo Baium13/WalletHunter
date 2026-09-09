@@ -11,6 +11,17 @@ from core.foundation.store import scope_key
 
 
 class ProductTests(unittest.TestCase):
+    def test_api_budget_is_operational_truth_not_financial_data(self):
+        from core.hl_budget import Budget
+        b,r,_,view=self.setup_view()
+        self.assertEqual(view.snapshot()['health']['api_budget']['state'],'UNKNOWN')
+        budget=Budget(self.root/'data/hl-api-budget.sqlite3')
+        budget.begin('orderStatus',{},'reconciliation',0)
+        data=view.snapshot()['health']['api_budget']
+        self.assertEqual(data['rest_weight_1m'],2)
+        self.assertTrue(data['enforced'])
+        self.assertNotIn(view.scope.account,json.dumps(data))
+
     def notifications(self,events,scope):
         with events.store.transaction() as db:
             return [json.loads(r[0]) for r in db.execute('SELECT body FROM product_outbox WHERE scope=? AND status!=?',(scope_key(scope),'SUPPRESSED'))]

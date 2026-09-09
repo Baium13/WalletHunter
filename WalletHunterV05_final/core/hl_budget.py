@@ -15,6 +15,7 @@ import threading
 import time
 import uuid
 from contextlib import closing, contextmanager
+from contextvars import ContextVar
 from pathlib import Path
 from urllib.parse import urlsplit
 import requests
@@ -25,6 +26,14 @@ LISTS={'recentTrades','historicalOrders','userFills','userFillsByTime','fundingH
        'delegatorHistory','delegatorRewards','validatorStats'}
 META={'meta','spotMeta','perpDexs'}
 HOSTS={'api.hyperliquid.xyz','api.hyperliquid-testnet.xyz'}
+_priority=ContextVar('hl_resource_priority',default=None)
+
+
+@contextmanager
+def priority_scope(source,priority):
+    token=_priority.set((source,priority))
+    try:yield
+    finally:_priority.reset(token)
 
 
 def weights(endpoint,payload,response=None,maximum=False):
@@ -41,6 +50,7 @@ def weights(endpoint,payload,response=None,maximum=False):
 
 
 def origin():
+    if _priority.get() is not None:return _priority.get()
     frames=[];f=inspect.currentframe().f_back
     try:
         for _ in range(30):
@@ -67,7 +77,7 @@ class Budget:
             db.execute('PRAGMA journal_mode=WAL')
             db.executescript('''
               CREATE TABLE IF NOT EXISTS limits(id INTEGER PRIMARY KEY,soft INTEGER,hard INTEGER,enforce INTEGER,cooldown REAL);
-              INSERT OR IGNORE INTO limits VALUES(1,600,840,0,0);
+              INSERT OR IGNORE INTO limits VALUES(1,600,840,1,0);
               CREATE TABLE IF NOT EXISTS requests(id TEXT PRIMARY KEY,at REAL,service TEXT,source TEXT,endpoint TEXT,priority INTEGER,weight INTEGER,status INTEGER,elapsed REAL,items INTEGER);
               CREATE INDEX IF NOT EXISTS request_time ON requests(at);
               CREATE TABLE IF NOT EXISTS counters(name TEXT PRIMARY KEY,value INTEGER);
@@ -84,6 +94,37 @@ class Budget:
 
     def count(self,name):
         with self.db() as db:db.execute('INSERT INTO counters VALUES(?,1) ON CONFLICT(name) DO UPDATE SET value=value+1',(name,))
+
+    def metadata_acquire(self,key):
+        """Only public instrument metadata. Fixed 30s TTL, no sliding renewal.
+
+        A cross-process lease coalesces constructor calls. Waiting is bounded;
+        an occupied lease defers rather than launching duplicate upstream work.
+        Account, prices, history, orders and exchange actions NEVER enter here.
+        """
+        deadline=time.monotonic()+1
+        while True:
+            now=time.time()
+            with self.db() as db:
+                db.execute('BEGIN IMMEDIATE')
+                row=db.execute('SELECT body,expires,lease FROM metadata WHERE key=?',(key,)).fetchone()
+                if row and row[0] is not None and row[1]>now:
+                    result=('hit',row[0]);break
+                if not row or row[2]<=now:
+                    lease=now+30
+                    db.execute('INSERT INTO metadata VALUES(?,NULL,0,?) ON CONFLICT(key) DO UPDATE SET lease=excluded.lease',(key,lease))
+                    return 'owner',lease
+            if time.monotonic()>=deadline:
+                self.count('metadata_coalesced_deferred')
+                raise BudgetUnavailable('HL_METADATA_INFLIGHT')
+            time.sleep(.025)
+        self.count('metadata_cache_hits')
+        return result
+
+    def metadata_complete(self,key,lease,body):
+        with self.db() as db:
+            db.execute('UPDATE metadata SET body=?,expires=?,lease=0 WHERE key=? AND lease=?',
+                (body,time.time()+30 if body is not None else 0,key,lease))
 
     def begin(self,endpoint,payload,source,priority):
         now=time.time();identity=uuid.uuid4().hex;cost=weights(endpoint,payload,maximum=True)
@@ -122,7 +163,7 @@ class Budget:
         now=time.time()
         with self.db() as db:
             if kind=='close':db.execute('DELETE FROM ws WHERE id=?',(identity,))
-            else:db.execute('INSERT INTO ws VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET heartbeat=excluded.heartbeat,subscriptions=excluded.subscriptions',
+            elif kind not in {'attempt','disconnect'}:db.execute('INSERT INTO ws VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET heartbeat=excluded.heartbeat,subscriptions=excluded.subscriptions',
                             (identity,os.getpid(),now,n))
             if kind!='heartbeat':db.execute('INSERT INTO ws_events VALUES(?,?,?)',(now,kind,n))
 
@@ -142,14 +183,32 @@ class BudgetSession(requests.Session):
         if not budget or method.upper()!='POST' or target.hostname not in HOSTS or target.path not in {'/info','/exchange'}:
             return super().request(method,url,**kwargs)
         payload=kwargs.get('json') or {};endpoint='exchange' if target.path=='/exchange' else payload.get('type','UNKNOWN')
-        source,priority=origin();identity=budget.begin(endpoint,payload,source,priority);started=time.monotonic()
-        try:response=super().request(method,url,**kwargs)
-        except Exception as exc:
-            budget.finish(identity,endpoint,payload,None,time.monotonic()-started,
-                          error='TIMEOUT' if isinstance(exc,requests.Timeout) else 'TRANSPORT')
-            raise
-        budget.finish(identity,endpoint,payload,response,time.monotonic()-started)
-        return response
+        key=None;lease=None;cache_body=None
+        if endpoint in META and set(payload)<=({'type','dex'} if endpoint=='meta' else {'type'}):
+            key=hashlib.sha256((url+'|'+json.dumps(payload,sort_keys=True)).encode()).hexdigest()
+            status,value=budget.metadata_acquire(key)
+            if status=='hit':
+                response=requests.Response();response.status_code=200;response.url=url
+                response._content=value.encode();response.headers['Content-Type']='application/json'
+                return response
+            lease=value
+        try:
+            source,priority=origin();identity=budget.begin(endpoint,payload,source,priority);started=time.monotonic()
+            try:response=super().request(method,url,**kwargs)
+            except Exception as exc:
+                budget.finish(identity,endpoint,payload,None,time.monotonic()-started,
+                              error='TIMEOUT' if isinstance(exc,requests.Timeout) else 'TRANSPORT')
+                raise
+            budget.finish(identity,endpoint,payload,response,time.monotonic()-started)
+            if key and response.status_code==200:
+                try:
+                    body=response.json()
+                    if (endpoint=='perpDexs' and isinstance(body,list)) or (isinstance(body,dict) and isinstance(body.get('universe'),list)):
+                        cache_body=json.dumps(body,allow_nan=False)
+                except (ValueError,TypeError):pass
+            return response
+        finally:
+            if key:budget.metadata_complete(key,lease,cache_body)
 
 
 def install_sdk():
@@ -180,6 +239,7 @@ def snapshot(path):
             try:os.kill(pid,0);alive.append((heartbeat,subscriptions))
             except OSError:pass
         return dict(version='hl-budget-v1',checked_ms=int(now*1000),window_start_ms=int(rows[0][0]*1000) if rows else None,
+            retention_seconds=86400,weight_evidence='DOCUMENTED_RESPONSE_WEIGHT_CONSERVATIVE_ROUNDING',
             rest_limit=1200,soft_limit=soft,safety_limit=hard,enforced=bool(enforce),
             rest_requests_total=len(rows),rest_weight_total=sum(r[1] for r in rows),rest_weight_1m=current,
             rest_weight_peak_1m=peak,http_429=sum(r[2]==429 for r in rows),transport_errors=sum(r[2]==-1 for r in rows),

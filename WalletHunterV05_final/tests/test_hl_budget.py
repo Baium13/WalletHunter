@@ -38,6 +38,7 @@ class BudgetTests(unittest.TestCase):
         with self.b.db() as db:db.execute('UPDATE limits SET enforce=1')
         with self.assertRaises(BudgetUnavailable):self.b.begin('orderStatus',{},'safety',0)
     def test_observe_records_but_does_not_throttle(self):
+        with self.b.db() as db:db.execute('UPDATE limits SET enforce=0')
         for _ in range(12):self.b.begin('userFillsByTime',{},'deep',5)
         self.assertGreater(snapshot(self.path)['rest_weight_1m'],1200)
     def test_sdk_including_constructor_routes_through_transport(self):
@@ -54,6 +55,54 @@ class BudgetTests(unittest.TestCase):
             for _ in range(2):
                 with self.assertRaises(requests.Timeout):BudgetSession().post('https://api.hyperliquid.xyz/info',json={'type':'clearinghouseState'})
         self.assertEqual(transport.call_count,2);self.assertEqual(snapshot(self.path)['timeouts'],2)
+
+    def test_metadata_ttl_network_pool_and_no_sliding_renewal(self):
+        body={'universe':[]}
+        with patch('core.hl_budget.configured',return_value=self.b),patch.object(requests.Session,'request',return_value=self.response(body=body)) as transport:
+            session=BudgetSession()
+            for _ in range(3):session.post('https://api.hyperliquid.xyz/info',json={'type':'meta'})
+            self.assertEqual(transport.call_count,1)
+            session.post('https://api.hyperliquid-testnet.xyz/info',json={'type':'meta'})
+            session.post('https://api.hyperliquid.xyz/info',json={'type':'meta','dex':'xyz'})
+            self.assertEqual(transport.call_count,3)
+            with self.b.db() as db:db.execute('UPDATE metadata SET expires=0')
+            session.post('https://api.hyperliquid.xyz/info',json={'type':'meta'})
+            self.assertEqual(transport.call_count,4)
+
+    def test_single_flight_shared_across_sessions(self):
+        import threading,time
+        from concurrent.futures import ThreadPoolExecutor
+        arrived=threading.Event()
+        def upstream(*a,**k):
+            arrived.set();time.sleep(.1);return self.response(body={'universe':[]})
+        def call():return BudgetSession().post('https://api.hyperliquid.xyz/info',json={'type':'meta'}).json()
+        with patch('core.hl_budget.configured',return_value=self.b),patch.object(requests.Session,'request',side_effect=upstream) as transport:
+            with ThreadPoolExecutor(2) as pool:
+                first=pool.submit(call);arrived.wait(1);second=pool.submit(call)
+                self.assertEqual(first.result(),second.result())
+            self.assertEqual(transport.call_count,1)
+
+    def test_failed_metadata_not_cached_and_no_exchange_coalescing(self):
+        with patch('core.hl_budget.configured',return_value=self.b),patch.object(requests.Session,'request',return_value=self.response(503)) as transport:
+            for _ in range(2):BudgetSession().post('https://api.hyperliquid.xyz/info',json={'type':'meta'})
+            for _ in range(2):BudgetSession().post('https://api.hyperliquid.xyz/exchange',json={'action':{'type':'order'}})
+            self.assertEqual(transport.call_count,4)
+
+    def test_priority_scope_does_not_leak(self):
+        from core.hl_budget import priority_scope,origin
+        before=origin()
+        with priority_scope('position_owned.detect',1):self.assertEqual(origin(),('position_owned.detect',1))
+        self.assertEqual(origin(),before)
+
+    def test_websocket_failure_backoff_and_jitter_no_tight_retry(self):
+        from core.intelligence.service import PublicTrades
+        stream=PublicTrades('TESTNET')
+        with patch('websocket.create_connection',side_effect=OSError),patch('core.hl_budget.configured',return_value=self.b) as config:
+            with self.assertRaises(ValueError):stream.poll()
+            deadline=stream.retry_at
+            with self.assertRaisesRegex(ValueError,'BACKOFF'):stream.poll()
+            self.assertEqual(stream.retry_at,deadline);self.assertEqual(stream.failures,1)
+        self.assertEqual(snapshot(self.path)['ws_connections'],0)
 
 
 if __name__=='__main__':unittest.main()

@@ -10,6 +10,7 @@ import time
 import uuid
 import hashlib
 import sqlite3
+import random
 from pathlib import Path
 from contextlib import closing
 from decimal import Decimal
@@ -20,6 +21,7 @@ from core.foundation.store import Store
 from .models import IntelligencePolicy, LeaderTradeEvent, LeaderScore, ConsensusDecision
 from .analysis import reports, score, DAY
 from .agents import evaluate, consensus
+from core.hl_budget import priority_scope, BudgetUnavailable
 
 
 def packed(value):
@@ -55,10 +57,15 @@ class PublicTrades:
         for coin in coins: InstrumentId(network=self.network,symbol=coin)
         self.coins,self.socket=coins,None
         self.telemetry_id=uuid.uuid4().hex
+        self.failures=0;self.retry_at=0;self.last_disconnect_reason=None
     def poll(self):
         import websocket
+        if time.monotonic()<self.retry_at:raise ValueError('PUBLIC_STREAM_BACKOFF')
         try:
             if self.socket is None:
+                from core.hl_budget import configured
+                budget=configured()
+                if budget:budget.websocket(self.telemetry_id,'attempt')
                 host='api.hyperliquid.xyz' if self.network=='MAINNET' else 'api.hyperliquid-testnet.xyz'
                 self.socket=websocket.create_connection('wss://'+host+'/ws',timeout=2,enable_multithread=True)
                 from core.hl_budget import configured
@@ -81,8 +88,15 @@ class PublicTrades:
                 rows=message['data']
                 if not isinstance(rows,list) or len(rows)>256: raise ValueError('STREAM_BATCH_INVALID')
                 found.extend(rows)
+            if found:self.failures=0
             return found
-        except Exception:
+        except Exception as exc:
+            self.failures+=1
+            self.retry_at=time.monotonic()+min(300,2**min(self.failures,8))+random.uniform(0,2)
+            self.last_disconnect_reason=type(exc).__name__
+            from core.hl_budget import configured
+            budget=configured()
+            if budget:budget.websocket(self.telemetry_id,'disconnect')
             self.close()
             raise ValueError('PUBLIC_STREAM_UNAVAILABLE') from None
     def close(self):
@@ -289,7 +303,8 @@ class WalletDiscoveryEngine:
             scanned=0
             for address in watched:
                 try:
-                    self.detect(address,info,clock(),position_owned=address in lifecycle)
+                    with priority_scope('position_owned.detect',1) if address in lifecycle else priority_scope('service.detect',3):
+                        self.detect(address,info,clock(),position_owned=address in lifecycle)
                     scanned+=1
                 except Exception: errors.append('WATCHLIST_OR_ANALYSIS_UNAVAILABLE')
             for component in ('watchlist','leader_detection'):
@@ -312,9 +327,15 @@ class WalletDiscoveryEngine:
                 try:
                     self.analyze_one(row['wallet'],info,clock())
                     self.health_observation('deep_analysis',clock(),details={'queue_checked':True})
-                except Exception:
+                except Exception as exc:
                     errors.append('HISTORY_INCOMPLETE')
-                    self.health_observation('deep_analysis',clock(),error='HISTORY_INCOMPLETE',details={'queue_checked':True})
+                    causes=[];cause=exc
+                    while cause is not None and len(causes)<4:
+                        # Exact history-library reasons contain no keys/account data.
+                        from core.fill_history import HistoryIncomplete
+                        causes.append(str(cause) if isinstance(cause,(HistoryIncomplete,BudgetUnavailable)) else type(cause).__name__)
+                        cause=cause.__cause__
+                    self.health_observation('deep_analysis',clock(),error='HISTORY_INCOMPLETE',details={'queue_checked':True,'causes':causes})
                     with self.store.transaction() as db:
                         db.execute("UPDATE candidates SET status='PROBATION',next_eval=? WHERE network=? AND wallet=?",(now+60000,self.network,row['wallet']))
             if not pending:self.health_observation('deep_analysis',clock(),details={'idle':True,'queue_checked':True})

@@ -137,6 +137,9 @@ class WalletDiscoveryEngine:
                 CREATE TABLE IF NOT EXISTS observed_fills(network TEXT,wallet TEXT,fill_id TEXT,event_id TEXT,
                     PRIMARY KEY(network,wallet,fill_id));
                 CREATE TABLE IF NOT EXISTS watch_epochs(network TEXT,wallet TEXT,started INTEGER,PRIMARY KEY(network,wallet));
+                CREATE TABLE IF NOT EXISTS candidate_retirements(network TEXT,wallet TEXT,retired INTEGER,prior_status TEXT,reason TEXT,
+                    PRIMARY KEY(network,wallet,retired));
+                CREATE TABLE IF NOT EXISTS discovery_schedule(network TEXT PRIMARY KEY,turn INTEGER NOT NULL);
                 CREATE TRIGGER IF NOT EXISTS research_no_update BEFORE UPDATE ON intelligence_records BEGIN SELECT RAISE(ABORT,'append only'); END;
                 CREATE TRIGGER IF NOT EXISTS research_no_delete BEFORE DELETE ON intelligence_records BEGIN SELECT RAISE(ABORT,'append only'); END;
             ''')
@@ -169,6 +172,50 @@ class WalletDiscoveryEngine:
             scope=self.scope,event_ms=now,received_ms=now,payload=reference))
         return record_id
 
+    def retire_candidates(self,now):
+        """Archive low-priority registry entries, never their immutable evidence.
+
+        An 80% low watermark avoids one-for-one churn at the hard ceiling.
+        At least 30 minutes of inactivity is required; active/qualified and
+        position-owned leaders are not eligible, even if capacity stays full.
+        """
+        protected=set(getattr(self,'position_owned_leaders',()))
+        with self.store.transaction() as db:
+            count=db.execute("SELECT COUNT(*) FROM candidates WHERE network=? AND status!='ARCHIVED'",(self.network,)).fetchone()[0]
+            if count<self.policy.registry_limit:return 0
+            target=max(1,int(self.policy.registry_limit*.8))
+            rows=db.execute("SELECT wallet,status FROM candidates WHERE network=? AND status IN ('DISCOVERED','CANDIDATE','PROBATION','RETIRED') AND last_seen<? ORDER BY CASE WHEN analysis IS NULL THEN 0 ELSE 1 END,COALESCE(score,0),last_seen,wallet",
+                (self.network,now-1800000)).fetchall()
+            retired=0
+            for row in rows:
+                if count-retired<=target:break
+                if row['wallet'] in protected:continue
+                db.execute('INSERT INTO candidate_retirements VALUES(?,?,?,?,?)',(self.network,row['wallet'],now,row['status'],'CAPACITY_LOW_PRIORITY_INACTIVE'))
+                db.execute("UPDATE candidates SET status='ARCHIVED' WHERE network=? AND wallet=?",(self.network,row['wallet']))
+                retired+=1
+            return retired
+
+    def candidate_queue(self,now):
+        with self.store.transaction() as db:
+            rows=db.execute("SELECT next_eval,analysis FROM candidates WHERE network=? AND status!='ARCHIVED' AND next_eval<=? ORDER BY next_eval",(self.network,now)).fetchall()
+        waits=sorted(now-r['next_eval'] for r in rows)
+        return dict(size=len(rows),oldest_ms=max(waits,default=0),
+            p50_ms=waits[int((len(waits)-1)*.5)] if waits else 0,
+            p95_ms=waits[int((len(waits)-1)*.95)] if waits else 0,
+            cheap=sum(r['analysis'] is None for r in rows),deep=sum(r['analysis'] is not None for r in rows),
+            warning_ms=21600000,warning=bool(waits and waits[-1]>21600000))
+
+    def scheduled_candidates(self,now):
+        """Three fresh/quality slots then one oldest slot; durable fair rotation."""
+        with self.store.transaction() as db:
+            row=db.execute('SELECT turn FROM discovery_schedule WHERE network=?',(self.network,)).fetchone()
+            turn=row[0] if row else 0
+            order='next_eval,wallet' if turn%4==3 else "CASE WHEN status='ACTIVE' THEN 0 WHEN status='QUALIFIED' THEN 1 ELSE 2 END,last_seen DESC,COALESCE(score,0) DESC,next_eval,wallet"
+            rows=db.execute("SELECT wallet FROM candidates WHERE network=? AND status!='ARCHIVED' AND next_eval<=? ORDER BY "+order+' LIMIT ?',
+                (self.network,now,self.policy.deep_per_cycle)).fetchall()
+            db.execute('INSERT OR REPLACE INTO discovery_schedule VALUES(?,?)',(self.network,turn+1))
+            return rows
+
     def observe(self,trades,now):
         if not isinstance(trades,list) or len(trades)>1280: raise ValueError('OBSERVATION_BOUND')
         addresses=set()
@@ -180,12 +227,18 @@ class WalletDiscoveryEngine:
             for user in users:
                 try: addresses.add(wallet(user))
                 except ValueError: continue
+        self.retire_candidates(now)
         with self.store.transaction() as db:
             for address in sorted(addresses):
-                exists=db.execute('SELECT 1 FROM candidates WHERE network=? AND wallet=?',(self.network,address)).fetchone()
+                exists=db.execute('SELECT status FROM candidates WHERE network=? AND wallet=?',(self.network,address)).fetchone()
                 if exists:
                     db.execute('UPDATE candidates SET last_seen=MAX(last_seen,?) WHERE network=? AND wallet=?',(now,self.network,address))
-                elif db.execute('SELECT COUNT(*) FROM candidates WHERE network=?',(self.network,)).fetchone()[0]<self.policy.registry_limit:
+                    if exists['status']=='ARCHIVED':
+                        retired=db.execute('SELECT MAX(retired) FROM candidate_retirements WHERE network=? AND wallet=?',(self.network,address)).fetchone()[0]
+                        count=db.execute("SELECT COUNT(*) FROM candidates WHERE network=? AND status!='ARCHIVED'",(self.network,)).fetchone()[0]
+                        if retired is not None and now-retired>=1800000 and count<self.policy.registry_limit:
+                            db.execute("UPDATE candidates SET status='DISCOVERED',next_eval=? WHERE network=? AND wallet=?",(now,self.network,address))
+                elif db.execute("SELECT COUNT(*) FROM candidates WHERE network=? AND status!='ARCHIVED'",(self.network,)).fetchone()[0]<self.policy.registry_limit:
                     db.execute('INSERT INTO candidates VALUES(?,?,?,?,?,?,?,?,?,?)',(self.network,address,now,now,'DISCOVERED',now,now,None,None,None))
                     self._record(db,'WALLET_DISCOVERED',{'wallet':address,'network':self.network,'observed_ms':now},now)
 
@@ -319,10 +372,8 @@ class WalletDiscoveryEngine:
                     self.research(event,leader,info,clock(),clock=clock)
                 except Exception: errors.append('RESEARCH_DEFERRED')
             self.observe(trades,now)
-            self.health_observation('discovery',clock())
-            with self.store.transaction() as db:
-                pending=db.execute('SELECT wallet FROM candidates WHERE network=? AND next_eval<=? ORDER BY next_eval,wallet LIMIT ?',
-                    (self.network,now,self.policy.deep_per_cycle)).fetchall()
+            self.health_observation('discovery',clock(),details={'queue':self.candidate_queue(clock())})
+            pending=self.scheduled_candidates(now)
             for row in pending:
                 try:
                     self.analyze_one(row['wallet'],info,clock())

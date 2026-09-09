@@ -25,6 +25,7 @@ LISTS={'recentTrades','historicalOrders','userFills','userFillsByTime','fundingH
        'nonUserFundingUpdates','twapHistory','userTwapSliceFills','userTwapSliceFillsByTime',
        'delegatorHistory','delegatorRewards','validatorStats'}
 META={'meta','spotMeta','perpDexs'}
+FAIR_CONTENTION_FRACTION=.5  # Scheduling only; never raises soft/hard ceilings.
 HOSTS={'api.hyperliquid.xyz','api.hyperliquid-testnet.xyz'}
 _priority=ContextVar('hl_resource_priority',default=None)
 
@@ -146,7 +147,12 @@ class Budget:
                     MAX(3,w.priority-CAST((?-w.enqueued)/60 AS INTEGER))-(w.priority=2)*2,
                     (SELECT COALESCE(SUM(r.weight),0) FROM requests r WHERE r.service=w.service AND r.source=w.source AND r.at>?),
                     w.enqueued,w.id LIMIT 1''',(soft-used,now,now-60)).fetchone()
-                fair_defer=bool(winner and winner[0]!=waiter)
+                # A waiter is a demand hint, not a running coroutine. Sequential
+                # SDK reads may have abandoned its later endpoint after an
+                # earlier read deferred. Do not idle free capacity for that
+                # phantom turn: enforce fairness only under actual contention.
+                fair_defer=bool(winner and winner[0]!=waiter and
+                                used+cost>soft*FAIR_CONTENTION_FRACTION)
             from core.interactive_budget import admission
             ceiling=hard if priority<=1 else soft
             interactive=admission(db,now,priority)

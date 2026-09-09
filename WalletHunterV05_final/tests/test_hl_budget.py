@@ -20,6 +20,31 @@ class BudgetTests(unittest.TestCase):
         self.assertEqual(weights('userFillsByTime',{},[{}]*2000),120)
         self.assertEqual(weights('candleSnapshot',{},[{}]*61),22)
         self.assertEqual(weights('exchange',{'action':{'orders':[{}]*79}}),2)
+
+    def test_abandoned_later_sdk_read_cannot_idle_free_budget(self):
+        import time
+        now=time.time()
+        with self.b.db() as db:
+            db.execute('INSERT INTO admission_waiters VALUES(?,?,?,?,?,?,?)',
+                       ('abandoned','bot','hyperliquid.positions',2,2,now-100,now))
+        # Production: a positions waiter survives while the caller must first
+        # reconstruct metadata. Nobody can consume the stale winning turn.
+        self.b.begin('meta',{},'hyperliquid.__init__',2)
+        self.b.begin('userFillsByTime',{},'service.detect',3)
+        self.b.begin('userFillsByTime',{},'service.analyze_one',5)
+        self.assertEqual(snapshot(self.path)['rest_weight_1m'],260)
+
+    def test_contention_fairness_and_safety_ceiling_remain_enforced(self):
+        import time
+        for _ in range(15):self.b.begin('meta',{},'constructor',2)
+        now=time.time()
+        with self.b.db() as db:
+            db.execute('INSERT INTO admission_waiters VALUES(?,?,?,?,?,?,?)',
+                       ('interactive','web','manual_evidence',2,2,now-100,now))
+        with self.assertRaises(BudgetUnavailable):self.b.begin('userFillsByTime',{},'deep',5)
+        self.b.begin('orderStatus',{},'reconcile',0)
+        with self.b.db() as db:db.execute('UPDATE limits SET hard=302')
+        with self.assertRaises(BudgetUnavailable):self.b.begin('orderStatus',{},'reconcile',0)
     def test_shared_rolling_budget_reserves_for_safety(self):
         with self.b.db() as db:db.execute('UPDATE limits SET soft=120,hard=240,enforce=1')
         a=self.b.begin('userFillsByTime',{},'deep',5)

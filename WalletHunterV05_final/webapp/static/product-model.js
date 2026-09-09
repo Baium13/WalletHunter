@@ -10,7 +10,17 @@
  function positions(s,m){
   if(m==='LIVE')return (s?.account?.portfolio?.positions||[]).map(p=>{
    const actions=(s.account.actions||[]).filter(a=>(a.receipt?.order_ids||[]).some(id=>(p.order_ids||[]).includes(id)));
-   return {...p,id:liveId(s.scope,p),mode:'LIVE',entry:p.entry_price,current_price:null,pnl:null,state:p.evidence==='VERIFIED'?'OPEN':'UNKNOWN',actions,
+   // The account snapshot is authoritative for the position itself, while
+   // current_price/pnl are optional live marks refreshed by the read-only UI
+   // price feed. Preserve them when available instead of resetting them on
+   // every product snapshot/render.
+   const current=number(p.current_price??p.mark_price),entry=number(p.entry_price),size=number(p.size);
+   const markedPnl=number(p.pnl)??(current!==null&&entry!==null&&size!==null&&['LONG','SHORT'].includes(p.side)?(current-entry)*size*(p.side==='LONG'?1:-1):null);
+   // Exchange-observed exposure is an open position even when provenance is
+   // still UNKNOWN. Keep provenance/evidence separate from the lifecycle
+   // badge so a missing ownership link cannot hide a real live position.
+   const lifecycle=p.state|| (current!==null?'OPEN':p.evidence==='VERIFIED'?'OPEN':'UNKNOWN');
+   return {...p,id:liveId(s.scope,p),mode:'LIVE',entry:p.entry_price,current_price:current,pnl:markedPnl,state:lifecycle,actions,
     timeline:actions.flatMap(a=>[
      {type:'ORDER_INTENT',timestamp:a.timestamp,intent_id:a.intent_id,correlation_id:a.correlation_id,evidence:a.intent},
      ...(a.risk?[{type:'RISK',timestamp:a.risk.created_ms,intent_id:a.intent_id,correlation_id:a.correlation_id,evidence:a.risk}]:[]),

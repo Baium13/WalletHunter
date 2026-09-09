@@ -123,9 +123,18 @@ def product_market(scope,coin,interval,hours,token):
     # Read-only compatibility boundary: reuse existing bounded chart/price caches,
     # never instantiate another client or interpret a candle as a live mark.
     if scope.network!=settings.hl_mode:raise HTTPException(409,'MARKET_NETWORK_MISMATCH')
-    data=chart(coin,interval,hours,token)
+    # A candle request is the expensive part of this combined product read. If
+    # its bounded Hyperliquid budget is temporarily exhausted, keep the
+    # lightweight mark path available so an open position still has a current
+    # price/PnL instead of falling back to UNKNOWN. The product API will show
+    # an empty candle history for that refresh and the next refresh can fill it.
+    from core.hl_budget import BudgetUnavailable
+    try:
+        data=chart(coin,interval,hours,token)
+    except BudgetUnavailable:
+        data={'coin':coin,'interval':interval,'hours':hours,'candles':[]}
     dex,symbol=coin.split(':',1) if ':' in coin else ('',coin)
-    try:mark=price(symbol,dex,token)
+    try:mark=price(symbol,dex,token,scope.network)
     except Exception:mark=None
     return {**data,'mark':mark}
 
@@ -888,9 +897,12 @@ def chart(coin: str, interval: str = "15m", hours: int = 24, x_telegram_init_dat
 
 
 @app.get("/api/price")
-def price(coin: str, dex: str = "", x_telegram_init_data: str | None = Header(default=None)):
+def price(coin: str, dex: str = "", x_telegram_init_data: str | None = Header(default=None),
+          network: Literal["MAINNET", "TESTNET"] | None = None):
     """Small authenticated live-price feed for the chart marker."""
     require_user(x_telegram_init_data)
+    if network is not None and network != settings.hl_mode:
+        raise HTTPException(409, "MARKET_NETWORK_MISMATCH")
     coin, dex = coin.strip(), dex.strip().lower()
     if dex not in {"", "xyz"} or not re.fullmatch(r"[A-Za-z0-9._/-]{1,32}", coin):
         raise HTTPException(400, "Неверный инструмент.")

@@ -12,6 +12,16 @@ test('PAPER and SHADOW are separate',()=>{assert.equal(M.positions(s,'PAPER_AUTO
 test('display modes cannot disconnect shared public analysis or borrow financial state',()=>{const shared={agents:[{agent_id:'structure'}],execution_authority:false};const snap={...s,analysis:shared};for(const mode of ['OBSERVE','PAPER_AUTO','SHADOW','LIVE_CONFIRM','LIVE'])assert.equal(M.analysis(snap,mode),shared);assert.deepEqual(M.positions(snap,'OBSERVE'),[]);assert.equal(M.runtime(snap,'LIVE_CONFIRM'),null);});
 test('account-context analysis remains scoped to its actual runtime',()=>{const a={agents:[{agent_id:'risk_context'}]},snap={analysis:{agents:[]},runtimes:[{...a,mode:'PAPER_AUTO'}]};assert.equal(M.analysis(snap,'PAPER_AUTO'),snap.runtimes[0]);assert.equal(M.analysis(snap,'LIVE'),snap.analysis);});
 test('live exact order linkage excludes same-instrument external action',()=>assert.deepEqual(M.positions(s,'LIVE')[0].actions.map(a=>a.intent_id),['one']));
+test('live mark and pnl survive product snapshots',()=>{
+ const marked={...p,current_price:105,pnl:5,mark_timestamp:123};
+ const rows=M.positions({...s,account:{...s.account,portfolio:{positions:[marked]}}},'LIVE');
+ assert.equal(rows[0].current_price,105);assert.equal(rows[0].pnl,5);assert.equal(rows[0].mark_timestamp,123);
+});
+test('live mark makes exchange exposure visible without inventing provenance',()=>{
+ const marked={...p,evidence:'UNKNOWN',current_price:105};
+ const row=M.positions({...s,account:{...s.account,portfolio:{positions:[marked]}}},'LIVE')[0];
+ assert.equal(row.state,'OPEN');assert.equal(row.evidence,'UNKNOWN');
+});
 test('live identity includes tenant',()=>assert.notEqual(M.liveId(scope,p),M.liveId({...scope,tenant:'8'},p)));
 test('live identity includes network',()=>assert.notEqual(M.liveId(scope,p),M.liveId({...scope,network:'MAINNET'},p)));
 test('live identity includes order proof',()=>assert.notEqual(M.liveId(scope,p),M.liveId(scope,{...p,order_ids:['other']})));

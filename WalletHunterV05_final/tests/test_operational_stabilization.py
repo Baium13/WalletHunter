@@ -43,4 +43,28 @@ class RegistryTests(unittest.TestCase):
         self.assertEqual(q['size'],10)
         self.assertGreaterEqual(q['p95_ms'],q['p50_ms'])
 
+class StreamTests(unittest.TestCase):
+    def test_bounded_priority_dedup_and_order(self):
+        import threading
+        from core.intelligence.stream_buffer import TradeBuffer
+        b=TradeBuffer(3);stop=threading.Event();b.protected=frozenset({'owned'})
+        for i in range(10):b.put({'tid':i,'time':i,'users':['noise']},stop)
+        b.put({'tid':20,'time':20,'users':['owned']},stop)
+        b.put({'tid':20,'time':20,'users':['owned']},stop)
+        self.assertEqual(b.metrics()['queue_depth'],3)
+        self.assertEqual(b.metrics()['dedup'],1)
+        self.assertEqual(b.metrics()['dropped_critical'],0)
+        self.assertEqual(b.take(1)[0]['tid'],20)
+        self.assertEqual([r['time'] for r in b.take()],[8,9])
+    def test_critical_backpressure_no_loss(self):
+        import threading,time
+        from core.intelligence.stream_buffer import TradeBuffer
+        b=TradeBuffer(1);b.protected=frozenset({'owned'});stop=threading.Event()
+        b.put({'tid':1,'users':['owned']},stop)
+        thread=threading.Thread(target=lambda:b.put({'tid':2,'users':['owned']},stop))
+        thread.start();time.sleep(.02)
+        self.assertTrue(thread.is_alive());self.assertEqual(b.take()[0]['tid'],1)
+        thread.join(1);self.assertFalse(thread.is_alive());self.assertEqual(b.take()[0]['tid'],2)
+        self.assertEqual(b.metrics()['dropped_critical'],0)
+
 if __name__=='__main__':unittest.main()

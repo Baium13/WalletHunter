@@ -46,66 +46,97 @@ class RequestBudget:
 
 
 class PublicTrades:
-    """One bounded public socket; no account subscription or private data.
-
-    WsTrade.users=[buyer,seller] is documented in Hyperliquid subscriptions.
-    Socket snapshots are candidate discovery only, never executable signals.
-    """
+    """One continuous public consumer; financial fills remain REST-cursor owned."""
     def __init__(self, network, coins=('BTC','ETH','HYPE')):
+        import threading
+        from .stream_buffer import TradeBuffer
         self.network=validated_network(network)
-        if not 1<=len(coins)<=4: raise ValueError('SUBSCRIPTION_LIMIT')
-        for coin in coins: InstrumentId(network=self.network,symbol=coin)
+        if not 1<=len(coins)<=4:raise ValueError('SUBSCRIPTION_LIMIT')
+        for coin in coins:InstrumentId(network=self.network,symbol=coin)
         self.coins,self.socket=coins,None
         self.telemetry_id=uuid.uuid4().hex
         self.failures=0;self.retry_at=0;self.last_disconnect_reason=None
-    def poll(self):
+        self.buffer=TradeBuffer();self.stop=threading.Event();self.thread=None
+        self.connected_at=None;self.reconnects=0;self.connections=0
+
+    def _disconnect(self):
+        sock,self.socket=self.socket,None
+        if sock is not None:
+            try:sock.close()
+            except Exception:pass
+        from core.hl_budget import configured
+        budget=configured()
+        if budget:budget.websocket(self.telemetry_id,'close')
+
+    def _failed(self,exc):
+        self.failures+=1
+        self.retry_at=time.monotonic()+min(300,2**min(self.failures,8)+random.uniform(0,2))
+        self.last_disconnect_reason=type(exc).__name__
+        self._disconnect()
+
+    def _consume(self):
         import websocket
-        if time.monotonic()<self.retry_at:raise ValueError('PUBLIC_STREAM_BACKOFF')
+        from core.hl_budget import configured
+        heartbeat=0.
         try:
-            if self.socket is None:
+            while not self.stop.is_set():
+                sock=self.socket
+                if sock is None:return
+                if time.monotonic()-heartbeat>=5:
+                    budget=configured()
+                    if budget:budget.websocket(self.telemetry_id,'heartbeat',len(self.coins))
+                    heartbeat=time.monotonic()
+                try:raw=sock.recv()
+                except websocket.WebSocketTimeoutException:continue
+                if not raw or len(raw)>262144:raise ValueError('STREAM_DISCONNECTED_OR_OVERSIZED')
+                message=json.loads(raw)
+                if message.get('channel')!='trades':continue
+                rows=message.get('data')
+                if not isinstance(rows,list) or len(rows)>256:raise ValueError('STREAM_BATCH_INVALID')
+                for row in rows:
+                    if not isinstance(row,dict) or not isinstance(row.get('users'),list):continue
+                    if not all(isinstance(x,str) for x in row['users']):continue
+                    self.buffer.put(row,self.stop)
+                if rows:self.failures=0
+        except Exception as exc:
+            if not self.stop.is_set():self._failed(exc)
+
+    def poll(self):
+        import threading
+        import websocket
+        if self.stop.is_set():raise ValueError('PUBLIC_STREAM_CLOSED')
+        if time.monotonic()<self.retry_at:raise ValueError('PUBLIC_STREAM_BACKOFF')
+        if self.thread is None or not self.thread.is_alive():
+            try:
                 from core.hl_budget import configured
                 budget=configured()
                 if budget:budget.websocket(self.telemetry_id,'attempt')
                 host='api.hyperliquid.xyz' if self.network=='MAINNET' else 'api.hyperliquid-testnet.xyz'
                 self.socket=websocket.create_connection('wss://'+host+'/ws',timeout=2,enable_multithread=True)
-                from core.hl_budget import configured
-                budget=configured()
+                self.socket.settimeout(.5)
+                self.connected_at=time.monotonic()
+                self.reconnects+=int(self.connections>0);self.connections+=1
                 if budget:budget.websocket(self.telemetry_id,'connect',0)
-                for coin in self.coins:
-                    self.socket.send(packed({'method':'subscribe','subscription':{'type':'trades','coin':coin}}))
+                for coin in self.coins:self.socket.send(packed({'method':'subscribe','subscription':{'type':'trades','coin':coin}}))
                 if budget:budget.websocket(self.telemetry_id,'send',len(self.coins))
-            from core.hl_budget import configured
-            budget=configured()
-            if budget:budget.websocket(self.telemetry_id,'heartbeat',len(self.coins))
-            self.socket.settimeout(.2)
-            found=[]
-            for _ in range(5):
-                try: message=self.socket.recv()
-                except websocket.WebSocketTimeoutException: break
-                if not message or len(message)>262144: raise ValueError('STREAM_DISCONNECTED_OR_OVERSIZED')
-                message=json.loads(message)
-                if message.get('channel')!='trades': continue
-                rows=message['data']
-                if not isinstance(rows,list) or len(rows)>256: raise ValueError('STREAM_BATCH_INVALID')
-                found.extend(rows)
-            if found:self.failures=0
-            return found
-        except Exception as exc:
-            self.failures+=1
-            self.retry_at=time.monotonic()+min(300,2**min(self.failures,8))+random.uniform(0,2)
-            self.last_disconnect_reason=type(exc).__name__
-            from core.hl_budget import configured
-            budget=configured()
-            if budget:budget.websocket(self.telemetry_id,'disconnect')
-            self.close()
-            raise ValueError('PUBLIC_STREAM_UNAVAILABLE') from None
+                self.thread=threading.Thread(target=self._consume,name='public-trades-reader',daemon=True)
+                self.thread.start()
+            except Exception as exc:
+                self._failed(exc)
+                raise ValueError('PUBLIC_STREAM_UNAVAILABLE') from None
+        return self.buffer.take()
+
+    def metrics(self):
+        value=self.buffer.metrics()
+        value.update(connection_age_ms=int((time.monotonic()-self.connected_at)*1000) if self.socket and self.connected_at else None,
+            reconnects=self.reconnects,connected=self.socket is not None)
+        return value
+
     def close(self):
-        if self.socket is not None:
-            try: self.socket.close()
-            finally: self.socket=None
-            from core.hl_budget import configured
-            budget=configured()
-            if budget:budget.websocket(self.telemetry_id,'close')
+        self.stop.set()
+        with self.buffer.condition:self.buffer.condition.notify_all()
+        self._disconnect()
+        if self.thread is not None:self.thread.join(timeout=3)
 
 
 class WalletDiscoveryEngine:

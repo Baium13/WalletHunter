@@ -12,6 +12,10 @@ from .service import PublicTrades, WalletDiscoveryEngine
 
 
 def tick(engine, reader, stream, now, clock=None):
+    if hasattr(stream,'buffer'):
+        with engine.store.transaction() as db:
+            active={r[0] for r in db.execute("SELECT wallet FROM candidates WHERE network=? AND status='ACTIVE'",(engine.network,))}
+        stream.buffer.protected=frozenset(active|set(getattr(engine,'position_owned_leaders',())))
     try:
         trades=stream.poll()
     except Exception:
@@ -30,7 +34,8 @@ def tick(engine, reader, stream, now, clock=None):
             if type(stamp) is int and 0<=received-stamp<=300000 and math.isfinite(price) and math.isfinite(size) and price>0 and size>0:
                 stamps.append(stamp)
         except (KeyError,ValueError,TypeError):pass
-    engine.health_observation('public_data',received,details={'source':'PUBLIC_TRADES_WEBSOCKET',
+    telemetry=stream.metrics() if hasattr(stream,'metrics') else {}
+    engine.health_observation('public_data',received,details={**telemetry,'source':'PUBLIC_TRADES_WEBSOCKET',
         'exchange_ms':max(stamps) if stamps else None,'subscriptions':list(getattr(stream,'coins',())),
         'activity':'RECEIVED' if stamps else 'WAITING_FOR_TRADE'})
     return engine.cycle(reader,trades,now,clock=clock)

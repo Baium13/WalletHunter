@@ -174,10 +174,15 @@ def reader_account_snapshot(reader, scope, revision, clock_ms):
             oid = row.get("oid")
             if oid is None:
                 raise DataUnavailable("ORDER_ID_UNAVAILABLE")
+            size=finite_amount(row.get("sz"), "order size")
+            # A cancelled trigger shell may be returned with sz=0. It cannot
+            # mutate exposure, so omit it without weakening malformed-value checks.
+            if size <= 0:
+                continue
             orders.append(OpenOrder(
                 instrument=InstrumentId(network=scope.network, dex=dex,
                     symbol=str(row["coin"]).split(":")[-1]),
-                order_id=str(oid), size=finite_amount(row.get("sz"), "order size"),
+                order_id=str(oid), size=size,
                 reduce_only=row["reduceOnly"]))
 
     # Reuse the canonical capital semantics.  Unified accounts use the single
@@ -237,9 +242,15 @@ def copy_account_snapshot(client, scope, revision, clock_ms, dex, require_collat
         if not isinstance(raw, list): raise DataUnavailable("ORDERS_UNAVAILABLE")
         for row in raw:
             if type(row.get("reduceOnly")) is not bool: raise DataUnavailable("ORDER_SCOPE_UNKNOWN")
+            size = finite_amount(row.get("sz"), "order size")
+            # Hyperliquid may retain zero-size cancelled/trigger shells in the
+            # frontend open-order feed.  They cannot mutate exposure and must
+            # not make an otherwise valid account snapshot unavailable.
+            if size <= 0:
+                continue
             orders.append(OpenOrder(instrument=InstrumentId(network=scope.network, dex=pool,
                 symbol=row["coin"].split(":")[-1]), order_id=str(row["oid"]),
-                size=finite_amount(row.get("sz"), "order size"), reduce_only=row["reduceOnly"]))
+                size=size, reduce_only=row["reduceOnly"]))
     equity = capacity = sizing = None
     try:
         if not require_collateral: raise ValueError('Collateral not required for proven reduction')

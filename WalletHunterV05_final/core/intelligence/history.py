@@ -41,7 +41,7 @@ class IncrementalHistory:
                 try:rows=info({'type':'userFillsByTime','user':address,'startTime':lo,'endTime':hi,'aggregateByTime':False})
                 except Exception as exc:
                     from core.hl_budget import BudgetUnavailable
-                    raise HistoryIncomplete('BUDGET_DEFERRED' if isinstance(exc,BudgetUnavailable) else 'TRANSPORT_FAILURE') from exc
+                    raise HistoryIncomplete('BUDGET_DEFERRED' if isinstance(exc,BudgetUnavailable) or str(exc)=='RESOURCE_BUDGET' else 'TRANSPORT_FAILURE') from exc
                 if not isinstance(rows,list) or len(rows)>RESPONSE_CAP:raise HistoryIncomplete('INVALID_RESPONSE')
                 valid=[(_key(f,lo,hi),f) for f in rows]
                 if len(rows)==RESPONSE_CAP:

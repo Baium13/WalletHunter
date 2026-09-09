@@ -70,6 +70,8 @@ class JobStore:
         """
         count=0
         with self.store.transaction() as db:
+            mode=db.execute('SELECT mode FROM autonomous_modes WHERE scope=?',(self.scope,)).fetchone()
+            if not mode or mode[0] not in {'PAPER_AUTO','SHADOW'}:raise ValueError('NONFINANCIAL_CLASSIFICATION_MODE')
             rows=db.execute("SELECT event_id,record FROM autonomous_jobs WHERE scope=? AND stage='QUARANTINED' AND reason='ValueError' LIMIT 128",(self.scope,)).fetchall()
             for row in rows:
                 body=json.loads(row['record']);event=body.get('event',{})
@@ -78,7 +80,8 @@ class JobStore:
                 # Reject classification if any canonical identity exists.
                 if db.execute('SELECT 1 FROM autonomous_decisions WHERE scope=? AND event_id=? AND intent IS NOT NULL',(self.scope,event_id)).fetchone():continue
                 if db.execute("SELECT 1 FROM intents WHERE scope=? AND json_extract(body,'$.correlation_id')=?",(self.scope,event_id)).fetchone():continue
-                if db.execute("SELECT 1 FROM position_episodes WHERE scope=? AND json_extract(body,'$.leader')=? AND json_extract(body,'$.instrument')=json(?) AND json_extract(body,'$.state')!='REJECTED'",(self.scope,event.get('wallet'),json.dumps(event.get('instrument')))).fetchone():continue
+                episodes=[json.loads(r[0]) for r in db.execute("SELECT body FROM position_episodes WHERE scope=? AND json_extract(body,'$.leader')=?",(self.scope,event.get('wallet')))]
+                if any(e.get('instrument')==event.get('instrument') and e.get('state')!='REJECTED' for e in episodes):continue
                 db.execute('INSERT OR IGNORE INTO historical_job_classification VALUES(?,?,?,?)',
                     (self.scope,event_id,'NO_FOLLOWER_EPISODE_NO_CANONICAL_INTENT',self.clock()))
                 db.execute("UPDATE autonomous_jobs SET stage='SKIPPED_HISTORICAL',updated_ms=? WHERE scope=? AND event_id=?",(self.clock(),self.scope,event_id))

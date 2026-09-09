@@ -537,8 +537,11 @@ class ProductReadModel:
             from core.hl_budget import snapshot as budget_snapshot
             api_budget=budget_snapshot(self.root/'data/hl-api-budget.sqlite3')
         except (OSError,sqlite3.Error):pass
+        from core.operational_health import storage_health
+        storage=storage_health(self.root,self.clock())
+        if storage['status'] in {'UNHEALTHY','DEGRADED'} and status=='HEALTHY':status='DEGRADED'
         return clean({'version':'product-v1','scope':self.scope.model_dump(mode='json'),'checked_ms':self.clock(),'live_auto':False,
-            'runtimes':modes,'analysis':self.shared_analysis(modes),'account':account,'manual_copy':manual,'discovery':discovery,'health':{'status':status,'components':components,'api_budget':api_budget},
+            'runtimes':modes,'analysis':self.shared_analysis(modes),'account':account,'manual_copy':manual,'discovery':discovery,'health':{'status':status,'components':components,'api_budget':api_budget,'storage':storage},
             'history_limit':100,'legacy_paper_substitution':False})
 
     def episode(self,episode_id):

@@ -4,7 +4,7 @@ Official rules: https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/a
 Perp prices: five significant figures, at most 6-szDecimals decimal places;
 integer prices are exempt from the significant-figure restriction.
 """
-from decimal import Decimal, InvalidOperation, ROUND_DOWN, ROUND_HALF_UP, localcontext
+from decimal import Decimal, InvalidOperation, ROUND_DOWN, ROUND_UP, ROUND_HALF_UP, localcontext
 import math
 
 
@@ -40,7 +40,7 @@ def normalize_perp_size(size, sz_decimals):
         return _float(value.quantize(Decimal(1).scaleb(-digits), rounding=ROUND_DOWN))
 
 
-def normalize_perp_price(price, sz_decimals):
+def normalize_perp_price(price, sz_decimals, *, rounding=ROUND_HALF_UP):
     value, digits = _decimal(price), _decimals(sz_decimals)
     if value <= 0:
         raise ValueError("Price must be positive")
@@ -48,7 +48,22 @@ def normalize_perp_price(price, sz_decimals):
     places = 0 if value == value.to_integral_value() else max(0, min(6 - digits, 4 - value.adjusted()))
     with localcontext() as context:
         context.prec = max(32, len(value.as_tuple().digits) + abs(value.adjusted()) + places + 2)
-        result = value.quantize(Decimal(1).scaleb(-places), rounding=ROUND_HALF_UP)
+        result = value.quantize(Decimal(1).scaleb(-places), rounding=rounding)
     if result <= 0:
         raise ValueError("Price rounds to zero at this market's tick size")
     return _float(result)
+
+
+def normalize_copy_limit(bound, size_step, *, buy):
+    """Round toward the approved interval, never back to the unmarketable mid.
+
+    Perpetual lot steps are powers of ten. BUY floors the maximum price;
+    SELL ceils the minimum price. Neither operation widens approved slippage.
+    """
+    step = _decimal(size_step)
+    if not step or type(buy) is not bool:
+        raise ValueError('Explicit lot step and side required')
+    digits = -step.adjusted()
+    if step != Decimal(1).scaleb(-digits):
+        raise ValueError('Unsupported perpetual lot step')
+    return normalize_perp_price(bound, digits, rounding=ROUND_DOWN if buy else ROUND_UP)

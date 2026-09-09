@@ -380,6 +380,35 @@ class ManualCopyWorkerTests(unittest.TestCase):
         self.assert_action('OPEN');calls=len(self.client.calls)
         self.worker=ManualCopyWorker(self.case.engine,self.reader)
         self.cycle();self.assertEqual(len(self.client.calls),calls)
+
+    def test_paused_flat_generation_does_not_poll_unowned_leader(self):
+        from unittest.mock import patch
+        self.worker.service.stop(self.account,self.client)
+        with patch.object(self.worker,'leader_snapshot',side_effect=AssertionError('No admission polling')):
+            report=self.cycle()
+        self.assertEqual(report['status'],'PAUSED')
+        self.assertEqual(report['monitored'],[])
+        self.assertFalse(self.client.calls)
+
+    def test_real_ioc_rejection_settles_and_restart_never_resubmits_same_intent(self):
+        from unittest.mock import patch
+        import time
+        def rejected(coin,buy,size,limit_price,reduce_only,cloid,dex='',**kwargs):
+            now=int(time.time()*1000)
+            self.client.orders[cloid]={'status':'order','order':{'status':'iocCancelRejected','statusTimestamp':now,
+                'order':{'oid':42,'cloid':cloid,'coin':coin,'side':'B' if buy else 'A','reduceOnly':reduce_only,
+                         'origSz':str(size),'limitPx':str(limit_price),'timestamp':now}}}
+            raise TimeoutError('Acknowledgement lost after exchange rejection')
+        with patch.object(self.client,'submit_copy_ioc',side_effect=rejected) as submit:
+            report=self.cycle()
+        self.assertEqual(report['results'][0]['status'],'UNKNOWN')
+        self.worker.service.stop(self.account,self.client)
+        with patch.object(self.client,'submit_copy_ioc',side_effect=AssertionError('No retry')):
+            report=self.cycle()
+            self.assertEqual(report['recovery'][0]['status'],'REJECTED',report)
+            self.cycle()
+        self.assertEqual(submit.call_count,1)
+        self.assertFalse(self.case.engine.journal.pending(self.f.ACCOUNT))
     def test_stale_or_missing_denominator_does_not_open(self):
         self.stale=True;self.cycle();self.assertFalse(self.client.calls)
         self.stale=False;self.capital=None;report=self.cycle()

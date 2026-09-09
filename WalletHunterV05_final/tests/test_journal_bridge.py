@@ -280,6 +280,31 @@ class LiveReconciliationTests(unittest.TestCase):
         self.response["order"]["status"] = "iocCancel"
         self.assertEqual(self.result().status, "REJECTED")
 
+    def test_documented_placement_rejections_require_all_exchange_proofs(self):
+        from core.foundation.live_reconciliation import PLACEMENT_REJECTIONS
+        self.fills = []
+        self.after = self.after.model_copy(update={'positions': ()})
+        for status in PLACEMENT_REJECTIONS:
+            self.response['order']['status'] = status
+            self.assertEqual(self.result().status, 'REJECTED', status)
+        self.response['order']['status'] = 'someFutureRejected'
+        self.assertEqual(self.result().status, 'UNKNOWN')
+        self.response['order']['status'] = 'iocCancelRejected'
+        self.fills = [dict(oid=12,tid=1,coin='BTC',side='B',sz='1',px='100',time=1001)]
+        self.assertEqual(self.result().status, 'UNKNOWN')
+
+    def test_copy_limit_keeps_marketable_slippage_without_widening_it(self):
+        from core.order_precision import normalize_copy_limit
+        mid = 79641.
+        sell = normalize_copy_limit(mid * .995, .00001, buy=False)
+        buy = normalize_copy_limit(mid * 1.005, .00001, buy=True)
+        self.assertEqual(sell, 79243.)
+        self.assertEqual(buy, 80039.)
+        self.assertLess(sell, mid)
+        self.assertGreaterEqual(sell, mid * .995)
+        self.assertGreater(buy, mid)
+        self.assertLessEqual(buy, mid * 1.005)
+
     def test_close_and_reduce_use_fill_proof(self):
         from core.foundation.live_reconciliation import client_order_id
         for action in ("CLOSE", "REDUCE"):

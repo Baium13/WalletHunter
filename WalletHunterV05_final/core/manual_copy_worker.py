@@ -113,7 +113,7 @@ class ManualCopyWorker:
         with closing(self.engine.journal.connect()) as db:
             quarantines=active_in(db,scope)
         if quarantines:config=config.model_copy(update={'enabled':False})
-        report=dict(enabled=config.enabled,leader=config.leader,status='HOLD',heartbeat_ms=self.clock(),
+        report=dict(enabled=config.enabled,leader=config.leader,generation_id=config.generation_id,status='HOLD',heartbeat_ms=self.clock(),
             denominator='PER_DEX_MARGIN_SUMMARY_ACCOUNT_VALUE',monitored=[],results=[],errors=[])
         if not config.enabled and not config.generation_id and not quarantines:
             # A selected draft is not permission to follow or replay a leader.
@@ -124,7 +124,10 @@ class ManualCopyWorker:
             report['recovery']=list(recover_pending_manual_leader(self.engine,account,client))
             owned=self.engine.journal.owned(scope.account)
             manual={k:r for k,r in owned.items() if r.get('managed') and r.get('strategy')=='MANUAL_LEADER_COPY'}
-            leaders={config.leader}
+            # A paused, flat generation has no admission subscription. Retain
+            # owned HOLD leaders and query-only execution recovery, not polling
+            # an unowned selected wallet at trading priority every few seconds.
+            leaders={config.leader} if config.enabled else set()
             for r in manual.values():
                 leaders.update(x['wallet'] for x in r.get('source_targets',[]))
             # Keep admission bounded and rotate old HOLD leaders, so adding
@@ -133,7 +136,8 @@ class ManualCopyWorker:
             previous=self.diagnostics(scope) or {}
             cursor=int(previous.get('lifecycle_cursor',0))%max(1,len(old_leaders))
             rotated=old_leaders[cursor:]+old_leaders[:cursor]
-            leaders=[config.leader]+rotated[:self.MAX_LEADERS-1]
+            selected=[config.leader] if config.leader in leaders else []
+            leaders=selected+rotated[:self.MAX_LEADERS-len(selected)]
             report['lifecycle_cursor']=(cursor+self.MAX_LEADERS-1)%max(1,len(old_leaders))
             evidence={}
             for leader in leaders:

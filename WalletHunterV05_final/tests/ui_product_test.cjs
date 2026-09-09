@@ -39,7 +39,16 @@ test('activity includes risk filter and preserves node identities',()=>{assert.m
 test('one primary runtime, no legacy owners',()=>{assert.doesNotMatch(html,/static\/(app|ai|chart|matrix|manual-trade|i18n)\.js/);assert.match(html,/product-model\.js/);});
 test('product views never fetch legacy portfolio data',()=>assert.doesNotMatch(js,/\/api\/(dashboard|ai|intelligence|positions|report)[/'?"`]/));
 test('no synthetic production signals or profit',()=>assert.doesNotMatch(js,/Math\.random|demoWallet|fakePnl/));
-test('five primary navigation destinations',()=>assert.match(js,/\['home','positions','core','leaders','agents'\]/));
+test('four primary destinations with secondary views still accessible',()=>{assert.match(js,/\['home','manual','agents','core'\]/);for(const page of ['positions','leaders','analytics','activity','health','settings'])assert.match(js,new RegExp('data-nav="'+page+'"|[\x27"]'+page+'[\x27"]'));});
+test('execution status uses the selected financial runtime, never public consensus as authority',()=>{
+ const vm=require('node:vm'),fn=js.match(/^function tradingStatus\(\).*$/m)[0];
+ const run={allowed_instrument:{symbol:'BTC'},execution:{reconciliation_backlog:0},latest_decision:{reason:'NO_FOLLOWER_POSITION',event:{action:'CLOSE',instrument:{symbol:'CELO'},exchange_ms:1}}};
+ const context={r:()=>run,S:{mode:'PAPER_AUTO'},t:(ru,en)=>en,esc:String,L:String,dt:String,card:(t,b)=>b,evidence:JSON.stringify};
+ const value=vm.runInNewContext('('+fn+')()',context);
+ assert.match(value,/BTC/);assert.match(value,/No follower position/);assert.match(value,/CELO/);
+ run.execution.reconciliation_backlog=1;
+ assert.match(vm.runInNewContext('('+fn+')()',context),/No retry/);
+});
 test('privacy persists and charts do not leak masked values',()=>{assert.match(js,/pref\.set\('wh_privacy'/);assert.match(css,/\.privacy \.financial-chart/);});
 test('privacy covers analytics and wallet input',()=>{assert.match(css,/\.privacy #manual-wallet/);assert.match(css,/analytics-metrics/);});
 test('initial mode is unknown and manual view never implies PAPER authorization',()=>{assert.match(js,/mode:'UNKNOWN'/);assert.match(js,/Manual Copy is independent/);});

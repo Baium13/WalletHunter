@@ -136,8 +136,8 @@ def execute_copy(engine, account, client, operation, action, size, buy, spec, be
     slippage = float(engine.settings.max_slippage_pct)
     # Rounding inward must never widen the risk-approved bound.
     raw = price*(1 + slippage/100 if buy else 1-slippage/100)
-    limit = client.round_price(coin, raw, dex)
-    if (limit > raw if buy else limit < raw): limit = client.round_price(coin, price, dex)
+    from core.order_precision import normalize_copy_limit
+    limit = normalize_copy_limit(raw, client.size_step(coin,dex), buy=buy)
     weights = spec.get('sources') or engine.journal.owned(scope.account).get(instrument.market_key, {}).get('source_targets', [])
     if action in {'OPEN','ADD','REDUCE'}:
         size = client.round_size(coin, size, dex)

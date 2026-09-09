@@ -9,6 +9,19 @@ from core.capital_snapshot import finite_amount
 from .contracts import OrderIntent, PortfolioSnapshot, ExecutionReceipt, Fill
 from .store import digest
 
+# Explicit documented placement rejections, not arbitrary '*Rejected' strings.
+# https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/info-endpoint
+# Identity, complete fill history, open orders and position delta are still proven.
+PLACEMENT_REJECTIONS = frozenset({
+    'rejected', 'tickRejected', 'minTradeNtlRejected', 'perpMarginRejected',
+    'reduceOnlyRejected', 'badAloPxRejected', 'iocCancelRejected',
+    'badTriggerPxRejected', 'marketOrderNoLiquidityRejected',
+    'positionIncreaseAtOpenInterestCapRejected', 'positionFlipAtOpenInterestCapRejected',
+    'tooAggressiveAtOpenInterestCapRejected', 'openInterestIncreaseRejected',
+    'insufficientSpotBalanceRejected', 'oracleRejected', 'perpMaxPositionRejected',
+})
+TERMINAL_STATUSES = PLACEMENT_REJECTIONS | {'filled', 'canceled', 'iocCancel'}
+
 
 def client_order_id(intent):
     intent = OrderIntent.model_validate_json(intent.model_dump_json())
@@ -46,7 +59,7 @@ def reconcile_order(intent, before, after, client, *, now_ms, max_age_ms):
         response = client.query_order_by_cloid(cloid)
         wrapper, order = response["order"], response["order"]["order"]
         oid = order["oid"]
-        if (response["status"] != "order" or wrapper["status"] not in {"filled", "canceled", "iocCancel", "rejected"}
+        if (response["status"] != "order" or wrapper["status"] not in TERMINAL_STATUSES
                 or type(oid) is not int or oid < 0 or order.get("cloid") != cloid
                 or order.get("coin") != coin or order.get("side") != expected_side
                 or type(order.get("reduceOnly")) is not bool
@@ -98,7 +111,7 @@ def reconcile_order(intent, before, after, client, *, now_ms, max_age_ms):
             if wrapper["status"] == "filled": return unknown()
             return ExecutionReceipt(intent_id=intent.intent_id, scope=intent.scope, status="REJECTED",
                 order_ids=(str(oid),), reconciliation="REJECTED", received_ms=now_ms, provenance="EXCHANGE")
-        if wrapper["status"] == "rejected": return unknown()
+        if wrapper["status"] in PLACEMENT_REJECTIONS: return unknown()
         partial = filled < intent.size
         return ExecutionReceipt(intent_id=intent.intent_id, scope=intent.scope, status="PARTIAL" if partial else "FILLED",
             order_ids=(str(oid),), fills=tuple(sorted(fills, key=lambda f: (f.exchange_ms, f.trade_id))),

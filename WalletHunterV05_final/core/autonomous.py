@@ -86,8 +86,14 @@ class AutonomousBackend:
                     (discovery.network,rows[-1]['seq'] if rows else after)).fetchone()
             health.update(actionable_backlog=tail[0],actionable_lag_ms=max(0,self.clock()-tail[1]) if tail[1] else 0)
             health['reconciliation_backlog']=health['unresolved_execution_count']
+            health['closed_episode_count']=db.execute("SELECT COUNT(*) FROM position_episodes WHERE scope=? AND json_extract(body,'$.state')='CLOSED'",(scope,)).fetchone()[0]
+            health['calibration_count']=db.execute('SELECT COUNT(*) FROM calibration_records WHERE scope=?',(scope,)).fetchone()[0]
+            health['last_episode_created_ms']=db.execute("SELECT MAX(json_extract(body,'$.created_ms')) FROM position_episodes WHERE scope=?",(scope,)).fetchone()[0]
+            health['last_action_ms']=db.execute('SELECT MAX(updated_ms) FROM autonomous_jobs WHERE scope=?',(scope,)).fetchone()[0]
             health['quarantined_jobs']=db.execute("SELECT COUNT(*) FROM autonomous_jobs WHERE scope=? AND stage='QUARANTINED'",(scope,)).fetchone()[0]
-            health['quarantine_count']+=health['quarantined_jobs']
+            # Delivery and job tables describe the same poison event. Count
+            # their union, not both physical representations.
+            health.update(self.jobs.quarantine_summary_in(db))
             health['status']='DEGRADED' if health['quarantine_count'] or health['unresolved_execution_count'] else 'HEALTHY'
             # Readiness is a fresh worker/configuration observation, not a
             # fabricated market signal or a successful execution timestamp.
@@ -107,6 +113,7 @@ class AutonomousBackend:
         with account_guard(Path(self.store.path).parent,self.auth_policy.scope.account):
             job=self.jobs.claim(event.event_id,record)
             if job['stage']=='QUARANTINED':return {'status':'QUARANTINED','event_id':event.event_id}
+            if job['stage']=='SKIPPED_HISTORICAL':return {'status':'SKIPPED_NO_FOLLOWER_POSITION','event_id':event.event_id}
             try:
                 result=self._process(record)
                 self.jobs.stage(event.event_id,'RECONCILING' if result.get('status') in {'UNKNOWN','PARTIAL','SUBMITTING'} else
@@ -145,6 +152,17 @@ class AutonomousBackend:
         reservations=[Reservation(**json.loads(r[0])) for r in pending]
         ledger=AutonomousLedger(before,self.allocation_policy,reservations)
         position=next((p for p in before.positions if p.instrument==event.instrument),None) if episode else None
+        if episode is None and event.action in {'ADD','REDUCE','CLOSE'}:
+            # A leader action is not evidence that this follower entered the
+            # original trade. Never turn ADD into OPEN or adopt other exposure.
+            unexplained=any(p.instrument==event.instrument for p in before.positions)
+            body={'event':event.model_dump(mode='json'),'mode':self.auth_policy.mode,
+                'status':'WAIT' if unexplained else 'SKIP','reason':'FOLLOWER_OWNERSHIP_UNPROVEN' if unexplained else 'NO_FOLLOWER_POSITION',
+                'correlation_id':event.event_id,'submission':False}
+            with self.store.transaction() as db:
+                db.execute('INSERT INTO autonomous_decisions VALUES(?,?,?,?,NULL)',
+                    (hashlib.sha256((scope_key(scope)+'|'+event.event_id+'|no-follower').encode()).hexdigest(),scope_key(scope),event.event_id,json.dumps(body)))
+            return body
         reducing=event.action in {'REDUCE','CLOSE'}
         book=record['book']
         bid=float(book['levels'][0][0]['px']); ask=float(book['levels'][1][0]['px'])

@@ -113,6 +113,35 @@ class IntelligenceTests(unittest.TestCase):
         self.assertEqual(result['episode']['state'],'OPEN')
         self.assertEqual(backend.process(record),result)
 
+    def test_add_without_owned_episode_is_durable_skip_not_quarantine(self):
+        backend,record=self.paper_backend()
+        record=json.loads(json.dumps(record))
+        record['event'].update(action='ADD',before_size=1.,after_size=2.,size=1.)
+        result=backend.process(record)
+        self.assertEqual(result['status'],'SKIP')
+        self.assertEqual(result['reason'],'NO_FOLLOWER_POSITION')
+        self.assertEqual(backend.process(record),result)
+        self.assertEqual(backend.exchange.calls,0)
+        with backend.store.transaction() as db:
+            self.assertEqual(db.execute('SELECT COUNT(*) FROM intents').fetchone()[0],0)
+            self.assertEqual(db.execute('SELECT stage FROM autonomous_jobs').fetchone()[0],'COMPLETED')
+
+    def test_historical_add_classification_retains_audit_and_prevents_replay(self):
+        backend,record=self.paper_backend()
+        record=json.loads(json.dumps(record));record['event'].update(action='ADD',before_size=1.,after_size=2.,size=1.)
+        event_id=record['event']['event_id']
+        backend.jobs.claim(event_id,record);backend.jobs.stage(event_id,'QUARANTINED','ValueError')
+        backend.jobs.quarantine(9,json.dumps(record),'ValueError')
+        with backend.store.transaction() as db:self.assertEqual(backend.jobs.quarantine_summary_in(db)['quarantine_count'],1)
+        self.assertEqual(backend.jobs.classify_nonfinancial_adds(),1)
+        self.assertEqual(backend.jobs.classify_nonfinancial_adds(),0)
+        with backend.store.transaction() as db:
+            summary=backend.jobs.quarantine_summary_in(db)
+            self.assertEqual(summary['quarantine_count'],0);self.assertEqual(summary['historical_quarantine_count'],1)
+            self.assertEqual(db.execute('SELECT COUNT(*) FROM autonomous_quarantine').fetchone()[0],1)
+        self.assertEqual(backend.process(record)['status'],'SKIPPED_NO_FOLLOWER_POSITION')
+        self.assertEqual(backend.exchange.calls,0)
+
     def live_backend(self):
         from types import SimpleNamespace
         from core.autonomous import AutonomousBackend

@@ -66,7 +66,12 @@ def main(argv=None):
                     import json
                     with backend.store.transaction() as db:
                         episodes=db.execute("SELECT body FROM position_episodes WHERE scope=?",(scope_key(backend.auth_policy.scope),)).fetchall()
-                    engine.position_owned_leaders={e['leader'] for row in episodes if (e:=json.loads(row['body']))['state']!='CLOSED'}
+                        from core.position_episodes import PositionEpisode
+                        engine.position_owned_leaders=set()
+                        for row in episodes:
+                            e=PositionEpisode.model_validate_json(row['body'])
+                            proven=backend.episodes.active_in(db,e.scope,e.mode,e.leader,e.instrument)
+                            if proven is not None:engine.position_owned_leaders.add(e.leader)
                 ok=tick(engine,reader,stream,int(time.time()*1000),clock=lambda:int(time.time()*1000))
                 if backend is not None: backend.drain(engine)
                 mode=backend.auth_policy.mode if backend is not None else 'OBSERVE'

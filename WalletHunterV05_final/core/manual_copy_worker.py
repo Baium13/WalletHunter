@@ -96,7 +96,10 @@ class ManualCopyWorker:
         config=self.service.config(account,client)
         if config is None:
             previous=self.diagnostics(scope) or {}
-            if previous.get('reset_epoch') and self.clock()-previous.get('account_attempt_ms',0)>=60000:
+            # OFF after a clean reset has no leader/lifecycle to monitor. This
+            # is display-only evidence, never evidence authorizing a new order.
+            # Explicit preview/START still obtains fresh private account data.
+            if previous.get('reset_epoch') and self.clock()-previous.get('account_attempt_ms',0)>=900000:
                 from core.foundation.data import copy_account_snapshot
                 previous['account_attempt_ms']=self.clock()
                 try:

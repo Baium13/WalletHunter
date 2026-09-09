@@ -57,7 +57,7 @@ class PublicTrades:
         self.telemetry_id=uuid.uuid4().hex
         self.failures=0;self.retry_at=0;self.last_disconnect_reason=None
         self.buffer=TradeBuffer();self.stop=threading.Event();self.thread=None
-        self.connected_at=None;self.reconnects=0;self.connections=0;self.messages_received=0
+        self.connected_at=None;self.reconnects=0;self.connections=0;self.messages_received=0;self.invalid_messages=0
 
     def _disconnect(self):
         sock,self.socket=self.socket,None
@@ -97,6 +97,11 @@ class PublicTrades:
                 for row in rows:
                     if not isinstance(row,dict) or not isinstance(row.get('users'),list):continue
                     if not all(isinstance(x,str) for x in row['users']):continue
+                    try:
+                        if type(row.get('time')) is not int or row['time']<0:raise ValueError()
+                        if any(not math.isfinite(float(row[k])) or float(row[k])<=0 for k in ('px','sz')):raise ValueError()
+                    except (KeyError,ValueError,TypeError,OverflowError):
+                        self.invalid_messages+=1;continue
                     self.buffer.put(row,self.stop)
                 if rows:self.failures=0
         except Exception as exc:
@@ -131,7 +136,7 @@ class PublicTrades:
         value=self.buffer.metrics()
         value.update(connection_age_ms=int((time.monotonic()-self.connected_at)*1000) if self.socket and self.connected_at else None,
             reconnects=self.reconnects,connected=self.socket is not None,messages_received=self.messages_received,
-            messages_per_second=self.messages_received/max(1,time.monotonic()-self.buffer.started))
+            messages_per_second=self.messages_received/max(1,time.monotonic()-self.buffer.started),invalid_messages=self.invalid_messages)
         return value
 
     def close(self):

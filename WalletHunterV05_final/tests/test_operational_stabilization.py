@@ -43,6 +43,16 @@ class RegistryTests(unittest.TestCase):
         self.assertEqual(q['size'],10)
         self.assertGreaterEqual(q['p95_ms'],q['p50_ms'])
 
+    def test_research_hot_archive_keeps_original_replay_rows(self):
+        with self.engine.store.transaction() as db:
+            db.executemany('INSERT INTO intelligence_records VALUES(?,?,?,?,?)',
+                ((str(i),'TESTNET','WALLET_DISCOVERED',NOW-8*86400000,'{}') for i in range(100000)))
+            self.engine._record(db,'LEADER_ANALYZED',{'test':'new'},NOW)
+            self.assertEqual(db.execute('SELECT COUNT(*) FROM intelligence_records').fetchone()[0],100001)
+            self.assertEqual(db.execute('SELECT COUNT(*) FROM research_archive').fetchone()[0],20000)
+            self.assertEqual(db.execute('SELECT COUNT(*) FROM research_hot').fetchone()[0],80001)
+            self.assertEqual(db.execute("SELECT body FROM intelligence_records WHERE id='1'").fetchone()[0],'{}')
+
 class HistoryTests(unittest.TestCase):
     def test_incremental_tail_does_not_refresh_by_cache(self):
         from core.intelligence.history import IncrementalHistory
@@ -78,6 +88,32 @@ class HistoryTests(unittest.TestCase):
             self.assertEqual(IncrementalHistory(store,'MAINNET').fetch(lambda p:[],'wallet',0,4000,2,'deep'),[])
 
 class StreamTests(unittest.TestCase):
+    def test_continuous_reader_does_not_wait_for_next_cycle(self):
+        import json,queue,threading
+        from unittest.mock import patch
+        import websocket
+        from core.intelligence.service import PublicTrades
+        class Socket:
+            def __init__(self):
+                self.items=queue.Queue();self.consumed=threading.Event();self.count=0
+                for i in range(30):self.items.put(json.dumps({'channel':'trades','data':[{'time':NOW+i,'px':'1','sz':'1','tid':i,'users':['a','b']}]}))
+            def send(self,value):pass
+            def settimeout(self,value):pass
+            def close(self):pass
+            def recv(self):
+                try:result=self.items.get(timeout=.02)
+                except queue.Empty:raise websocket.WebSocketTimeoutException()
+                self.count+=1
+                if self.count==30:self.consumed.set()
+                return result
+        sock=Socket();stream=PublicTrades('TESTNET')
+        with patch('websocket.create_connection',return_value=sock),patch('core.hl_budget.configured',return_value=None):
+            first=stream.poll()
+            self.assertTrue(sock.consumed.wait(1))
+            stream.close()
+            self.assertEqual(len(first)+len(stream.buffer.take()),30)
+            self.assertEqual(stream.messages_received,30)
+
     def test_bounded_priority_dedup_and_order(self):
         import threading
         from core.intelligence.stream_buffer import TradeBuffer

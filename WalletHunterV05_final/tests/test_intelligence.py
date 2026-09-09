@@ -26,6 +26,8 @@ class PublicFixture:
     def __init__(self): self.fills=history(); self.calls=[]
     def _info(self,p):
         self.calls.append(p['type'])
+        if p['type']=='clearinghouseState':return {'time':NOW,'marginSummary':{'accountValue':'1000'},'assetPositions':[]}
+        if p['type']=='spotClearinghouseState':return {'balances':[]}
         if p['type']=='userFillsByTime': return [f for f in self.fills if p['startTime']<=f['time']<=p['endTime']]
         if p['type']=='l2Book': return {'time':NOW+1000,'levels':[[{'px':'100','sz':'1000'}],[{'px':'100.01','sz':'1000'}]]}
         if p['type']=='candleSnapshot': return [{'T':NOW-(63-i)*900000,'c':100+i,'h':101+i,'l':99+i} for i in range(64)]
@@ -418,10 +420,10 @@ class IntelligenceTests(unittest.TestCase):
     def signal(self):
         self.reader.fills.append(fill(3000,direction='Open Long',side='B',start='0',pnl='0',time=NOW+1000))
         return self.worker.detect(ADDRESS,self.reader._info,NOW+1000)[0]
-    def test_discovery_registry_bounded_and_network_scoped(self):
+    def test_discovery_admission_bounded_not_lifetime_and_network_scoped(self):
         w=WalletDiscoveryEngine(self.path,'TESTNET',IntelligencePolicy(registry_limit=1))
         w.observe([{'time':NOW,'users':[ADDRESS,'0x'+'b'*40]}],NOW)
-        self.assertEqual(sum(w.snapshot(NOW)['counts'].values()),1)
+        self.assertEqual(sum(w.snapshot(NOW)['counts'].values()),2)
         self.assertEqual(WalletDiscoveryEngine(self.path,'MAINNET').snapshot(NOW)['counts'],{})
     def test_restart_preserves_registry(self):
         self.discover()
@@ -455,7 +457,7 @@ class IntelligenceTests(unittest.TestCase):
     def test_cheap_filter_avoids_deep_requests(self):
         self.discover(); self.reader.fills=[]
         self.assertIsNone(self.worker.analyze_one(ADDRESS,self.reader._info,NOW))
-        self.assertEqual(len(self.reader.calls),1)
+        self.assertEqual(self.reader.calls,['userFillsByTime','clearinghouseState','clearinghouseState','spotClearinghouseState'])
     def test_promote_watchlist_without_trading_admission(self):
         self.activate()
         view=self.worker.snapshot(NOW)

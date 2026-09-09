@@ -18,23 +18,25 @@ class RegistryTests(unittest.TestCase):
                 db.execute('INSERT INTO candidates VALUES(?,?,?,?,?,?,?,?,?,?)',('TESTNET',address,NOW-86400000,NOW-3600000,'ACTIVE' if i==0 else 'PROBATION',NOW-10000-i,0,None,None,None))
     def test_archive_preserves_protected_history_and_identity(self):
         self.engine.position_owned_leaders={self.wallets[1]}
-        self.assertEqual(self.engine.retire_candidates(NOW),2)
+        self.assertEqual(self.engine.retire_candidates(NOW),0)
+        self.assertEqual(self.engine.retire_candidates(NOW+7*86400000),8)
         with self.engine.store.transaction() as db:
             self.assertEqual(db.execute('SELECT COUNT(*) FROM candidates').fetchone()[0],10)
-            self.assertEqual(db.execute("SELECT COUNT(*) FROM candidates WHERE status='ARCHIVED'").fetchone()[0],2)
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM candidates WHERE status='ARCHIVED'").fetchone()[0],8)
             for address in self.wallets[:2]:
                 self.assertNotEqual(db.execute('SELECT status FROM candidates WHERE wallet=?',(address,)).fetchone()[0],'ARCHIVED')
         self.assertEqual(self.engine.retire_candidates(NOW),0)
     def test_fresh_reentry_no_duplicate_and_no_old_event_replay(self):
-        self.engine.retire_candidates(NOW)
+        archived_at=NOW+7*86400000
+        self.engine.retire_candidates(archived_at)
         with self.engine.store.transaction() as db:
             address=db.execute("SELECT wallet FROM candidates WHERE status='ARCHIVED' LIMIT 1").fetchone()[0]
-        t=NOW+1800001
+        t=archived_at+1800001
         self.engine.observe([{'time':t,'users':[address,self.wallets[0]]}],t)
         with self.engine.store.transaction() as db:
             self.assertEqual(db.execute('SELECT COUNT(*) FROM candidates').fetchone()[0],10)
             self.assertEqual(db.execute('SELECT status FROM candidates WHERE wallet=?',(address,)).fetchone()[0],'DISCOVERED')
-            self.assertEqual(db.execute('SELECT COUNT(*) FROM candidate_retirements').fetchone()[0],2)
+            self.assertEqual(db.execute('SELECT COUNT(*) FROM candidate_retirements').fetchone()[0],9)
     def test_fair_oldest_slot_survives_restart(self):
         for _ in range(3):self.engine.scheduled_candidates(NOW)
         restored=WalletDiscoveryEngine(self.engine.store.path,'TESTNET',self.engine.policy)

@@ -11,7 +11,7 @@ from core.hyperliquid import HyperliquidReader
 from .service import PublicTrades, WalletDiscoveryEngine
 
 
-def tick(engine, reader, stream, now, clock=None):
+def tick(engine, reader, stream, now, clock=None,on_decision=None):
     if hasattr(stream,'buffer'):
         with engine.store.transaction() as db:
             active={r[0] for r in db.execute("SELECT wallet FROM candidates WHERE network=? AND status='ACTIVE'",(engine.network,))}
@@ -21,7 +21,7 @@ def tick(engine, reader, stream, now, clock=None):
     except Exception:
         # Continue pending research/watchlist recovery during socket failure,
         # but never advertise a healthy discovery connection.
-        engine.cycle(reader,[],now,clock=clock)
+        engine.cycle(reader,[],now,clock=clock,on_decision=on_decision)
         with engine.store.transaction() as db:
             db.execute("UPDATE intelligence_health SET error='PUBLIC_STREAM_UNAVAILABLE',errors=errors+1 WHERE network=?",(engine.network,))
         engine.health_observation('public_data',clock() if clock else now,error='PUBLIC_STREAM_UNAVAILABLE')
@@ -38,7 +38,7 @@ def tick(engine, reader, stream, now, clock=None):
     engine.health_observation('public_data',received,details={**telemetry,'source':'PUBLIC_TRADES_WEBSOCKET',
         'exchange_ms':max(stamps) if stamps else None,'subscriptions':list(getattr(stream,'coins',())),
         'activity':'RECEIVED' if stamps else 'WAITING_FOR_TRADE'})
-    return engine.cycle(reader,trades,now,clock=clock)
+    return engine.cycle(reader,trades,now,clock=clock,on_decision=on_decision)
 
 
 def main(argv=None):
@@ -48,9 +48,13 @@ def main(argv=None):
     parser.add_argument('--once',action='store_true')
     parser.add_argument('--paper-config',help='Explicit isolated PAPER policy JSON; omitted means research only')
     parser.add_argument('--paper-state-directory',help='Dedicated PAPER state directory')
+    parser.add_argument('--discovery-config',help='Operational resource/segmentation JSON; not PAPER/scoring policy')
     args=parser.parse_args(argv)
     if bool(args.paper_config)!=bool(args.paper_state_directory): parser.error('Both PAPER options are required together')
-    engine=WalletDiscoveryEngine(args.database,args.network)
+    from .discovery_operations import DiscoveryOperations
+    from pathlib import Path
+    operations=DiscoveryOperations.model_validate_json(Path(args.discovery_config).read_text()) if args.discovery_config else DiscoveryOperations()
+    engine=WalletDiscoveryEngine(args.database,args.network,operations=operations)
     reader=HyperliquidReader(args.network)
     stream=PublicTrades(args.network)
     backend=None
@@ -72,7 +76,11 @@ def main(argv=None):
                             e=PositionEpisode.model_validate_json(row['body'])
                             proven=backend.episodes.active_in(db,e.scope,e.mode,e.leader,e.instrument)
                             if proven is not None:engine.position_owned_leaders.add(e.leader)
-                ok=tick(engine,reader,stream,int(time.time()*1000),clock=lambda:int(time.time()*1000))
+                # Recover financial work first. Newly captured actionable data
+                # reaches PAPER before optional historical research can age it.
+                if backend is not None:backend.drain(engine)
+                ok=tick(engine,reader,stream,int(time.time()*1000),clock=lambda:int(time.time()*1000),
+                    on_decision=(lambda:backend.drain(engine)) if backend is not None else None)
                 if backend is not None: backend.drain(engine)
                 mode=backend.auth_policy.mode if backend is not None else 'OBSERVE'
                 print(mode+(' HEALTHY' if ok else ' DEGRADED'),flush=True)

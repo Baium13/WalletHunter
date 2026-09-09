@@ -306,7 +306,12 @@ class ProductReadModel:
             with reader(self.research_path) as db:
                 counts={r[0]:r[1] for r in db.execute('SELECT status,COUNT(*) FROM candidates WHERE network=? GROUP BY status',(self.scope.network,))}
                 result['counts']={**counts,'OBSERVED':sum(counts.values())}
-                for r in db.execute('SELECT wallet,status,last_seen,analysis FROM candidates WHERE network=? ORDER BY score DESC,wallet LIMIT 32',(self.scope.network,)):
+                result['registry']={'total':sum(counts.values()),'total_limit':None,
+                    'cold':sum(counts.get(k,0) for k in ('ARCHIVED','INACTIVE','ZERO_SUPPORTED_CAPITAL','HIGH_FREQUENCY'))}
+                if db.execute("SELECT 1 FROM sqlite_master WHERE name='candidate_segments'").fetchone():
+                    result['research_sectors']={r[0]:r[1] for r in db.execute('SELECT sector,COUNT(*) FROM candidate_segments WHERE network=? GROUP BY sector',(self.scope.network,))}
+                    result['sector_details']=[dict(r) for r in db.execute('SELECT wallet,sector,reason,checked_ms,recheck_ms FROM candidate_segments WHERE network=? ORDER BY checked_ms DESC LIMIT 32',(self.scope.network,))]
+                for r in db.execute("SELECT wallet,status,last_seen,analysis FROM candidates WHERE network=? AND status NOT IN ('ARCHIVED','INACTIVE','ZERO_SUPPORTED_CAPITAL','HIGH_FREQUENCY') ORDER BY score DESC,wallet LIMIT 32",(self.scope.network,)):
                     analysis=json.loads(r['analysis']) if r['analysis'] else None
                     if isinstance(analysis,dict):analysis={k:analysis[k] for k in ('wallet','network','computed_ms','score','windows','history_method','equity_drawdown_pct','funding_included','not_a_profit_probability') if k in analysis}
                     result['leaders'].append(dict(wallet=r['wallet'],status=r['status'],last_seen=r['last_seen'],analysis=analysis))

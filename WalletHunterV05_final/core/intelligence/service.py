@@ -147,9 +147,11 @@ class PublicTrades:
 
 
 class WalletDiscoveryEngine:
-    def __init__(self, path, network, policy=None):
+    def __init__(self, path, network, policy=None, operations=None):
+        from .discovery_operations import DiscoveryOperations
         self.network=validated_network(network)
         self.policy=policy or IntelligencePolicy()
+        self.operations=operations or DiscoveryOperations()
         path=Path(path)
         if path.is_symlink() or path.parent.is_symlink(): raise ValueError('RESEARCH_PATH_UNSAFE')
         if path.exists():
@@ -180,6 +182,9 @@ class WalletDiscoveryEngine:
                 CREATE TABLE IF NOT EXISTS discovery_schedule(network TEXT PRIMARY KEY,turn INTEGER NOT NULL);
                 CREATE TABLE IF NOT EXISTS watch_scan_state(network TEXT,wallet TEXT,last_success INTEGER,last_attempt INTEGER,error TEXT,PRIMARY KEY(network,wallet));
                 CREATE TABLE IF NOT EXISTS research_archive(id TEXT PRIMARY KEY,archived_ms INTEGER,reason TEXT);
+                CREATE TABLE IF NOT EXISTS candidate_segments(network TEXT,wallet TEXT,sector TEXT,reason TEXT,checked_ms INTEGER,recheck_ms INTEGER,evidence TEXT,PRIMARY KEY(network,wallet));
+                CREATE INDEX IF NOT EXISTS candidate_due ON candidates(network,status,next_eval,wallet);
+                CREATE INDEX IF NOT EXISTS segment_due ON candidate_segments(network,recheck_ms);
                 CREATE VIEW IF NOT EXISTS research_hot AS SELECT r.* FROM intelligence_records r WHERE NOT EXISTS (SELECT 1 FROM research_archive a WHERE a.id=r.id);
                 CREATE TRIGGER IF NOT EXISTS research_no_update BEFORE UPDATE ON intelligence_records BEGIN SELECT RAISE(ABORT,'append only'); END;
                 CREATE TRIGGER IF NOT EXISTS research_no_delete BEFORE DELETE ON intelligence_records BEGIN SELECT RAISE(ABORT,'append only'); END;
@@ -209,7 +214,8 @@ class WalletDiscoveryEngine:
             eligible=db.execute("SELECT id FROM research_hot WHERE kind IN ('WALLET_DISCOVERED','LEADER_ANALYZED') AND created<? AND id NOT IN (SELECT record_id FROM decision_links) ORDER BY created,id LIMIT 20000",(now-7*DAY,)).fetchall()
             db.executemany('INSERT OR IGNORE INTO research_archive VALUES(?,?,?)',
                 [(r['id'],now,'COLD_PUBLIC_RESEARCH') for r in eligible])
-            if not eligible:raise ValueError('RESEARCH_HOT_CAPACITY_PROTECTED')
+            # Protected audit evidence is never evicted. A full logical hot
+            # index must not become a lifetime ceiling on wallet discovery.
         db.execute('INSERT INTO intelligence_records VALUES(?,?,?,?,?)',(record_id,self.network,kind,now,packed(body)))
         correlation=body.get('event_id') or body.get('event',{}).get('event_id') or record_id
         reference=AnalysisResult(instrument=instrument or InstrumentId(network=self.network,symbol='BTC'),
@@ -219,32 +225,48 @@ class WalletDiscoveryEngine:
         return record_id
 
     def retire_candidates(self,now):
-        """Archive low-priority registry entries, never their immutable evidence.
+        """Cold public observations, not deletion or an account-inactivity claim.
 
-        An 80% low watermark avoids one-for-one churn at the hard ceiling.
-        At least 30 minutes of inactivity is required; active/qualified and
-        position-owned leaders are not eligible, even if capacity stays full.
+        There is no total registry ceiling. Cold entries remain searchable and
+        re-enter on fresh evidence; active/qualified/position-owned survive.
         """
         protected=set(getattr(self,'position_owned_leaders',()))
         with self.store.transaction() as db:
-            count=db.execute("SELECT COUNT(*) FROM candidates WHERE network=? AND status!='ARCHIVED'",(self.network,)).fetchone()[0]
-            target=max(1,int(self.policy.registry_limit*.8))
-            high=min(self.policy.registry_limit,max(target+1,math.ceil(self.policy.registry_limit*.85)))
-            if count<high:return 0
-            rows=db.execute("SELECT wallet,status FROM candidates WHERE network=? AND status IN ('DISCOVERED','CANDIDATE','PROBATION','RETIRED') AND last_seen<? ORDER BY CASE WHEN analysis IS NULL THEN 0 ELSE 1 END,COALESCE(score,0),last_seen,wallet",
-                (self.network,now-1800000)).fetchall()
+            rows=db.execute("SELECT wallet,status FROM candidates WHERE network=? AND status IN ('DISCOVERED','CANDIDATE','PROBATION','RETIRED') AND last_seen<? ORDER BY last_seen,wallet LIMIT 64",
+                (self.network,now-self.operations.inactive_ms)).fetchall()
             retired=0
             for row in rows:
-                if count-retired<=target:break
                 if row['wallet'] in protected:continue
-                db.execute('INSERT INTO candidate_retirements VALUES(?,?,?,?,?)',(self.network,row['wallet'],now,row['status'],'CAPACITY_LOW_PRIORITY_INACTIVE'))
-                db.execute("UPDATE candidates SET status='ARCHIVED' WHERE network=? AND wallet=?",(self.network,row['wallet']))
+                db.execute('INSERT INTO candidate_retirements VALUES(?,?,?,?,?)',(self.network,row['wallet'],now,row['status'],'COLD_PUBLIC_OBSERVATION'))
+                db.execute("UPDATE candidates SET status='ARCHIVED',next_eval=? WHERE network=? AND wallet=?",(now+self.operations.cold_recheck_ms,self.network,row['wallet']))
                 retired+=1
             return retired
 
+    def segment(self,address,sector,reason,evidence,now):
+        from .discovery_operations import COLD
+        if sector not in (*COLD,'NORMAL'):raise ValueError('RESEARCH_SEGMENT')
+        wait=self.operations.bot_recheck_ms if sector=='HIGH_FREQUENCY' else self.operations.cold_recheck_ms
+        with self.store.transaction() as db:
+            old=db.execute('SELECT sector FROM candidate_segments WHERE network=? AND wallet=?',(self.network,address)).fetchone()
+            db.execute('INSERT OR REPLACE INTO candidate_segments VALUES(?,?,?,?,?,?,?)',
+                (self.network,address,sector,reason,now,now+wait,packed(evidence)))
+            if sector!='NORMAL':db.execute('UPDATE candidates SET status=?,next_eval=? WHERE network=? AND wallet=?',(sector,now+wait,self.network,address))
+            elif old and old['sector']!='NORMAL':db.execute("UPDATE candidates SET status='CANDIDATE',next_eval=? WHERE network=? AND wallet=?",(now,self.network,address))
+            if old is None or old['sector']!=sector:self._record(db,'WALLET_SEGMENT_CHANGED',dict(wallet=address,sector=sector,reason=reason,evidence=evidence,at=now),now)
+
+    def research_capacity(self,now):
+        from .discovery_operations import resources
+        state=resources(self.store.path,self.operations)
+        with self.store.transaction() as db:
+            count=db.execute("SELECT COUNT(*) FROM candidates WHERE network=? AND status IN ('ACTIVE','QUALIFIED') AND json_extract(analysis,'$.score.qualified')=1 AND json_extract(analysis,'$.score.computed_ms') BETWEEN ? AND ?",(self.network,now-self.policy.reevaluate_ms,now)).fetchone()[0]
+        state.update(potential_count=count,potential_target=self.operations.potential_target,
+            discovery_mode='IDLE_ONLY' if count>=self.operations.potential_target else 'BUILDING_POOL',
+            registry_total_limit=None,operations=self.operations.model_dump(mode='json'))
+        return state
+
     def candidate_queue(self,now):
         with self.store.transaction() as db:
-            rows=db.execute("SELECT next_eval,analysis FROM candidates WHERE network=? AND status!='ARCHIVED' AND next_eval<=? ORDER BY next_eval",(self.network,now)).fetchall()
+            rows=db.execute("SELECT next_eval,analysis FROM candidates WHERE network=? AND status NOT IN ('ARCHIVED','INACTIVE','ZERO_SUPPORTED_CAPITAL','HIGH_FREQUENCY') AND next_eval<=? ORDER BY next_eval",(self.network,now)).fetchall()
         waits=sorted(now-r['next_eval'] for r in rows)
         return dict(size=len(rows),oldest_ms=max(waits,default=0),
             p50_ms=waits[int((len(waits)-1)*.5)] if waits else 0,
@@ -252,7 +274,7 @@ class WalletDiscoveryEngine:
             cheap=sum(r['analysis'] is None for r in rows),deep=sum(r['analysis'] is not None for r in rows),
             warning_ms=21600000,warning=bool(waits and waits[-1]>21600000))
 
-    def scheduled_candidates(self,now):
+    def scheduled_candidates(self,now,capacity=None):
         """Three fresh/quality slots then one oldest slot; durable fair rotation."""
         with self.store.transaction() as db:
             row=db.execute('SELECT turn FROM discovery_schedule WHERE network=?',(self.network,)).fetchone()
@@ -260,13 +282,17 @@ class WalletDiscoveryEngine:
             protected=sorted(set(getattr(self,'position_owned_leaders',())))
             if len(protected)>32:raise ValueError('POSITION_WATCH_CAPACITY')
             slots=','.join('?' for _ in protected) or 'NULL'
-            order='next_eval,wallet' if turn%4==3 else "CASE WHEN status='ACTIVE' THEN 0 WHEN wallet IN ("+slots+") THEN 1 WHEN status='QUALIFIED' THEN 2 ELSE 3 END,last_seen DESC,COALESCE(score,0) DESC,next_eval,wallet"
-            rows=db.execute("SELECT wallet FROM candidates WHERE network=? AND status!='ARCHIVED' AND next_eval<=? ORDER BY "+order+' LIMIT ?',
+            order='next_eval,wallet' if turn%4==3 else "CASE WHEN status='ACTIVE' THEN 0 WHEN wallet IN ("+slots+") THEN 1 WHEN status='QUALIFIED' THEN 2 ELSE 3 END,COALESCE(score,0) DESC,next_eval,wallet"
+            restriction=" AND status NOT IN ('ARCHIVED','INACTIVE','ZERO_SUPPORTED_CAPITAL','HIGH_FREQUENCY')" if turn%8!=7 else ''
+            if capacity and (not capacity['allow_research'] or (capacity['potential_count']>=self.operations.potential_target and not capacity['idle'])):
+                restriction=" AND status IN ('ACTIVE','QUALIFIED')"
+                if not capacity['allow_research']:return []
+            rows=db.execute("SELECT wallet FROM candidates WHERE network=? AND next_eval<=?"+restriction+" ORDER BY "+order+' LIMIT ?',
                 (self.network,now,*([] if turn%4==3 else protected),self.policy.deep_per_cycle)).fetchall()
             db.execute('INSERT OR REPLACE INTO discovery_schedule VALUES(?,?)',(self.network,turn+1))
             return rows
 
-    def observe(self,trades,now):
+    def observe(self,trades,now,*,allow_new=True):
         if not isinstance(trades,list) or len(trades)>1280: raise ValueError('OBSERVATION_BOUND')
         addresses=set()
         for row in trades:
@@ -278,10 +304,9 @@ class WalletDiscoveryEngine:
                 try: addresses.add(wallet(user))
                 except ValueError: continue
         self.retire_candidates(now)
-        # Leave 15% operational headroom, including during noisy public bursts.
-        # Four admissions/cycle bounds audit growth to 11,520/day at 30s cycles;
-        # reevaluation/scoring thresholds themselves are unchanged.
-        high=min(self.policy.registry_limit,max(2,math.ceil(self.policy.registry_limit*.85)))
+        # Bound work per cycle, not lifetime registry size. Archived records
+        # keep identity; cold bot/zero-capital sectors never re-enter on a fill
+        # alone and need their scheduled fresh evidence check.
         admitted=0
         with self.store.transaction() as db:
             for address in sorted(addresses):
@@ -290,20 +315,43 @@ class WalletDiscoveryEngine:
                     db.execute('UPDATE candidates SET last_seen=MAX(last_seen,?) WHERE network=? AND wallet=?',(now,self.network,address))
                     if exists['status']=='ARCHIVED':
                         retired=db.execute('SELECT MAX(retired) FROM candidate_retirements WHERE network=? AND wallet=?',(self.network,address)).fetchone()[0]
-                        count=db.execute("SELECT COUNT(*) FROM candidates WHERE network=? AND status!='ARCHIVED'",(self.network,)).fetchone()[0]
-                        if retired is not None and now-retired>=1800000 and count<high and admitted<4:
+                        if allow_new and retired is not None and now-retired>=1800000 and admitted<self.operations.admissions_per_cycle:
                             db.execute("UPDATE candidates SET status='DISCOVERED',next_eval=? WHERE network=? AND wallet=?",(now,self.network,address))
                             admitted+=1
-                elif admitted<4 and db.execute("SELECT COUNT(*) FROM candidates WHERE network=? AND status!='ARCHIVED'",(self.network,)).fetchone()[0]<high:
+                elif allow_new and admitted<self.operations.admissions_per_cycle:
                     db.execute('INSERT INTO candidates VALUES(?,?,?,?,?,?,?,?,?,?)',(self.network,address,now,now,'DISCOVERED',now,now,None,None,None))
                     self._record(db,'WALLET_DISCOVERED',{'wallet':address,'network':self.network,'observed_ms':now},now)
                     admitted+=1
 
-    def analyze_one(self,address,info,now):
+    def analyze_one(self,address,info,now,clock=None):
         address=wallet(address)
         from .history import IncrementalHistory
         history=IncrementalHistory(self.store,self.network)
-        cheap=history.fetch(info,address,max(0,now-DAY),now,2,'cheap')
+        from .discovery_operations import high_frequency,supported_account
+        # One bounded recent sample before expensive pagination. Capped rows
+        # establish only high-frequency lower bounds, never profitability.
+        sample=info({'type':'userFillsByTime','user':address,'startTime':max(0,now-DAY),'endTime':now,'aggregateByTime':False})
+        frequency=high_frequency(sample,now,self.operations)
+        if frequency['suspected']:
+            self.segment(address,'HIGH_FREQUENCY','HIGH_ORDER_RATE_NOT_COPY_TARGET',frequency,now)
+            return None
+        with self.store.transaction() as db:
+            segment=db.execute('SELECT sector FROM candidate_segments WHERE network=? AND wallet=?',(self.network,address)).fetchone()
+        # Reuse the exact sample in history retrieval; do not pay twice.
+        cached=[sample]
+        def screened_info(payload):
+            if cached and payload.get('type')=='userFillsByTime' and payload.get('user')==address and payload.get('startTime')==max(0,now-DAY) and payload.get('endTime')==now:return cached.pop()
+            return info(payload)
+        cheap=history.fetch(screened_info,address,max(0,now-DAY),now,2,'cheap')
+        # Current supported capital is checked before expensive deep history.
+        evidence=supported_account(info,address,now,clock=clock)
+        if evidence['zero_supported_capital']:
+            self.segment(address,'ZERO_SUPPORTED_CAPITAL','NO_CAPITAL_IN_SUPPORTED_POOLS',evidence,now);return None
+        with self.store.transaction() as db:
+            observed=db.execute('SELECT last_seen FROM candidates WHERE network=? AND wallet=?',(self.network,address)).fetchone()
+        if not cheap and not evidence['open_positions'] and observed and now-observed['last_seen']>=self.operations.inactive_ms:
+            self.segment(address,'INACTIVE','NO_RECENT_FILLS_OR_POSITIONS',evidence,now);return None
+        self.segment(address,'NORMAL','FRESH_RECHECK_PASSED',evidence,now)
         if len(cheap)<self.policy.cheap_min_fills:
             with self.store.transaction() as db:
                 db.execute("UPDATE candidates SET status='CANDIDATE',next_eval=? WHERE network=? AND wallet=?",(now+self.policy.reevaluate_ms,self.network,address))
@@ -324,7 +372,7 @@ class WalletDiscoveryEngine:
 
     def promote(self,now):
         with self.store.transaction() as db:
-            winners=db.execute("SELECT wallet,status FROM candidates WHERE network=? AND status IN ('QUALIFIED','ACTIVE') AND next_eval>? ORDER BY score DESC,confidence DESC,wallet LIMIT ?",(self.network,now,self.policy.watch_limit)).fetchall()
+            winners=db.execute("SELECT wallet,status FROM candidates WHERE network=? AND status IN ('QUALIFIED','ACTIVE') AND next_eval>? AND json_extract(analysis,'$.score.computed_ms') BETWEEN ? AND ? ORDER BY score DESC,confidence DESC,wallet LIMIT ?",(self.network,now,now-self.policy.reevaluate_ms,now,self.policy.watch_limit)).fetchall()
             selected={r['wallet'] for r in winners}
             active=db.execute("SELECT wallet FROM candidates WHERE network=? AND status='ACTIVE'",(self.network,)).fetchall()
             for row in active:
@@ -396,7 +444,7 @@ class WalletDiscoveryEngine:
             db.execute('INSERT INTO decision_links VALUES(?,?)',(event.event_id,record_id))
         return decision
 
-    def cycle(self,reader,trades,now,clock=None):
+    def cycle(self,reader,trades,now,clock=None,on_decision=None):
         if reader.network!=self.network: raise ValueError('NETWORK_MISMATCH')
         clock=clock or (lambda:now)
         with self.store.transaction() as db:
@@ -443,14 +491,17 @@ class WalletDiscoveryEngine:
                     event=LeaderTradeEvent.model_validate_json(queued['body'])
                     leader=LeaderScore.model_validate(json.loads(queued['analysis'])['score'])
                     self.research(event,leader,info,clock(),clock=clock)
+                    if on_decision is not None:on_decision()
                 except Exception: errors.append('RESEARCH_DEFERRED')
-            self.observe(trades,now)
-            self.health_observation('discovery',clock(),details={'queue':self.candidate_queue(clock())})
-            pending=self.scheduled_candidates(now)
+            capacity=self.research_capacity(clock())
+            self.observe(trades,now,allow_new=capacity['allow_research'] and
+                (capacity['potential_count']<self.operations.potential_target or capacity['idle']))
+            self.health_observation('discovery',clock(),details={'queue':self.candidate_queue(clock()),**capacity})
+            pending=self.scheduled_candidates(now,capacity)
             for row in pending:
                 try:
-                    self.analyze_one(row['wallet'],info,clock())
-                    self.health_observation('deep_analysis',clock(),details={'queue_checked':True})
+                    analysis=self.analyze_one(row['wallet'],info,clock(),clock=clock)
+                    self.health_observation('deep_analysis',clock(),details={'queue_checked':True,'screened':True,'analysis_completed':analysis is not None})
                 except Exception as exc:
                     errors.append('HISTORY_INCOMPLETE')
                     causes=[];cause=exc
@@ -461,7 +512,9 @@ class WalletDiscoveryEngine:
                         cause=cause.__cause__
                     self.health_observation('deep_analysis',clock(),error='HISTORY_INCOMPLETE',details={'queue_checked':True,'causes':causes})
                     with self.store.transaction() as db:
-                        db.execute("UPDATE candidates SET status='PROBATION',next_eval=? WHERE network=? AND wallet=?",(now+60000,self.network,row['wallet']))
+                        # Transient missing evidence is not disqualification;
+                        # cold sectors remain cold, and qualify only on proof.
+                        db.execute("UPDATE candidates SET next_eval=? WHERE network=? AND wallet=?",(now+60000,self.network,row['wallet']))
             if not pending:self.health_observation('deep_analysis',clock(),details={'idle':True,'queue_checked':True})
             self.promote(clock())
         except Exception: errors.append('DISCOVERY_UNAVAILABLE')

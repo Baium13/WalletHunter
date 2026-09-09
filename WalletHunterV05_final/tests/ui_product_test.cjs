@@ -32,6 +32,11 @@ test('live portfolio exposure remains open without origin linkage',()=>{
  const row=M.positions({...s,account:{...s.account,portfolio:{positions:[exchangeRow]}}},'LIVE')[0];
  assert.equal(row.state,'OPEN');assert.equal(row.evidence,'UNKNOWN');
 });
+test('live position metrics accept canonical account field names',()=>{
+ const exchangeRow={...p,evidence:'UNKNOWN',entry_price:undefined,entry:79373,position_value:111,margin_used:11,current_price:79400};
+ const row=M.positions({...s,account:{...s.account,portfolio:{positions:[exchangeRow]}}},'LIVE')[0];
+ assert.equal(row.entry,79373);assert.equal(row.notional,111);assert.equal(row.margin,11);assert.equal(row.current_price,79400);
+});
 test('live identity includes tenant',()=>assert.notEqual(M.liveId(scope,p),M.liveId({...scope,tenant:'8'},p)));
 test('live identity includes network',()=>assert.notEqual(M.liveId(scope,p),M.liveId({...scope,network:'MAINNET'},p)));
 test('live identity includes order proof',()=>assert.notEqual(M.liveId(scope,p),M.liveId(scope,{...p,order_ids:['other']})));

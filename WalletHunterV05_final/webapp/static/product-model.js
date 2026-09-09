@@ -14,7 +14,7 @@
    // current_price/pnl are optional live marks refreshed by the read-only UI
    // price feed. Preserve them when available instead of resetting them on
    // every product snapshot/render.
-   const current=number(p.current_price??p.mark_price),entry=number(p.entry_price),size=number(p.size);
+   const current=number(p.current_price??p.mark_price),entry=number(p.entry_price??p.entry),size=number(p.size);
    const markedPnl=number(p.pnl)??(current!==null&&entry!==null&&size!==null&&['LONG','SHORT'].includes(p.side)?(current-entry)*size*(p.side==='LONG'?1:-1):null);
    // Exchange-observed exposure is an open position even when provenance is
    // still UNKNOWN. Keep provenance/evidence separate from the lifecycle
@@ -28,7 +28,7 @@
    // its lifecycle is OPEN even when ownership/provenance and the mark feed
    // are temporarily unavailable.  Keep those evidence fields untouched.
    const lifecycle=(p.state&&p.state!=='UNKNOWN')?p.state:'OPEN';
-   return {...p,id:liveId(s.scope,p),mode:'LIVE',entry:p.entry_price,current_price:current,pnl:markedPnl,state:lifecycle,actions,
+   return {...p,id:liveId(s.scope,p),mode:'LIVE',entry:entry,current_price:current,margin:p.margin??p.margin_used,notional:p.notional??p.position_value,pnl:markedPnl,state:lifecycle,actions,
     timeline:actions.flatMap(a=>[
      {type:'ORDER_INTENT',timestamp:a.timestamp,intent_id:a.intent_id,correlation_id:a.correlation_id,evidence:a.intent},
      ...(a.risk?[{type:'RISK',timestamp:a.risk.created_ms,intent_id:a.intent_id,correlation_id:a.correlation_id,evidence:a.risk}]:[]),

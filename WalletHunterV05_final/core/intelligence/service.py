@@ -223,8 +223,9 @@ class WalletDiscoveryEngine:
         protected=set(getattr(self,'position_owned_leaders',()))
         with self.store.transaction() as db:
             count=db.execute("SELECT COUNT(*) FROM candidates WHERE network=? AND status!='ARCHIVED'",(self.network,)).fetchone()[0]
-            if count<self.policy.registry_limit:return 0
             target=max(1,int(self.policy.registry_limit*.8))
+            high=min(self.policy.registry_limit,max(target+1,math.ceil(self.policy.registry_limit*.85)))
+            if count<high:return 0
             rows=db.execute("SELECT wallet,status FROM candidates WHERE network=? AND status IN ('DISCOVERED','CANDIDATE','PROBATION','RETIRED') AND last_seen<? ORDER BY CASE WHEN analysis IS NULL THEN 0 ELSE 1 END,COALESCE(score,0),last_seen,wallet",
                 (self.network,now-1800000)).fetchall()
             retired=0
@@ -269,6 +270,11 @@ class WalletDiscoveryEngine:
                 try: addresses.add(wallet(user))
                 except ValueError: continue
         self.retire_candidates(now)
+        # Leave 15% operational headroom, including during noisy public bursts.
+        # Four admissions/cycle bounds audit growth to 11,520/day at 30s cycles;
+        # reevaluation/scoring thresholds themselves are unchanged.
+        high=min(self.policy.registry_limit,max(2,math.ceil(self.policy.registry_limit*.85)))
+        admitted=0
         with self.store.transaction() as db:
             for address in sorted(addresses):
                 exists=db.execute('SELECT status FROM candidates WHERE network=? AND wallet=?',(self.network,address)).fetchone()
@@ -277,11 +283,13 @@ class WalletDiscoveryEngine:
                     if exists['status']=='ARCHIVED':
                         retired=db.execute('SELECT MAX(retired) FROM candidate_retirements WHERE network=? AND wallet=?',(self.network,address)).fetchone()[0]
                         count=db.execute("SELECT COUNT(*) FROM candidates WHERE network=? AND status!='ARCHIVED'",(self.network,)).fetchone()[0]
-                        if retired is not None and now-retired>=1800000 and count<self.policy.registry_limit:
+                        if retired is not None and now-retired>=1800000 and count<high and admitted<4:
                             db.execute("UPDATE candidates SET status='DISCOVERED',next_eval=? WHERE network=? AND wallet=?",(now,self.network,address))
-                elif db.execute("SELECT COUNT(*) FROM candidates WHERE network=? AND status!='ARCHIVED'",(self.network,)).fetchone()[0]<self.policy.registry_limit:
+                            admitted+=1
+                elif admitted<4 and db.execute("SELECT COUNT(*) FROM candidates WHERE network=? AND status!='ARCHIVED'",(self.network,)).fetchone()[0]<high:
                     db.execute('INSERT INTO candidates VALUES(?,?,?,?,?,?,?,?,?,?)',(self.network,address,now,now,'DISCOVERED',now,now,None,None,None))
                     self._record(db,'WALLET_DISCOVERED',{'wallet':address,'network':self.network,'observed_ms':now},now)
+                    admitted+=1
 
     def analyze_one(self,address,info,now):
         address=wallet(address)

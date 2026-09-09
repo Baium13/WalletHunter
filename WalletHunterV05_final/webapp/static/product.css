@@ -34,3 +34,4 @@
 body[data-hidden=true] .core-scene *,body[data-motion=off] .core-scene *{animation-play-state:paused!important}
 @media(prefers-reduced-motion:reduce){.core-scene *{animation:none!important;transition:none!important}}
 .compact-detail{margin:0;padding:14px 16px;border:1px solid var(--line);border-radius:16px;background:#091922a8}.compact-detail>summary{color:var(--muted);display:flex;align-items:center}.compact-detail[open]>summary{margin-bottom:12px;color:var(--cyan)}.compact-detail>.card{border:0;padding:4px;background:none;box-shadow:none}.compact-links{display:flex;gap:8px;margin-bottom:16px}.compact-links button{flex:1;font-size:.85rem}.compact-links svg{margin-right:6px}
+.freshness{display:inline-block;margin-left:6px;color:var(--muted);font-size:.68rem;letter-spacing:.04em;white-space:nowrap}

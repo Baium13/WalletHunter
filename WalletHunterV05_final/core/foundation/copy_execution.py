@@ -202,7 +202,7 @@ def recover_pending_copy(engine, account, client):
             prior=json.loads(row['receipt'] or '{}')
             received=int(prior.get('received_ms') or 0)
             age=int(time.time()*1000)-received if received else 0
-            if prior.get('status')=='UNKNOWN' and 5000<=age<60000:
+            if prior.get('status')=='UNKNOWN' and 5000<=age<900000:
                 continue
         except (TypeError,ValueError,json.JSONDecodeError):
             pass

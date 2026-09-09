@@ -133,7 +133,11 @@ class IntelligenceTests(unittest.TestCase):
         backend.jobs.claim(event_id,record);backend.jobs.stage(event_id,'QUARANTINED','ValueError')
         backend.jobs.quarantine(9,json.dumps(record),'ValueError')
         with backend.store.transaction() as db:self.assertEqual(backend.jobs.quarantine_summary_in(db)['quarantine_count'],1)
-        self.assertEqual(backend.jobs.classify_nonfinancial_adds(),1)
+        self.assertEqual(backend.jobs.classify_nonfinancial_adds([]),0)
+        self.assertEqual(backend.jobs.classify_nonfinancial_adds(['unrelated-event']),0)
+        with self.assertRaisesRegex(ValueError,'CLASSIFICATION_SCOPE'):
+            backend.jobs.classify_nonfinancial_adds(event_id)
+        self.assertEqual(backend.jobs.classify_nonfinancial_adds([event_id]),1)
         self.assertEqual(backend.jobs.classify_nonfinancial_adds(),0)
         with backend.store.transaction() as db:
             summary=backend.jobs.quarantine_summary_in(db)

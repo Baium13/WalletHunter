@@ -62,18 +62,22 @@ class JobStore:
             if event_id not in historical:ids.add(event_id)
         return dict(quarantine_count=len(ids),historical_quarantine_count=len(historical),quarantined_jobs=len(ids))
 
-    def classify_nonfinancial_adds(self):
+    def classify_nonfinancial_adds(self,event_ids=None):
         """Audited no-retry classification; never changes financial evidence.
 
         Only failed ADD preparation with no persisted intent/episode action can
         be classified. Ambiguous records and any financial identity stay held.
         """
+        if event_ids is not None and (not isinstance(event_ids,(list,tuple,set)) or len(event_ids)>128 or any(not isinstance(x,str) for x in event_ids)):
+            raise ValueError('CLASSIFICATION_SCOPE')
+        selected=set(event_ids) if event_ids is not None else None
         count=0
         with self.store.transaction() as db:
             mode=db.execute('SELECT mode FROM autonomous_modes WHERE scope=?',(self.scope,)).fetchone()
             if not mode or mode[0] not in {'PAPER_AUTO','SHADOW'}:raise ValueError('NONFINANCIAL_CLASSIFICATION_MODE')
             rows=db.execute("SELECT event_id,record FROM autonomous_jobs WHERE scope=? AND stage='QUARANTINED' AND reason='ValueError' LIMIT 128",(self.scope,)).fetchall()
             for row in rows:
+                if selected is not None and row['event_id'] not in selected:continue
                 body=json.loads(row['record']);event=body.get('event',{})
                 if event.get('action')!='ADD':continue
                 event_id=row['event_id']

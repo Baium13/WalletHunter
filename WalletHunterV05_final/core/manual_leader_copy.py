@@ -580,7 +580,7 @@ def recover_pending_manual_leader(engine, account, client, *, limit=3):
             prior=json.loads(row['receipt'] or '{}')
             received=int(prior.get('received_ms') or 0)
             age=int(time.time()*1000)-received if received else 0
-            if prior.get('status')=='UNKNOWN' and 5000<=age<900000:
+            if prior.get('status')=='UNKNOWN' and 1000<=age<900000:
                 continue
             from core.execution_quarantine import active_in
             with store.transaction() as db:

@@ -84,6 +84,12 @@ test('health separates discovery activity and scoped risk details',()=>{assert.m
 test('keyed updates preserve canvases and dirty inputs',()=>{assert.match(js,/o\.tagName==='CANVAS'\)continue/);assert.match(js,/S\.manualDirty/);assert.doesNotMatch(js,/terminal.*innerHTML\s*=/);});
 test('switching display mode immediately refreshes read-only marks',()=>assert.match(js,/S\.mode=e\.target\.value;S\.position=null;S\.filter='ALL';if\(S\.page==='detail'\)S\.page='positions';render\(\);void refreshLiveMarks\(true\)/));
 test('home and manual position cards include live financial fields',()=>{assert.match(js,/t\('Вход','Entry'\).*p\.entry/);assert.match(js,/t\('Цена','Price'\).*p\.current_price/);assert.match(js,/t\('Маржа','Margin'\).*p\.margin/);assert.match(js,/t\('Плечо','Leverage'\).*p\.leverage/);assert.match(js,/t\('Объём','Size'\).*p\.size/);});
+test('liquidation is text-only in position metrics and never a chart line',()=>{
+ const detail=js.slice(js.indexOf('function detail(){'),js.indexOf('function positionAI('));
+ const chart=js.slice(js.indexOf('function drawCandlesData('),js.indexOf('function drawCandles('));
+ assert.match(detail,/t\('Ликвидация','Liquidation'\).*p\.liquidation_price/);
+ assert.doesNotMatch(chart,/liquidation_price|LIQUIDATION|ликвидац/i);
+});
 test('home prefers complete live account exposure over idle PAPER runtime',()=>{assert.match(js,/const liveOpenPositions=\(\)=>M\.positions\(S\.snapshot,'LIVE'\)\.filter\(M\.isOpen\)/);assert.match(js,/showLive=liveOpen\.length>0&&S\.snapshot\?\.account\?\.portfolio\?\.completeness==='COMPLETE'/);assert.match(js,/open=showLive\?liveOpen:modeOpen/);});
 test('live mark refresh preserves chart history and updates the current tail',()=>{assert.match(js,/function updateCandleTail\(rows,mark\)/);assert.match(js,/updateCandleTail\(S\.homeCandles,mark\)/);assert.match(js,/livePnl=[\s\S]*\(mark-entry\)\*size/);assert.doesNotMatch(js,/catch\{S\.candles=\[\];drawCharts\(\);\}/);});
 test('freshness markup is inserted as markup, never escaped into visible text',()=>{assert.doesNotMatch(js,/class="freshness">\$\{esc\(freshness/);assert.match(js,/\$\{freshness\(S\.homeMark\?\.time\|\|selected\.mark_timestamp\)\}/);});

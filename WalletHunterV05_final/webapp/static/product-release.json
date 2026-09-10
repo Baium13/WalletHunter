@@ -1,9 +1,9 @@
 {
-  "release": "955292c29165287c",
+  "release": "e6ca2d417c776c6b",
   "contract": "product-v1",
   "assets": {
     "product-model.js": "1553aec2173850f643c2ec9d683974b0ccfafc873b4f86f0665b1b898cede2e2",
-    "product.js": "53bc20405b5328174e18dc788490ea9f5e94268e9ac03ce46be3aa827298bc9a",
+    "product.js": "e55e3c0ed2126025deb2897e07d115103cd88e9ad9d3546704dff28afa5a4431",
     "product.css": "0a7736682fdccf5e02e309d95f92af61e38c66f43b15fd2ea2047a3d62ae59ef"
   }
 }

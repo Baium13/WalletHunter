@@ -70,8 +70,7 @@ test('saved draft has separate enabled START; no automatic historical analysis',
 });
 test('historical quarantine blocks START but still permits adding a new leader draft',()=>{
  const manual=js.slice(js.indexOf('function manual(){'),js.indexOf('function ',js.indexOf('function manual(){')+10));
- assert.match(manual,/formBlocked=\['PENDING','UNKNOWN','ERROR'\]/);
- assert.match(manual,/startBlocked=!!m\.quarantine\?\.operator_review_required\|\|formBlocked/);
- assert.match(manual,/type="submit" \$\{formBlocked\?'disabled':''\}/);
+ assert.match(manual,/startBlocked=!!m\.quarantine\?\.operator_review_required\|\|\['PENDING','UNKNOWN','ERROR'\]/);
+ assert.match(manual,/type="submit">\$\{esc\(!m\.selected_leader\|\|editable/);
  assert.match(manual,/data-manual-start \$\{startBlocked\?'disabled':''\}/);
 });

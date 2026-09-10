@@ -1,6 +1,6 @@
 """Explicit source budget over canonical account evidence; no free-balance sizing."""
 import math
-from decimal import Decimal, ROUND_DOWN
+from decimal import Decimal, ROUND_DOWN, ROUND_UP
 from typing import Annotated
 from pydantic import Field
 from .contracts import Contract, Scope, Name, Amount, Positive, Allocation, PortfolioSnapshot
@@ -62,18 +62,31 @@ class AutonomousLedger:
         if self.errors or source!=self.policy.source: raise ValueError('ALLOCATION_RECONCILIATION_REQUIRED')
         return self.allocations[source]
 
-    def size(self,price,leverage,size_step,leader_confidence,consensus_confidence):
-        """Floor a bounded incremental size; confidence cannot increase the cap."""
-        values=(price,size_step,leader_confidence,consensus_confidence)
+    def size(self,price,leverage,size_step,leader_confidence,consensus_confidence,min_notional=0.):
+        """Floor a bounded incremental size; confidence cannot increase the cap.
+
+        ``min_notional`` is the venue's smallest tradeable notional. Confidence
+        scaling can put an otherwise valid signal underneath it, and the intent
+        is then built only to die further down the pipeline with NOTIONAL_LIMIT.
+        When the UNSCALED budget still covers the floor, size to the floor
+        instead: the smallest expressible position is the honest way to express
+        low confidence. The budget cap is never exceeded, so a signal the
+        account genuinely cannot afford still returns zero.
+        """
+        values=(price,size_step,leader_confidence,consensus_confidence,min_notional)
         if any(type(v) not in (float,int) or not math.isfinite(v) for v in values): raise ValueError('SIZING_INVALID')
-        if price<=0 or size_step<=0 or type(leverage) is not int or not 1<=leverage<=self.policy.max_leverage:
+        if price<=0 or size_step<=0 or min_notional<0 or type(leverage) is not int or not 1<=leverage<=self.policy.max_leverage:
             raise ValueError('SIZING_INVALID')
         if not 0<=leader_confidence<=1 or not 0<=consensus_confidence<=1: raise ValueError('CONFIDENCE_INVALID')
         a=self.allocation(self.policy.source)
-        margin=min(a.available,self.available_capacity,self.policy.max_position_margin,
-            self.policy.allocation_limit*self.policy.entry_fraction)*leader_confidence*consensus_confidence
-        raw=Decimal(str(margin))*leverage/Decimal(str(price))
+        budget=min(a.available,self.available_capacity,self.policy.max_position_margin,
+            self.policy.allocation_limit*self.policy.entry_fraction)
+        margin=budget*leader_confidence*consensus_confidence
         step=Decimal(str(size_step))
+        raw=Decimal(str(margin))*leverage/Decimal(str(price))
         result=float((raw/step).to_integral_value(rounding=ROUND_DOWN)*step)
+        if min_notional>0 and result*price<min_notional:
+            floor=float((Decimal(str(min_notional))/Decimal(str(price))/step).to_integral_value(rounding=ROUND_UP)*step)
+            result=floor if floor*price<=budget*leverage+1e-9 else 0.
         if not math.isfinite(result): raise ValueError('SIZING_OVERFLOW')
         return result

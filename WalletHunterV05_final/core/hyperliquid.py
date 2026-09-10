@@ -142,22 +142,46 @@ class HyperliquidReader:
         from core.foundation.data import reader_account_snapshot
         return reader_account_snapshot(self, scope, revision, clock_ms or (lambda: int(time.time() * 1000)))
 
-    def leverage_limits(self, dex=""):
-        """Live per-market leverage ceilings advertised by Hyperliquid."""
+    def _market_meta(self, dex=""):
+        """One cached ``meta`` read behind both leverage ceilings and lot steps.
+
+        Lot size is per market: BTC quotes to 1e-5 while a cheap perp quotes to
+        whole units. Sizing an order with one global step produces a quantity
+        the venue cannot fill, so the advertised szDecimals travel with the
+        leverage ceilings rather than costing a second metadata request.
+        """
         cache_key = dex or "crypto"
         cached = self._leverage_cache.get(cache_key)
         if cached and time.time() - cached[0] < 300:
-            return cached[1]
+            return cached[1], cached[2]
         meta = self._info({"type": "meta", **({"dex": dex} if dex else {})})
-        limits = {}
+        limits, steps = {}, {}
         for asset in meta.get("universe", []):
             name = str(asset.get("name") or "").split(":")[-1]
             try:
                 limits[name] = max(1, int(asset.get("maxLeverage") or 1))
             except (TypeError, ValueError):
-                continue
-        self._leverage_cache[cache_key] = (time.time(), limits)
-        return limits
+                pass
+            try:
+                decimals = int(asset["szDecimals"])
+                if 0 <= decimals <= 6:
+                    steps[name] = 10.0 ** -decimals
+            except (KeyError, TypeError, ValueError):
+                pass
+        self._leverage_cache[cache_key] = (time.time(), limits, steps)
+        return limits, steps
+
+    def leverage_limits(self, dex=""):
+        """Live per-market leverage ceilings advertised by Hyperliquid."""
+        return self._market_meta(dex)[0]
+
+    def size_steps(self, dex=""):
+        """Live per-market lot steps (10**-szDecimals) advertised by Hyperliquid."""
+        return self._market_meta(dex)[1]
+
+    def market_size_step(self, coin, dex=""):
+        """Lot step for one market, or None when the venue advertised none."""
+        return self.size_steps(dex).get(str(coin).split(":")[-1])
 
     def leverage_choices(self):
         """Distinct current maximum leverage values, for the Telegram picker."""

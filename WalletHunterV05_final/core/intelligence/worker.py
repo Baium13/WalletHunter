@@ -61,7 +61,11 @@ def main(argv=None):
     backend=None
     if args.paper_config:
         from core.autonomous import load_paper_backend
-        backend=load_paper_backend(args.paper_config,args.paper_state_directory,args.network,lambda:int(time.time()*1000))
+        def lot_step(instrument):
+            """Venue lot step, from the metadata read the reader already caches."""
+            return reader.market_size_step(instrument.symbol,instrument.dex or '')
+        backend=load_paper_backend(args.paper_config,args.paper_state_directory,args.network,
+            lambda:int(time.time()*1000),precision=lot_step)
     try:
         while True:
             started=time.monotonic()

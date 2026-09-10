@@ -293,7 +293,11 @@ class ExecutionGateway:
                 if intent.intent_id not in children: children.append(intent.intent_id)
                 envelope['correlation_id'] = intent.correlation_id
                 db.execute('UPDATE operations SET intent=? WHERE id=?', (json.dumps(envelope), intent.parent_intent_id))
-            db.execute("INSERT OR IGNORE INTO policies VALUES(?,?)", (digest(self.risk.policy), encoded(self.risk.policy)))
+            # Persist the policy this decision was actually evaluated against.
+            # With an instrument-scoped gateway that is not always the template,
+            # and a policy hash in the journal must resolve to a stored policy.
+            evaluated = self.risk.scoped(intent.instrument) or self.risk.policy
+            db.execute("INSERT OR IGNORE INTO policies VALUES(?,?)", (digest(evaluated), encoded(evaluated)))
             db.execute("DELETE FROM grants WHERE id=?", (intent.intent_id,))
             self._event(db, intent, "MARKET_SNAPSHOT", market, now)
             self._event(db, intent, "ORDER_INTENT_CREATED", intent, now)

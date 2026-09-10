@@ -27,18 +27,39 @@ class RiskPolicy(Contract):
 
 
 class RiskGateway:
-    def __init__(self, policy):
+    def __init__(self, policy, *, multi_instrument=False, symbols=()):
         self.policy = RiskPolicy.model_validate_json(policy.model_dump_json())
+        # A policy names ONE instrument. That is what Manual Copy and the
+        # confirmed routes want: an intent for a different symbol is a scope
+        # error. An autonomous source follows one leader across many symbols,
+        # so it may opt in to re-binding the policy to the intent's instrument,
+        # keeping every numeric limit and producing a policy hash for that
+        # instrument. Off by default; network, venue and account scope must
+        # still match, and an explicit symbol list narrows it further.
+        self.multi_instrument = bool(multi_instrument)
+        self.symbols = tuple(dict.fromkeys(str(s) for s in symbols))
+
+    def scoped(self, instrument):
+        """Policy bound to ``instrument``, or None when it is out of scope."""
+        if instrument == self.policy.instrument: return self.policy
+        if not self.multi_instrument: return None
+        reference = self.policy.instrument
+        if instrument.network != reference.network or instrument.venue != reference.venue: return None
+        if self.symbols and instrument.symbol not in self.symbols: return None
+        return self.policy.model_copy(update={'instrument': instrument})
 
     def evaluate(self, intent, market, ledger, now, *, authorized=False, unresolved=False):
         intent = OrderIntent.model_validate_json(intent.model_dump_json())
         market = MarketSnapshot.model_validate_json(market.model_dump_json())
+        # An out-of-scope instrument keeps the unchanged policy so the scope
+        # check below still records SCOPE_MISMATCH instead of silently admitting.
+        policy = self.scoped(intent.instrument) or self.policy
         if intent.version == 4:
             from .confirmed_risk import evaluate
-            return evaluate(self.policy, intent, market, ledger, now, authorized, unresolved)
+            return evaluate(policy, intent, market, ledger, now, authorized, unresolved)
         if intent.version == 2:
-            return self._copy(intent, market, ledger, now, authorized, unresolved)
-        p, snapshot = self.policy, ledger.portfolio
+            return self._copy(intent, market, ledger, now, authorized, unresolved, policy)
+        p, snapshot = policy, ledger.portfolio
         reasons = []
         def require(condition, reason):
             if not condition: reasons.append(reason)
@@ -100,8 +121,8 @@ class RiskGateway:
             approved_size=0. if reasons else intent.size, approved_limit=0. if reasons else intent.limit_price,
             portfolio_revision=snapshot.revision, created_ms=now)
 
-    def _copy(self, intent, market, ledger, now, authorized, unresolved):
-        p, s = self.policy, ledger.portfolio
+    def _copy(self, intent, market, ledger, now, authorized, unresolved, policy=None):
+        p, s = policy or self.policy, ledger.portfolio
         reasons = []
         def check(ok, code):
             if not ok: reasons.append(code)

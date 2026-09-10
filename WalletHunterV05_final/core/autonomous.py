@@ -4,6 +4,7 @@ No signing credentials or live client construction. All PAPER submissions use
 the existing canonical gateway, not the follower analytics simulator.
 """
 import json
+import math
 import hashlib
 from core.intelligence.models import LeaderTradeEvent,LeaderScore,IntelligencePolicy,RiskContextEvidence
 from core.intelligence.agents import evaluate,consensus
@@ -20,14 +21,22 @@ class AutonomousBackend:
     @staticmethod
     def _child_event_id(parent, suffix):
         return hashlib.sha256((parent+'|'+suffix).encode()).hexdigest()[:48]
-    def __init__(self,store,exchange,allocation_policy,authorization_policy,risk_policy,clock,cost_model=None):
+    def __init__(self,store,exchange,allocation_policy,authorization_policy,risk_policy,clock,cost_model=None,
+                 *,multi_instrument=False,symbols=(),precision=None):
         from core.foundation.copy_execution import HyperliquidExecutionAdapter
         expected = HyperliquidExecutionAdapter if authorization_policy.mode=='LIVE_CONFIRM' else FakeExchange
         if type(exchange) is not expected: raise ValueError('Mode-specific controlled adapter required')
         if allocation_policy.scope!=authorization_policy.scope or risk_policy.scope!=authorization_policy.scope:
             raise ValueError('Scope mismatch')
         self.store,self.exchange,self.allocation_policy,self.auth_policy=store,exchange,allocation_policy,authorization_policy
-        self.risk=RiskGateway(risk_policy); self.clock=clock
+        # A leader is followed across whatever it trades, so the risk policy
+        # re-binds to the intent's instrument when the operator asked for it.
+        # Default stays single-instrument: an unexpected symbol is a scope error.
+        self.risk=RiskGateway(risk_policy,multi_instrument=multi_instrument,symbols=symbols); self.clock=clock
+        # Resolves the venue's lot step for an instrument. Without it every
+        # market is sized on the policy's single step, which is only ever
+        # correct for the policy's own market.
+        self.precision=precision
         self.authorization=AuthorizationService(store)
         self.gateway=ExecutionGateway(store,self.risk,exchange,clock)
         from core.foundation.paper_costs import PaperCosts
@@ -126,6 +135,20 @@ class AutonomousBackend:
                 self.jobs.stage(event.event_id,'RECOVERY_REQUIRED' if financial and financial['intent'] else 'QUARANTINED',type(exc).__name__)
                 raise
 
+    def _size_step(self,instrument):
+        """Venue lot step for this instrument; the policy step is the fallback.
+
+        A resolver failure must not stall the pipeline, so the policy step is
+        used and the decision body records which source was applied.
+        """
+        if self.precision is None: return self.risk.policy.size_step,'POLICY'
+        try: step=self.precision(instrument)
+        except Exception: step=None
+        if not isinstance(step,(int,float)) or isinstance(step,bool): return self.risk.policy.size_step,'POLICY_FALLBACK'
+        step=float(step)
+        if not math.isfinite(step) or step<=0: return self.risk.policy.size_step,'POLICY_FALLBACK'
+        return step,'VENUE'
+
     def _process(self,record):
         """Input is the actual WalletDiscoveryEngine DECISION body, not a signal shortcut."""
         event=LeaderTradeEvent.model_validate(record['event'])
@@ -171,9 +194,11 @@ class AutonomousBackend:
         limit=ask if event.side=='BUY' else bid
         leverage=min(self.allocation_policy.max_leverage,self.risk.policy.max_leverage)
         if position: leverage=int(position.leverage)
+        step,step_source=self._size_step(event.instrument)
+        floor=self.risk.policy.min_notional
         context=None
         if not ledger.errors:
-            upper=0. if reducing else ledger.size(limit,leverage,self.risk.policy.size_step,leader.confidence,1.)
+            upper=0. if reducing else ledger.size(limit,leverage,step,leader.confidence,1.,floor)
             margin=upper*limit/leverage
             context=RiskContextEvidence(portfolio=before,market=market,allocation=ledger.allocation(self.allocation_policy.source),
                 unresolved=bool(pending),required_margin=margin,required_capacity=margin+upper*limit*self.risk.policy.fee_buffer_pct/100,
@@ -198,7 +223,9 @@ class AutonomousBackend:
             'mode':auth.mode,'status':auth.outcome,'correlation_id':event.event_id,
             'market':market.model_dump(mode='json'),'leader':leader.model_dump(mode='json'),
             'allocation':ledger.allocation(self.allocation_policy.source).model_dump(mode='json') if not ledger.errors else None,
-            'allocation_policy':self.allocation_policy.model_dump(mode='json')}
+            'allocation_policy':self.allocation_policy.model_dump(mode='json'),
+            'sizing':{'size_step':step,'size_step_source':step_source,'min_notional':floor,
+                      'instrument_scope':'MULTI' if self.risk.multi_instrument else 'SINGLE'}}
         body['cost_model']=self.cost_model.model_dump(mode='json') if auth.mode!='LIVE_CONFIRM' else None
         intent=None
         if (auth.outcome=='AUTHORIZED' and auth.execution_mode=='PAPER') or auth.outcome in {'HYPOTHETICAL','CONFIRMATION_REQUIRED'}:
@@ -206,10 +233,10 @@ class AutonomousBackend:
                 from decimal import Decimal,ROUND_FLOOR
                 fraction=min(1.,event.size/abs(event.before_size)) if event.before_size else 0.
                 raw=position.size*(1. if event.action=='CLOSE' else fraction) if position else 0.
-                size=float((Decimal(str(raw))/Decimal(str(self.risk.policy.size_step))).to_integral_value(rounding=ROUND_FLOOR)*Decimal(str(self.risk.policy.size_step)))
+                size=float((Decimal(str(raw))/Decimal(str(step))).to_integral_value(rounding=ROUND_FLOOR)*Decimal(str(step)))
                 if event.action=='CLOSE' and position: size=position.size
             else:
-                size=ledger.size(limit,leverage,self.risk.policy.size_step,leader.confidence,result.confidence)
+                size=ledger.size(limit,leverage,step,leader.confidence,result.confidence,floor)
             if size>0:
                 live=auth.mode=='LIVE_CONFIRM'
                 intent=OrderIntent(version=3 if live else 1,intent_id=auth.decision_id,scope=scope,instrument=event.instrument,source=self.allocation_policy.source,
@@ -410,8 +437,13 @@ class AutonomousBackend:
         return body
 
 
-def load_paper_backend(config_path,state_directory,network,clock):
-    """Explicit operator-configured isolated PAPER runtime; never loads profiles."""
+def load_paper_backend(config_path,state_directory,network,clock,precision=None):
+    """Explicit operator-configured isolated PAPER runtime; never loads profiles.
+
+    ``precision`` resolves a venue lot step for an instrument. ``multi_instrument``
+    and ``symbols`` in the config let one policy cover every market a leader
+    trades; both default off, so an unlisted symbol is still a scope error.
+    """
     from pathlib import Path
     from contextlib import closing
     import sqlite3
@@ -428,6 +460,10 @@ def load_paper_backend(config_path,state_directory,network,clock):
         risk: RiskPolicy
         initial_paper_equity: Positive
         costs: PaperCosts=PaperCosts()
+        # One policy, every market the leader trades. Off by default so an
+        # existing configuration keeps its single-instrument scope check.
+        multi_instrument: bool=False
+        symbols: tuple[str,...]=()
     config=Config.model_validate_json(Path(config_path).read_text(encoding='utf-8'))
     if config.authorization.mode not in ('OBSERVE','PAPER_AUTO','SHADOW') or config.authorization.scope.network!=network:
         raise ValueError('Explicit PAPER configuration required')
@@ -440,7 +476,8 @@ def load_paper_backend(config_path,state_directory,network,clock):
                 tables={r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
                 if tables and marker not in tables: raise ValueError('Dedicated PAPER database required')
     store=Store(directory/'autonomy.sqlite'); exchange=FakeExchange(directory/'fake.sqlite')
-    backend=AutonomousBackend(store,exchange,config.allocation,config.authorization,config.risk,clock,config.costs)
+    backend=AutonomousBackend(store,exchange,config.allocation,config.authorization,config.risk,clock,config.costs,
+        multi_instrument=config.multi_instrument,symbols=config.symbols,precision=precision)
     with store.transaction() as db:
         row=db.execute('SELECT body FROM portfolios WHERE scope=?',(scope_key(config.authorization.scope),)).fetchone()
         if row is None:

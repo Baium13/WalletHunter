@@ -115,7 +115,9 @@ class ManualCopyWorker:
         if quarantines:config=config.model_copy(update={'enabled':False})
         report=dict(enabled=config.enabled,leader=config.leader,generation_id=config.generation_id,status='HOLD',heartbeat_ms=self.clock(),
             denominator='PER_DEX_MARGIN_SUMMARY_ACCOUNT_VALUE',monitored=[],results=[],errors=[])
-        if not config.enabled and not quarantines:
+        paused_owned = self.engine.journal.owned(scope.account) if not config.enabled else {}
+        paused_pending = self.engine.journal.pending(scope.account) if not config.enabled else set()
+        if not config.enabled and not quarantines and not paused_owned and not paused_pending:
             # A paused draft or generation is not permission to follow or
             # replay a leader.  In particular, do not enter recovery/leader
             # monitoring just because an old generation id remains attached

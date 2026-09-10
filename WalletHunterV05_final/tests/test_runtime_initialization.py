@@ -45,6 +45,26 @@ class RuntimeInitializationTests(unittest.TestCase):
             self.assertNotIn('private_key',json.dumps(report));self.assertFalse(case.client.calls)
         finally:case.doCleanups()
 
+    def test_selected_draft_refreshes_read_only_account_evidence(self):
+        from test_manual_leader_copy import ManualCopyWorkerTests
+        from unittest.mock import patch
+        case=ManualCopyWorkerTests();case.setUp()
+        try:
+            # Switching a selected wallet creates a disabled draft with no
+            # generation.  It must still refresh the account card, without
+            # subscribing or submitting anything.
+            case.worker.service.configure(case.account,case.client,case.f.SOURCE_B,80.)
+            from core.foundation.data import copy_account_snapshot
+            with patch('core.foundation.data.copy_account_snapshot',wraps=copy_account_snapshot) as read, \
+                    patch.object(case.client,'submit_copy_ioc') as submit:
+                report=case.cycle()
+                self.assertEqual(report['status'],'READY')
+                self.assertEqual(read.call_count,1)
+                submit.assert_not_called()
+            self.assertEqual(report['account_evidence']['completeness'],'COMPLETE')
+            self.assertEqual(report['allocation_limit'],80.)
+        finally:case.doCleanups()
+
     def test_scan_health_is_not_trade_or_promotion_frequency(self):
         import test_product
         case=test_product.ProductTests();case.setUp()

@@ -116,8 +116,36 @@ class ManualCopyWorker:
         report=dict(enabled=config.enabled,leader=config.leader,generation_id=config.generation_id,status='HOLD',heartbeat_ms=self.clock(),
             denominator='PER_DEX_MARGIN_SUMMARY_ACCOUNT_VALUE',monitored=[],results=[],errors=[])
         if not config.enabled and not config.generation_id and not quarantines:
-            # A selected draft is not permission to follow or replay a leader.
+            # A selected draft is not permission to follow or replay a leader,
+            # but the account card still needs fresh read-only evidence.  The
+            # old early return left the cached balance frozen until START.
+            # Refresh at most once per minute so this cannot become a new API
+            # polling loop or an execution authorization path.
+            previous=self.diagnostics(scope) or {}
             report['status']='READY'
+            report['account_attempt_ms']=previous.get('account_attempt_ms',0)
+            cached=previous.get('account_evidence')
+            try:
+                fresh_cached=(cached and type(cached.get('received_ms')) is int
+                              and 0<=self.clock()-cached['received_ms']<60000)
+                if not fresh_cached:
+                    if 0<=self.clock()-report['account_attempt_ms']<60000:
+                        raise ValueError('ACCOUNT_RETRY_BACKOFF')
+                    report['account_attempt_ms']=self.clock()
+                    from core.foundation.data import copy_account_snapshot
+                    cached=copy_account_snapshot(client,scope,self.clock(),self.clock,'').model_dump(mode='json')
+                report['account_evidence']=cached
+                report['account_read_error']=None
+                capital=finite_amount(cached['sizing_capital'],'follower sizing capital')
+                if capital<0 or cached['completeness']!='COMPLETE':
+                    raise ValueError('ACCOUNT_DATA_UNAVAILABLE')
+                slots=(len(profile.get('leaders',[])[:3]) if profile.get('copy_enabled') else 0)+int(bool(profile.get('ai_slot_selected')))
+                allocatable=capital*max(0.,1-min(3,slots)/3)
+                report['allocatable_capital']=allocatable
+                report['allocation_limit']=config.capital_limit(allocatable)
+            except Exception:
+                report['account_evidence']=cached
+                report['account_read_error']='ACCOUNT_DATA_UNAVAILABLE'
             self.save(scope,report)
             return report
         try:

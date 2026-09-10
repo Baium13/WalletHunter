@@ -104,6 +104,31 @@ class BudgetTests(unittest.TestCase):
             session.post('https://api.hyperliquid.xyz/info',json={'type':'meta'})
             self.assertEqual(transport.call_count,4)
 
+    def test_public_snapshot_cache_coalesces_without_caching_account_or_exchange(self):
+        body={'BTC':'100.0'}
+        with patch('core.hl_budget.configured',return_value=self.b),patch.object(requests.Session,'request',return_value=self.response(body=body)) as transport:
+            session=BudgetSession()
+            self.assertEqual(session.post('https://api.hyperliquid.xyz/info',json={'type':'allMids','dex':''}).json(),body)
+            self.assertEqual(session.post('https://api.hyperliquid.xyz/info',json={'type':'allMids','dex':''}).json(),body)
+            self.assertEqual(transport.call_count,1)
+            # Cache scope includes host and request payload: testnet is a
+            # distinct market and must cross the transport once.
+            session.post('https://api.hyperliquid-testnet.xyz/info',json={'type':'allMids','dex':''})
+            self.assertEqual(transport.call_count,2)
+            # Account and exchange responses are never served from this cache.
+            session.post('https://api.hyperliquid.xyz/info',json={'type':'clearinghouseState','user':'0x'+'1'*40,'dex':''})
+            session.post('https://api.hyperliquid.xyz/info',json={'type':'clearinghouseState','user':'0x'+'1'*40,'dex':''})
+            session.post('https://api.hyperliquid.xyz/exchange',json={'action':{'type':'order'}})
+            self.assertEqual(transport.call_count,5)
+
+    def test_public_snapshot_cache_expiry_requests_fresh_evidence(self):
+        with patch('core.hl_budget.configured',return_value=self.b),patch.object(requests.Session,'request',return_value=self.response(body={'BTC':'100'})) as transport:
+            session=BudgetSession();payload={'type':'l2Book','coin':'BTC'}
+            session.post('https://api.hyperliquid.xyz/info',json=payload)
+            with self.b.db() as db: db.execute('UPDATE read_cache SET expires=0')
+            session.post('https://api.hyperliquid.xyz/info',json=payload)
+            self.assertEqual(transport.call_count,2)
+
     def test_single_flight_shared_across_sessions(self):
         import threading,time
         from concurrent.futures import ThreadPoolExecutor

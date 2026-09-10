@@ -1,9 +1,14 @@
-"""Host-shared Hyperliquid transport accounting; never stores request payloads.
+"""Host-shared Hyperliquid transport accounting and bounded public-read cache.
 
 Official limits verified 2026-09-09. Response block rounding is conservatively
 ceiling-rounded (docs don't specify rounding). This is measured client usage,
 not an exchange-issued usage counter. All processes share one owner-only DB.
-No retries, no financial-response cache, no stale timestamp renewal.
+No retries, no account/history/order-response cache, no stale timestamp renewal.
+
+The public market cache is deliberately narrow.  It coalesces identical
+read-only requests from the API, intelligence worker and discovery process so
+one busy minute is spent on useful evidence rather than duplicate snapshots.
+Financial/account reads and every ``/exchange`` call always cross the network.
 """
 import hashlib
 import inspect
@@ -32,6 +37,11 @@ ELEVATED_CEILING=1050
 HARD_PLANNED_CEILING=1180
 FAIR_CONTENTION_FRACTION=.5  # Scheduling only; never raises any band ceiling.
 HOSTS={'api.hyperliquid.xyz','api.hyperliquid-testnet.xyz'}
+# Only public, bounded snapshots are eligible.  TTLs are short enough for UI
+# freshness and long enough to collapse the fan-out of agents/read models.
+READ_CACHE_TTL={'allMids':1.0,'l2Book':1.0,'metaAndAssetCtxs':2.0,
+                'meta':300.0,'spotMeta':300.0,'perpDexs':300.0,
+                'exchangeStatus':2.0}
 _priority=ContextVar('hl_resource_priority',default=None)
 
 
@@ -127,6 +137,7 @@ class Budget:
               CREATE INDEX IF NOT EXISTS request_time ON requests(at);
               CREATE TABLE IF NOT EXISTS counters(name TEXT PRIMARY KEY,value INTEGER);
               CREATE TABLE IF NOT EXISTS metadata(key TEXT PRIMARY KEY,body TEXT,expires REAL,lease REAL);
+              CREATE TABLE IF NOT EXISTS read_cache(key TEXT PRIMARY KEY,body TEXT,expires REAL,lease REAL);
               CREATE TABLE IF NOT EXISTS ws(id TEXT PRIMARY KEY,pid INTEGER,heartbeat REAL,subscriptions INTEGER);
               CREATE TABLE IF NOT EXISTS ws_events(at REAL,kind TEXT,n INTEGER);
               CREATE TABLE IF NOT EXISTS admission_waiters(id TEXT PRIMARY KEY,service TEXT,source TEXT,priority INTEGER,cost INTEGER,enqueued REAL,last_seen REAL);
@@ -175,6 +186,45 @@ class Budget:
         with self.db() as db:
             db.execute('UPDATE metadata SET body=?,expires=?,lease=0 WHERE key=? AND lease=?',
                 (body,time.time()+30 if body is not None else 0,key,lease))
+
+    def read_acquire(self,key,ttl):
+        """Return a cached public snapshot or a short cross-process lease.
+
+        A waiter never launches a duplicate upstream request.  If the owner
+        disappears, its lease expires and the next caller becomes the owner.
+        The body is JSON only; no credentials, account state or order payloads
+        are admitted by :class:`BudgetSession`.
+        """
+        deadline=time.monotonic()+1.5
+        while True:
+            now=time.time()
+            with self.db() as db:
+                db.execute('BEGIN IMMEDIATE')
+                row=db.execute('SELECT body,expires,lease FROM read_cache WHERE key=?',(key,)).fetchone()
+                if row and row[0] is not None and row[1]>now:
+                    hit=row[0]
+                else:
+                    hit=None
+                if hit is not None:
+                    # Leave the transaction before updating counters through
+                    # a second connection (important on SQLite/WAL).
+                    pass
+                elif not row or row[2]<=now:
+                    lease=now+max(5.0,float(ttl)*4.0)
+                    db.execute('INSERT INTO read_cache VALUES(?,?,?,?) ON CONFLICT(key) DO UPDATE SET body=NULL,expires=0,lease=excluded.lease',(key,None,0,lease))
+                    return 'owner',lease
+            if hit is not None:
+                self.count('read_cache_hits')
+                return 'hit',hit
+            if time.monotonic()>=deadline:
+                self.count('read_cache_deferred')
+                raise BudgetUnavailable('HL_READ_INFLIGHT')
+            time.sleep(.025)
+
+    def read_complete(self,key,lease,body,ttl):
+        with self.db() as db:
+            db.execute('UPDATE read_cache SET body=?,expires=?,lease=0 WHERE key=? AND lease=?',
+                       (body,time.time()+float(ttl) if body is not None else 0,key,lease))
 
     def begin(self,endpoint,payload,source,priority):
         now=time.time();identity=uuid.uuid4().hex;cost=weights(endpoint,payload,maximum=True)
@@ -230,6 +280,7 @@ class Budget:
             db.execute('DELETE FROM requests WHERE at<?',(now-86400,))
             db.execute('DELETE FROM ws_events WHERE at<?',(now-86400,))
             db.execute('DELETE FROM metadata WHERE expires<? AND lease<?',(now-3600,now))
+            db.execute('DELETE FROM read_cache WHERE expires<? AND lease<?',(now-3600,now))
         return identity
 
     def finish(self,identity,endpoint,payload,response,elapsed,error=False):
@@ -272,7 +323,20 @@ class BudgetSession(requests.Session):
         if not budget or method.upper()!='POST' or target.hostname not in HOSTS or target.path not in {'/info','/exchange'}:
             return super().request(method,url,**kwargs)
         payload=kwargs.get('json') or {};endpoint='exchange' if target.path=='/exchange' else payload.get('type','UNKNOWN')
-        key=None;lease=None;cache_body=None
+        key=None;lease=None;cache_body=None;read_ttl=None
+        # Read-through cache is intentionally restricted to public snapshots.
+        # Account, history, order status and exchange actions remain uncached.
+        read_ttl=READ_CACHE_TTL.get(endpoint)
+        if read_ttl is not None and endpoint not in META:
+            # Include the complete request and host so TESTNET/MAINNET and
+            # instruments can never share evidence.
+            key=hashlib.sha256((url+'|'+json.dumps(payload,sort_keys=True,separators=(',',':'))).encode()).hexdigest()
+            status,value=budget.read_acquire(key,read_ttl)
+            if status=='hit':
+                response=requests.Response();response.status_code=200;response.url=url
+                response._content=value.encode();response.headers['Content-Type']='application/json'
+                return response
+            lease=value
         if endpoint in META and set(payload)<=({'type','dex'} if endpoint=='meta' else {'type'}):
             key=hashlib.sha256((url+'|'+json.dumps(payload,sort_keys=True)).encode()).hexdigest()
             status,value=budget.metadata_acquire(key)
@@ -292,12 +356,18 @@ class BudgetSession(requests.Session):
             if key and response.status_code==200:
                 try:
                     body=response.json()
-                    if (endpoint=='perpDexs' and isinstance(body,list)) or (isinstance(body,dict) and isinstance(body.get('universe'),list)):
+                    # Cache only finite JSON snapshots.  ``allow_nan=False``
+                    # prevents malformed evidence from becoming reusable.
+                    if isinstance(body,(dict,list)):
                         cache_body=json.dumps(body,allow_nan=False)
                 except (ValueError,TypeError):pass
             return response
         finally:
-            if key:budget.metadata_complete(key,lease,cache_body)
+            if key:
+                if read_ttl is not None and endpoint not in META:
+                    budget.read_complete(key,lease,cache_body,read_ttl)
+                else:
+                    budget.metadata_complete(key,lease,cache_body)
 
 
 def install_sdk():

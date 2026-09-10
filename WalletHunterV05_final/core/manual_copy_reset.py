@@ -154,11 +154,11 @@ def abandon(path, intent_id, *, operator, operator_requested_abandonment,
             original_intent=dict(row),original_operation=dict(parent),quarantine=q,
             retired_config=json.loads(config[0]),retired_runtime=json.loads(runtime[0]) if runtime else None,
             evidence=evidence,reset_epoch=intent_id+':'+str(now_ms))
-        db.execute('CREATE TABLE IF NOT EXISTS manual_copy_abandonments(intent_id TEXT PRIMARY KEY,scope TEXT NOT NULL,created_ms INTEGER NOT NULL,body TEXT NOT NULL)')
-        db.execute('INSERT INTO manual_copy_abandonments VALUES(?,?,?,?)',
-                   (intent_id,scope_key(intent.scope),now_ms,json.dumps(audit,sort_keys=True,allow_nan=False)))
-        # Operational classification only. Receipt/outcome/intent/reservation
-        # payloads stay byte-identical and are preserved in the audit as well.
+        # Reclassify the pending rows before inserting the audit tombstone.
+        # Tombstones from an earlier reset are already installed on the same
+        # database; inserting the new audit row first would make those existing
+        # immutability triggers reject this legitimate first classification.
+        # The surrounding transaction keeps the identity/audit update atomic.
         db.execute('UPDATE intents SET status=? WHERE id=?',(STATE,intent_id))
         db.execute('UPDATE operations SET status=? WHERE id=?',(STATE,parent['id']))
         db.execute('DELETE FROM manual_leader_configs WHERE scope=?',(key,))
@@ -167,6 +167,11 @@ def abandon(path, intent_id, *, operator, operator_requested_abandonment,
                 status='OFF',heartbeat_ms=now_ms,account_evidence=evidence['portfolio'],
                 committed=0.,reserved_unknown=False,available=0.,allocation_limit=0.,
                 allocatable_capital=portfolio.sizing_capital,monitored=[],reset_epoch=audit['reset_epoch'])),key))
+        db.execute('CREATE TABLE IF NOT EXISTS manual_copy_abandonments(intent_id TEXT PRIMARY KEY,scope TEXT NOT NULL,created_ms INTEGER NOT NULL,body TEXT NOT NULL)')
+        db.execute('INSERT INTO manual_copy_abandonments VALUES(?,?,?,?)',
+                   (intent_id,scope_key(intent.scope),now_ms,json.dumps(audit,sort_keys=True,allow_nan=False)))
+        # Operational classification only. Receipt/outcome/intent/reservation
+        # payloads stay byte-identical and are preserved in the audit as well.
         # Tombstones protect against stale queue/old binaries/operator mistakes.
         for table, field, lookup in [('intents','id','intent_id'),('operations','id',"json_extract(body,'$.parent_id')"),
                                      ('execution_quarantines','intent_id','intent_id'),

@@ -44,10 +44,29 @@ def collect_evidence(client, intent, clock=lambda: int(time.time()*1000)):
            or type(x['order'].get('timestamp')) is not int for x in historical):
         raise ValueError('MALFORMED_ORDER_HISTORY')
     recent = [x for x in historical if x['order']['timestamp'] >= start]
+    # Account history is shared by all instruments.  An unrelated BTC/ETH
+    # order must not make a SOL UNKNOWN intent impossible to review.  Keep the
+    # complete history for audit, but also persist an instrument-scoped view
+    # used by the abandonment guard below.
+    symbol = intent.instrument.symbol
+    dex = intent.instrument.dex or ''
+    def relevant_order(row):
+        order = row.get('order') if isinstance(row, dict) else None
+        if not isinstance(order, dict):
+            return True
+        coin = str(order.get('coin', '')).split(':')[-1]
+        order_dex = order.get('dex') or ''
+        return coin == symbol and order_dex == dex
+    relevant_recent = [x for x in recent if relevant_order(x)]
+    relevant_fills = [x for x in fills
+                      if str(x.get('coin', '')).split(':')[-1] == symbol
+                      and (x.get('dex') or '') == dex]
     portfolio = account_snapshot(client, intent.scope, 1, clock, dex='')
     return dict(scope=intent.scope.model_dump(mode='json'), intent_id=intent.intent_id,
         cloid=client_order_id(intent), cloid_result=status, open_orders=orders,
-        recent_orders=recent, fills=fills, portfolio=portfolio.model_dump(mode='json'),
+        recent_orders=recent, relevant_recent_orders=relevant_recent,
+        fills=fills, relevant_fills=relevant_fills,
+        portfolio=portfolio.model_dump(mode='json'),
         checked_ms=clock(), financial_outcome='UNKNOWN', leverage_mutation='UNKNOWN')
 
 
@@ -90,7 +109,8 @@ def abandon(path, intent_id, *, operator, operator_requested_abandonment,
                     (evidence.get('checked_ms'), portfolio.received_ms, portfolio.exchange_ms))
                 or evidence.get('cloid_result')!={'status':'unknownOid'}
                 or evidence.get('open_orders')!={'':[], 'xyz':[]}
-                or evidence.get('recent_orders')!=[] or evidence.get('fills')!=[]):
+                or (evidence.get('relevant_recent_orders', evidence.get('recent_orders')) != [])
+                or (evidence.get('relevant_fills', evidence.get('fills')) != [])):
             raise ValueError('FRESH_FLAT_ACCOUNT_EVIDENCE_REQUIRED')
         if db.execute('SELECT 1 FROM grants WHERE scope=?',(scope_key(intent.scope),)).fetchone():
             raise ValueError('OUTSTANDING_LIVE_GRANT')

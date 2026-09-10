@@ -95,6 +95,22 @@ class ResetTests(unittest.TestCase):
         with sqlite3.connect(self.path) as db:db.execute("INSERT INTO grants VALUES('other',?,'h')",(scope_key(self.scope),))
         with self.assertRaisesRegex(ValueError,'GRANT'):self.reset()
 
+    def test_unrelated_account_history_does_not_block_target_abandonment(self):
+        # The account history is shared across markets.  ETH activity must not
+        # be mistaken for evidence that this BTC UNKNOWN intent was submitted.
+        unrelated = {'order': {'coin': 'ETH', 'dex': '', 'timestamp': self.now}}
+        evidence = dict(self.evidence, recent_orders=[unrelated],
+                        relevant_recent_orders=[], fills=[], relevant_fills=[])
+        audit = self.reset(evidence=evidence)
+        self.assertEqual(audit['financial_outcome'], 'UNKNOWN')
+
+    def test_target_market_history_still_blocks_abandonment(self):
+        target = {'order': {'coin': 'BTC', 'dex': '', 'timestamp': self.now}}
+        evidence = dict(self.evidence, recent_orders=[target],
+                        relevant_recent_orders=[target], fills=[], relevant_fills=[])
+        with self.assertRaisesRegex(ValueError, 'FLAT_ACCOUNT'):
+            self.reset(evidence=evidence)
+
     def test_reset_new_wallet_real_service_e2e_and_restart(self):
         audit=self.reset();s=self.f.worker.service;c=self.f.client;account=self.f.account
         source=self.f.f.SOURCE_B

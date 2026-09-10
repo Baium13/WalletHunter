@@ -101,10 +101,18 @@ def abandon(path, intent_id, *, operator, operator_requested_abandonment,
                 or q['reservation']!=json.loads(row['reservation'])):
             raise ValueError('QUARANTINE_IDENTITY_CHANGED')
         portfolio = PortfolioSnapshot.model_validate(evidence['portfolio'])
+        target_symbol = intent.instrument.symbol
+        target_dex = intent.instrument.dex or ''
+        target_positions = tuple(p for p in portfolio.positions
+                                 if p.instrument.symbol == target_symbol
+                                 and (p.instrument.dex or '') == target_dex)
+        target_orders = tuple(o for o in portfolio.orders
+                              if o.instrument.symbol == target_symbol
+                              and (o.instrument.dex or '') == target_dex)
         if (evidence.get('intent_id')!=intent_id or evidence.get('scope')!=intent.scope.model_dump(mode='json')
                 or portfolio.scope!=intent.scope or portfolio.evidence!='EXCHANGE'
                 or portfolio.completeness!='COMPLETE' or portfolio.equity is None
-                or portfolio.available_collateral is None or portfolio.positions or portfolio.orders
+                or portfolio.available_collateral is None or target_positions or target_orders
                 or any(type(t) is not int or not 0<=now_ms-t<=30000 for t in
                     (evidence.get('checked_ms'), portfolio.received_ms, portfolio.exchange_ms))
                 or evidence.get('cloid_result')!={'status':'unknownOid'}

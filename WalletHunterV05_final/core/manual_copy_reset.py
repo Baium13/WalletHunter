@@ -61,11 +61,17 @@ def collect_evidence(client, intent, clock=lambda: int(time.time()*1000)):
     relevant_fills = [x for x in fills
                       if str(x.get('coin', '')).split(':')[-1] == symbol
                       and (x.get('dex') or '') == dex]
+    relevant_open_orders = {
+        pool: [x for x in rows if str(x.get('coin', '')).split(':')[-1] == symbol
+               and (x.get('dex') or '') == dex]
+        for pool, rows in orders.items()
+    }
     portfolio = account_snapshot(client, intent.scope, 1, clock, dex='')
     return dict(scope=intent.scope.model_dump(mode='json'), intent_id=intent.intent_id,
         cloid=client_order_id(intent), cloid_result=status, open_orders=orders,
         recent_orders=recent, relevant_recent_orders=relevant_recent,
         fills=fills, relevant_fills=relevant_fills,
+        relevant_open_orders=relevant_open_orders,
         portfolio=portfolio.model_dump(mode='json'),
         checked_ms=clock(), financial_outcome='UNKNOWN', leverage_mutation='UNKNOWN')
 
@@ -109,6 +115,14 @@ def abandon(path, intent_id, *, operator, operator_requested_abandonment,
         target_orders = tuple(o for o in portfolio.orders
                               if o.instrument.symbol == target_symbol
                               and (o.instrument.dex or '') == target_dex)
+        open_orders = evidence.get('relevant_open_orders')
+        if open_orders is None:
+            open_orders = {
+                pool: [x for x in rows
+                       if str(x.get('coin', '')).split(':')[-1] == target_symbol
+                       and (x.get('dex') or '') == target_dex]
+                for pool, rows in evidence.get('open_orders', {}).items()
+            }
         if (evidence.get('intent_id')!=intent_id or evidence.get('scope')!=intent.scope.model_dump(mode='json')
                 or portfolio.scope!=intent.scope or portfolio.evidence!='EXCHANGE'
                 or portfolio.completeness!='COMPLETE' or portfolio.equity is None
@@ -116,7 +130,7 @@ def abandon(path, intent_id, *, operator, operator_requested_abandonment,
                 or any(type(t) is not int or not 0<=now_ms-t<=30000 for t in
                     (evidence.get('checked_ms'), portfolio.received_ms, portfolio.exchange_ms))
                 or evidence.get('cloid_result')!={'status':'unknownOid'}
-                or evidence.get('open_orders')!={'':[], 'xyz':[]}
+                or any(open_orders.get(pool) for pool in ('', 'xyz'))
                 or (evidence.get('relevant_recent_orders', evidence.get('recent_orders')) != [])
                 or (evidence.get('relevant_fills', evidence.get('fills')) != [])):
             raise ValueError('FRESH_FLAT_ACCOUNT_EVIDENCE_REQUIRED')

@@ -129,6 +129,15 @@ class BudgetTests(unittest.TestCase):
             session.post('https://api.hyperliquid.xyz/info',json=payload)
             self.assertEqual(transport.call_count,2)
 
+    def test_moving_candle_window_coalesces_on_closed_bar_boundary(self):
+        with patch('core.hl_budget.configured',return_value=self.b),patch.object(requests.Session,'request',return_value=self.response(body=[])) as transport:
+            session=BudgetSession()
+            base=1_000_000
+            for end in (base+1234,base+4321):
+                session.post('https://api.hyperliquid.xyz/info',json={'type':'candleSnapshot','req':{
+                    'coin':'BTC','interval':'15m','startTime':end-64*900000,'endTime':end}})
+            self.assertEqual(transport.call_count,1)
+
     def test_single_flight_shared_across_sessions(self):
         import threading,time
         from concurrent.futures import ThreadPoolExecutor

@@ -39,9 +39,27 @@ FAIR_CONTENTION_FRACTION=.5  # Scheduling only; never raises any band ceiling.
 HOSTS={'api.hyperliquid.xyz','api.hyperliquid-testnet.xyz'}
 # Only public, bounded snapshots are eligible.  TTLs are short enough for UI
 # freshness and long enough to collapse the fan-out of agents/read models.
-READ_CACHE_TTL={'allMids':1.0,'l2Book':1.0,'metaAndAssetCtxs':2.0,
+READ_CACHE_TTL={'allMids':1.0,'l2Book':1.0,'metaAndAssetCtxs':2.0,'candleSnapshot':5.0,
                 'meta':300.0,'spotMeta':300.0,'perpDexs':300.0,
                 'exchangeStatus':2.0}
+
+
+def _read_cache_payload(endpoint,payload):
+    """Canonicalize only closed-candle windows for short read coalescing."""
+    if endpoint!='candleSnapshot' or not isinstance(payload,dict):return payload
+    req=payload.get('req')
+    if not isinstance(req,dict):return payload
+    intervals={'1m':60000,'5m':300000,'15m':900000,'1h':3600000,'4h':14400000,'1d':86400000}
+    interval=intervals.get(req.get('interval'))
+    try:start=int(req['startTime']);end=int(req['endTime'])
+    except (KeyError,TypeError,ValueError):return payload
+    if not interval or end<start:return payload
+    # A moving ``endTime=now`` should not create a new upstream request every
+    # second.  Closed bars are stable until the next interval boundary.
+    bucket=(end//interval)*interval
+    bars=max(1,(end-start)//interval)
+    normalized=dict(req,startTime=bucket-bars*interval,endTime=bucket)
+    return dict(payload,req=normalized)
 _priority=ContextVar('hl_resource_priority',default=None)
 
 
@@ -330,7 +348,8 @@ class BudgetSession(requests.Session):
         if read_ttl is not None and endpoint not in META:
             # Include the complete request and host so TESTNET/MAINNET and
             # instruments can never share evidence.
-            key=hashlib.sha256((url+'|'+json.dumps(payload,sort_keys=True,separators=(',',':'))).encode()).hexdigest()
+            cache_payload=_read_cache_payload(endpoint,payload)
+            key=hashlib.sha256((url+'|'+json.dumps(cache_payload,sort_keys=True,separators=(',',':'))).encode()).hexdigest()
             status,value=budget.read_acquire(key,read_ttl)
             if status=='hit':
                 response=requests.Response();response.status_code=200;response.url=url

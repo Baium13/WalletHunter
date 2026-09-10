@@ -62,8 +62,9 @@ def collect_evidence(client, intent, clock=lambda: int(time.time()*1000)):
                       if str(x.get('coin', '')).split(':')[-1] == symbol
                       and (x.get('dex') or '') == dex]
     relevant_open_orders = {
-        pool: [x for x in rows if str(x.get('coin', '')).split(':')[-1] == symbol
-               and (x.get('dex') or '') == dex]
+        pool: [x for x in rows if (not isinstance(x, dict) or 'coin' not in x
+                                   or str(x.get('coin', '')).split(':')[-1] == symbol
+                                   and (x.get('dex') or '') == dex)]
         for pool, rows in orders.items()
     }
     portfolio = account_snapshot(client, intent.scope, 1, clock, dex='')
@@ -119,8 +120,9 @@ def abandon(path, intent_id, *, operator, operator_requested_abandonment,
         if open_orders is None:
             open_orders = {
                 pool: [x for x in rows
-                       if str(x.get('coin', '')).split(':')[-1] == target_symbol
-                       and (x.get('dex') or '') == target_dex]
+                       if (not isinstance(x, dict) or 'coin' not in x
+                           or str(x.get('coin', '')).split(':')[-1] == target_symbol
+                           and (x.get('dex') or '') == target_dex)]
                 for pool, rows in evidence.get('open_orders', {}).items()
             }
         if (evidence.get('intent_id')!=intent_id or evidence.get('scope')!=intent.scope.model_dump(mode='json')

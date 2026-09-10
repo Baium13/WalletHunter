@@ -65,6 +65,23 @@ class RuntimeInitializationTests(unittest.TestCase):
             self.assertEqual(report['allocation_limit'],80.)
         finally:case.doCleanups()
 
+    def test_paused_generation_skips_recovery_and_refreshes_account(self):
+        from test_manual_leader_copy import ManualCopyWorkerTests
+        case=ManualCopyWorkerTests();case.setUp()
+        try:
+            case.worker.service.stop(case.account,case.client)
+            case.worker.service.start(case.account,case.client,baseline=case.worker.start_baseline(
+                case.account,case.client,case.f.SOURCE_A))
+            case.worker.service.stop(case.account,case.client)
+            with patch('core.manual_copy_worker.recover_pending_manual_leader',
+                       side_effect=AssertionError('paused generation must not recover')) as recover, \
+                 patch.object(case.client,'submit_copy_ioc') as submit:
+                report=case.cycle()
+            self.assertEqual(report['status'],'PAUSED')
+            recover.assert_not_called();submit.assert_not_called()
+            self.assertEqual(report['account_evidence']['completeness'],'COMPLETE')
+        finally:case.doCleanups()
+
     def test_scan_health_is_not_trade_or_promotion_frequency(self):
         import test_product
         case=test_product.ProductTests();case.setUp()

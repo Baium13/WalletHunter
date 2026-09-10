@@ -115,14 +115,16 @@ class ManualCopyWorker:
         if quarantines:config=config.model_copy(update={'enabled':False})
         report=dict(enabled=config.enabled,leader=config.leader,generation_id=config.generation_id,status='HOLD',heartbeat_ms=self.clock(),
             denominator='PER_DEX_MARGIN_SUMMARY_ACCOUNT_VALUE',monitored=[],results=[],errors=[])
-        if not config.enabled and not config.generation_id and not quarantines:
-            # A selected draft is not permission to follow or replay a leader,
-            # but the account card still needs fresh read-only evidence.  The
-            # old early return left the cached balance frozen until START.
-            # Refresh at most once per minute so this cannot become a new API
-            # polling loop or an execution authorization path.
+        if not config.enabled and not quarantines:
+            # A paused draft or generation is not permission to follow or
+            # replay a leader.  In particular, do not enter recovery/leader
+            # monitoring just because an old generation id remains attached
+            # after STOP: that expensive path can contend with the shared
+            # Hyperliquid budget and freeze the account read model.  Refresh
+            # only bounded read-only account evidence; existing positions stay
+            # untouched and no execution path is reachable from this branch.
             previous=self.diagnostics(scope) or {}
-            report['status']='READY'
+            report['status']='PAUSED' if config.generation_id else 'READY'
             report['account_attempt_ms']=previous.get('account_attempt_ms',0)
             cached=previous.get('account_evidence')
             try:

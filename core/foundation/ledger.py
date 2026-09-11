@@ -1,0 +1,144 @@
+"""One source book for new routes; reuse Phase 1.2 instead of redefining thirds."""
+import math
+from contextlib import closing
+from dataclasses import dataclass
+from core.source_allocation import SourceAllocationBook
+from .contracts import Allocation, PortfolioSnapshot, Scope
+
+
+@dataclass(frozen=True)
+class Reservation:
+    intent_id: str
+    source: str
+    margin: float
+    account_capacity: float
+
+
+class Ledger:
+    def __init__(self, portfolio: PortfolioSnapshot, sources: tuple[str, ...], reservations=()):
+        portfolio = PortfolioSnapshot.model_validate_json(portfolio.model_dump_json())
+        reservations = tuple(reservations)
+        self.portfolio = portfolio
+        self.errors = []
+        self.allocations = {}
+        self.available_capacity = None
+        if portfolio.completeness != "COMPLETE" or portfolio.evidence == "LEGACY_UNKNOWN":
+            self.errors.append("PORTFOLIO_UNKNOWN")
+            return
+        actual, owned, uncertain = {}, {}, set()
+        for p in portfolio.positions:
+            key = p.instrument.market_key
+            if p.margin is None:
+                self.errors.append("MARGIN_UNKNOWN")
+                continue
+            actual[key] = dict(side=p.side, size=p.size, entry_price=p.entry_price,
+                position_value=p.notional, leverage=float(p.leverage), margin_used=p.margin)
+            if p.evidence == "VERIFIED":
+                owned[key] = dict(managed=True, side=p.side, size=p.size, position=actual[key], source_targets=[
+                    dict(wallet=c.source, signed_notional=c.notional * (1 if p.side == "LONG" else -1),
+                         margin=c.notional/p.leverage) for c in p.contributions])
+            else:
+                # Even known external exposure is not assignable to a source.
+                # The foundation conservatively forbids new risk until resolved.
+                uncertain.add(key)
+        try:
+            book = SourceAllocationBook(portfolio.sizing_capital, list(sources), actual, owned,
+                set(owned), {}, uncertain=uncertain)
+            self.errors.extend("ATTRIBUTION_UNKNOWN" for _ in book.errors)
+            held = {}
+            ids = set()
+            for row in reservations:
+                if (row.intent_id in ids or row.source not in sources or
+                    any(isinstance(v, bool) or not isinstance(v, (float, int)) or not math.isfinite(v) or v < 0
+                        for v in (row.margin, row.account_capacity)) or row.account_capacity < row.margin):
+                    raise ValueError("Invalid reservation")
+                ids.add(row.intent_id)
+                held[row.source] = held.get(row.source, 0.) + row.margin
+            total_reserved = math.fsum(r.account_capacity for r in reservations)
+            self.available_capacity = max(0., portfolio.available_collateral - total_reserved)
+            for source, row in book.accounts.items():
+                reserved = row.reserved_margin + held.get(source, 0.)
+                self.allocations[source] = Allocation(scope=portfolio.scope, source=source,
+                    limit=row.allocation_limit, committed=row.committed_margin, reserved=reserved,
+                    available=max(0., row.allocation_limit-row.committed_margin-reserved),
+                    revision=portfolio.revision, received_ms=portfolio.received_ms)
+        except (ValueError, OverflowError):
+            self.errors.append("LEDGER_INVALID")
+        if self.errors:
+            self.available_capacity = None
+
+    def allocation(self, source):
+        if self.errors or source not in self.allocations:
+            raise ValueError("Ledger requires reconciliation")
+        return self.allocations[source]
+
+
+class CopyLedger:
+    """Read-through P1.2 accounting, with the current journal envelope excluded
+    ONLY from its own admission calculation. All other pending envelopes remain.
+    The same operation is reserved durably by the gateway before submission.
+    """
+    def __init__(self, portfolio, sources, journal, operation, spec, *, allocation_limits=None,
+                 ownership_sources=None, ownership_strategy=None):
+        self.portfolio, self.spec = portfolio, spec
+        self.errors = []
+        owned = journal.owned(portfolio.scope.account)
+        if ownership_sources is not None:
+            allowed = {str(source).lower() for source in ownership_sources}
+            owned = {
+                market: record for market, record in owned.items()
+                if isinstance(record, dict) and any(
+                    isinstance(target, dict) and str(target.get('wallet', '')).lower() in allowed
+                    for target in (record.get('source_targets') or ())
+                ) and (ownership_strategy is None or record.get('strategy') == ownership_strategy)
+            }
+        self.owned = owned
+        self.ownership_strategy = ownership_strategy
+        actual = {p.instrument.market_key: dict(side=p.side, size=p.size, entry_price=p.entry_price,
+            position_value=p.notional, leverage=p.leverage, margin_used=p.margin)
+            for p in portfolio.positions}
+        with closing(journal.connect()) as db:
+            rows = db.execute("SELECT id,market,intent FROM operations WHERE account=? AND status IN ('PREPARED','UNKNOWN')",
+                (portfolio.scope.account,)).fetchall()
+            close = db.execute("SELECT body,receipt FROM intents WHERE id=? AND status='FILLED'", (operation+'-close',)).fetchone()
+        import json
+        if close:
+            identity = json.loads(close['body'])
+            market = identity['instrument']['symbol']+'|'+identity['instrument']['dex']
+            if identity['instrument']['dex']: market = identity['instrument']['dex']+':'+market
+            if market not in actual and identity['scope']['network'] == portfolio.scope.network:
+                owned = dict(owned)
+                owned.pop(market, None)
+        pending = {r['market']: json.loads(r['intent']) for r in rows if r['id'] != operation}
+        if any(r.get('network') != portfolio.scope.network for r in pending.values()):
+            self.errors.append('NETWORK_UNKNOWN')
+        try:
+            self.book = SourceAllocationBook(portfolio.sizing_capital, list(sources), actual, owned,
+                {k for k, v in owned.items() if v.get('managed') and v.get('network') == portfolio.scope.network}, pending,
+                allocation_limits=allocation_limits)
+            self.errors.extend(self.book.errors)
+        except Exception:
+            self.book = None
+            self.errors.append('CAPITAL_UNKNOWN')
+        self.available_capacity = portfolio.available_collateral
+
+    def permits(self, intent, reference):
+        """Recheck the existing source cap against the actual requested target."""
+        if self.errors or self.book is None: return False
+        before = next((p for p in self.portfolio.positions if p.instrument == intent.instrument), None)
+        row = None if before is None else dict(side=before.side, size=before.size,
+            position_value=before.notional, leverage=before.leverage, margin_used=before.margin)
+        spec = dict(self.spec)
+        capped = self.book.cap(intent.instrument.market_key, spec, row)
+        target = ((before.size if before else 0.) + intent.size) * reference
+        if intent.action == 'LEVERAGE_UPDATE': target = before.size * reference
+        return target <= capped['target_notional'] * (1 + 1e-9)
+
+    def owns(self, intent):
+        row = next((p for p in self.portfolio.positions if p.instrument == intent.instrument), None)
+        saved = self.owned.get(intent.instrument.market_key, {})
+        return bool(row and saved.get('managed') and saved.get('network') == intent.scope.network
+            and (self.ownership_strategy is None or saved.get('strategy') == self.ownership_strategy)
+            and saved.get('side') == row.side
+            and math.isclose(float((saved.get('position') or {}).get('entry_price', -1)), row.entry_price, rel_tol=1e-8, abs_tol=0.)
+            and math.isclose(float(saved.get('size', -1)), row.size, rel_tol=1e-8, abs_tol=0.))

@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Позиции</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  :root{
+    --bg:#12161c; --card:#1a1f27; --line:#252c36; --text:#e8ecf1; --dim:#8b95a3;
+    --up:#2fbd85; --down:#e5544b; --accent:#4c8dff; --warn:#e0a33e;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+       font:15px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+       padding:12px 12px calc(24px + env(safe-area-inset-bottom));
+       -webkit-text-size-adjust:100%}
+  h1{font-size:17px;margin:2px 0 12px;font-weight:600}
+  .tabs{display:flex;gap:4px;background:var(--card);border-radius:11px;padding:4px;margin-bottom:12px}
+  .tabs button{flex:1;appearance:none;border:0;background:transparent;color:var(--dim);
+       font:600 14px/1 inherit;padding:10px 6px;border-radius:8px;cursor:pointer}
+  .tabs button[aria-selected="true"]{background:var(--accent);color:#fff}
+  .bar{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px}
+  .stat{flex:1 1 44%;background:var(--card);border:1px solid var(--line);
+        border-radius:11px;padding:10px 12px;min-width:0}
+  .stat .k{color:var(--dim);font-size:11px;text-transform:uppercase;letter-spacing:.4px}
+  .stat .v{font-size:18px;font-weight:600;margin-top:3px;
+           font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+  .pos{background:var(--card);border:1px solid var(--line);border-radius:11px;
+       padding:11px 12px;margin-bottom:8px}
+  .pos .top{display:flex;align-items:baseline;gap:8px;margin-bottom:8px}
+  .sym{font-weight:600;font-size:16px}
+  .tag{font-size:11px;font-weight:700;letter-spacing:.5px;padding:2px 7px;border-radius:5px}
+  .long{background:rgba(47,189,133,.16);color:var(--up)}
+  .short{background:rgba(229,84,75,.16);color:var(--down)}
+  .lev{margin-left:auto;color:var(--dim);font-size:12px;font-variant-numeric:tabular-nums}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(84px,1fr));gap:8px 12px}
+  .cell .k{color:var(--dim);font-size:11px}
+  .cell .v{font-variant-numeric:tabular-nums;margin-top:1px}
+  .up{color:var(--up)} .down{color:var(--down)} .dim{color:var(--dim)}
+  .note{background:var(--card);border:1px solid var(--line);border-radius:11px;
+        padding:14px;color:var(--dim);font-size:14px}
+  .note b{color:var(--text)}
+  .note code{background:rgba(255,255,255,.06);padding:1px 5px;border-radius:4px;
+             font-size:12px;overflow-wrap:anywhere}
+  .why{margin-top:10px;display:flex;flex-wrap:wrap;gap:6px}
+  .chip{background:rgba(255,255,255,.05);border:1px solid var(--line);border-radius:6px;
+        padding:3px 8px;font-size:11px;color:var(--dim);font-variant-numeric:tabular-nums}
+  .foot{display:flex;align-items:center;gap:10px;margin-top:14px;color:var(--dim);font-size:12px}
+  .foot button{appearance:none;border:1px solid var(--line);background:var(--card);
+       color:var(--text);border-radius:8px;padding:7px 14px;font:600 13px/1 inherit;cursor:pointer}
+  .err{border-color:rgba(229,84,75,.45);color:var(--down)}
+  .halt{border-color:rgba(224,163,62,.45);color:var(--warn)}
+</style>
+</head>
+<body>
+<h1>Открытые позиции</h1>
+
+<div class="tabs" role="tablist">
+  <button role="tab" id="tab-paper" aria-selected="true">PAPER</button>
+  <button role="tab" id="tab-live" aria-selected="false">LIVE</button>
+</div>
+
+<div id="bar" class="bar"></div>
+<div id="list"></div>
+
+<div class="foot">
+  <button id="refresh">Обновить</button>
+  <span id="stamp"></span>
+</div>
+
+<script>
+(function () {
+  'use strict';
+  var tg = window.Telegram && window.Telegram.WebApp;
+  if (tg) { tg.ready(); tg.expand(); }
+
+  // Telegram supplies the page's colours; the palette above is the fallback for
+  // clients that send no theme.
+  var theme = (tg && tg.themeParams) || {};
+  function paint(name, value) { if (value) document.documentElement.style.setProperty(name, value); }
+  paint('--bg', theme.bg_color); paint('--card', theme.secondary_bg_color);
+  paint('--text', theme.text_color); paint('--dim', theme.hint_color);
+  paint('--accent', theme.button_color);
+
+  var REFRESH_MS = 15000;
+  var tab = 'paper';
+  var timer = null;
+  var barEl = document.getElementById('bar');
+  var listEl = document.getElementById('list');
+  var stampEl = document.getElementById('stamp');
+
+  function api(path) {
+    return fetch(path, {
+      headers: { 'X-Telegram-Init-Data': (tg && tg.initData) || '' },
+      cache: 'no-store'
+    }).then(function (r) {
+      if (!r.ok) throw new Error(r.status === 401 ? 'AUTH' : 'HTTP ' + r.status);
+      return r.json();
+    });
+  }
+
+  var money = new Intl.NumberFormat('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  var qty = new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 8 });
+  var pct = new Intl.NumberFormat('ru-RU', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+
+  // The engine's refusal codes are identifiers, not prose. Translate the ones
+  // that actually occur and fall through to the raw code for anything new, so
+  // an unmapped reason is still readable rather than swallowed.
+  var REASONS = {
+    CONSENSUS_BELOW_THRESHOLD: 'убеждённость ниже порога',
+    STRONG_DISAGREEMENT: 'тренд против лидера',
+    STALE_SIGNAL: 'сигнал устарел',
+    POSITION_LIFECYCLE_REQUIRED: 'нет доказанной позиции',
+    REDUCTION_OWNERSHIP_OR_SIDE: 'владение или сторона не доказаны',
+    AGENT_SCOPE_OR_AGE: 'агенты вне окна',
+    DUPLICATE_AGENT: 'дубль агента',
+    leader_UNAVAILABLE_OR_BLOCKING: 'лидер не квалифицирован',
+    liquidity_UNAVAILABLE_OR_BLOCKING: 'книга непригодна',
+    volatility_UNAVAILABLE_OR_BLOCKING: 'нет свечей',
+    risk_context_UNAVAILABLE_OR_BLOCKING: 'риск-контекст блокирует'
+  };
+
+  function usd(v) { return typeof v === 'number' && isFinite(v) ? '$' + money.format(v) : '—'; }
+  function signed(v) {
+    if (typeof v !== 'number' || !isFinite(v)) return '—';
+    return (v > 0 ? '+$' : v < 0 ? '−$' : '$') + money.format(Math.abs(v));
+  }
+  function tone(v) { return typeof v === 'number' && isFinite(v) ? (v > 0 ? 'up' : v < 0 ? 'down' : '') : 'dim'; }
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+    });
+  }
+
+  function stat(label, value, cls) {
+    return '<div class="stat"><div class="k">' + esc(label) + '</div>' +
+           '<div class="v ' + (cls || '') + '">' + value + '</div></div>';
+  }
+
+  function cell(label, value, cls) {
+    return '<div class="cell"><div class="k">' + esc(label) + '</div>' +
+           '<div class="v ' + (cls || '') + '">' + value + '</div></div>';
+  }
+
+  function card(p) {
+    var side = (p.side || '').toUpperCase();
+    var rows = '';
+    rows += cell('Размер', qty.format(p.size));
+    rows += cell('Вход', usd(p.entry_price));
+    if (p.mark != null) rows += cell('Сейчас', usd(p.mark));
+    rows += cell('Объём', usd(p.notional));
+    if (p.margin != null) rows += cell('Маржа', usd(p.margin));
+    if (p.pnl != null) rows += cell('PnL', signed(p.pnl), tone(p.pnl));
+    if (p.roe != null && isFinite(p.roe)) {
+      rows += cell('ROE', (p.roe > 0 ? '+' : p.roe < 0 ? '\u2212' : '') +
+                          pct.format(Math.abs(p.roe)) + '%', tone(p.roe));
+    }
+    if (p.liquidation_price != null) rows += cell('Ликвидация', usd(p.liquidation_price), 'dim');
+    return '<div class="pos"><div class="top">' +
+      '<span class="sym">' + esc(p.symbol) + '</span>' +
+      '<span class="tag ' + (side === 'LONG' ? 'long' : 'short') + '">' + esc(side) + '</span>' +
+      '<span class="lev">' + (p.leverage ? esc(p.leverage) + '×' : '') + '</span>' +
+      '</div><div class="grid">' + rows + '</div></div>';
+  }
+
+  function note(html, cls) { return '<div class="note ' + (cls || '') + '">' + html + '</div>'; }
+
+  function stamp() {
+    stampEl.textContent = 'обновлено ' + new Date().toLocaleTimeString('ru-RU');
+  }
+
+  // ---------------------------------------------------------------- PAPER
+
+  function paperSymbol(p) {
+    var i = p.instrument || {};
+    return (i.dex ? i.dex + ':' : '') + (i.symbol || '?');
+  }
+
+  function marks(rows) {
+    // The simulated portfolio stores an entry price, not a mark, so the current
+    // price is fetched per open market and the P&L is computed here. Bounded on
+    // purpose: at most eight, and only while this tab is the visible one.
+    var wanted = rows.slice(0, 8).map(function (p) {
+      var i = p.instrument || {};
+      return { row: p, coin: i.dex ? i.dex + ':' + i.symbol : i.symbol, dex: i.dex || '' };
+    });
+    return Promise.all(wanted.map(function (w) {
+      return api('/api/price?coin=' + encodeURIComponent(w.coin) + '&dex=' + encodeURIComponent(w.dex))
+        .then(function (r) { w.row.mark = r.price; })
+        .catch(function () { w.row.mark = null; });
+    })).then(function () { return rows; });
+  }
+
+  function renderPaper(data) {
+    if (data.reason === 'RUNTIME_NOT_CONFIGURED') {
+      barEl.innerHTML = '';
+      listEl.innerHTML = note('PAPER не подключён к этому экрану.<br><br>' +
+        'На сервере задайте <code>PAPER_STATE_DIRECTORY</code> в окружении сервиса ' +
+        '<code>wallethunter-web</code> — путь к каталогу состояния PAPER, — и перезапустите его.');
+      return;
+    }
+    if (!data.ready) {
+      barEl.innerHTML = '';
+      listEl.innerHTML = note('PAPER пока не запускался: <b>' + esc(data.reason || 'нет данных') + '</b>');
+      return;
+    }
+
+    var pf = data.portfolio || {};
+    var rows = (data.positions || []).map(function (p) {
+      var out = {
+        symbol: paperSymbol(p), side: p.side, size: p.size, entry_price: p.entry_price,
+        notional: p.notional, margin: p.margin, leverage: p.leverage,
+        liquidation_price: p.liquidation_price, mark: p.mark, pnl: null, roe: null
+      };
+      if (typeof p.mark === 'number' && isFinite(p.mark) && p.entry_price) {
+        var dir = (p.side || '').toUpperCase() === 'LONG' ? 1 : -1;
+        out.pnl = dir * (p.mark - p.entry_price) * p.size;
+        if (p.margin) out.roe = out.pnl / p.margin * 100;
+      }
+      return out;
+    });
+
+    var open = rows.length;
+    var pnl = rows.reduce(function (a, p) { return p.pnl == null ? a : a + p.pnl; }, 0);
+    var known = rows.some(function (p) { return p.pnl != null; });
+
+    var bar = stat('Капитал', usd(pf.equity)) + stat('Открыто', String(open));
+    if (known) bar += stat('Нереализованный PnL', signed(pnl), tone(pnl));
+    if (data.live_guard && data.live_guard.halted) {
+      bar += stat('Guard', 'ОСТАНОВЛЕН', 'down');
+    }
+    barEl.innerHTML = bar;
+
+    if (open) { listEl.innerHTML = rows.map(card).join(''); return; }
+
+    // An empty list is not the same as nothing happening. Say which of the two
+    // it is, using the counters the runtime already keeps.
+    var counts = data.counts || {};
+    var blockers = data.blockers || {};
+    var names = Object.keys(blockers).sort(function (a, b) { return blockers[b] - blockers[a]; });
+    var html = '<b>Открытых позиций нет.</b>';
+    var decisions = Object.keys(counts).reduce(function (a, k) {
+      return /^(intent_|intents$|episodes$|outcomes$|quarantined$)/.test(k) ? a : a + counts[k];
+    }, 0);
+    if (!decisions) {
+      html += '<br><br>Решений пока не было — движок ещё не получал сделок лидеров.';
+    } else {
+      html += '<br><br>Решений: <b>' + decisions + '</b>' +
+              (counts.intents ? ', ордеров: <b>' + counts.intents + '</b>' : '') +
+              (counts.episodes ? ', эпизодов: <b>' + counts.episodes + '</b>' : '') +
+              (counts.outcomes ? ', закрыто: <b>' + counts.outcomes + '</b>' : '');
+      if (names.length) {
+        html += '<div class="why">' + names.slice(0, 6).map(function (n) {
+          return '<span class="chip">' + esc(REASONS[n] || n) + ' · ' + blockers[n] + '</span>';
+        }).join('') + '</div>';
+      }
+    }
+    listEl.innerHTML = note(html);
+  }
+
+  function loadPaper() {
+    return api('/api/autonomy/PAPER')
+      .then(function (data) {
+        if (!data.positions || !data.positions.length) return data;
+        return marks(data.positions).then(function () { return data; });
+      })
+      .then(renderPaper);
+  }
+
+  // ----------------------------------------------------------------- LIVE
+
+  function renderLive(data) {
+    var rows = (data.positions || []).map(function (p) {
+      return {
+        symbol: p.coin, side: p.side, size: p.size, entry_price: p.entry_price,
+        notional: p.position_value, margin: p.margin_used, leverage: p.leverage,
+        liquidation_price: p.liquidation_price, pnl: p.unrealized_pnl, roe: p.roe, mark: null
+      };
+    });
+    var pnl = rows.reduce(function (a, p) { return typeof p.pnl === 'number' ? a + p.pnl : a; }, 0);
+    var bar = '';
+    bar += data.balance_error
+      ? stat('Баланс', 'недоступен', 'down')
+      : stat('Баланс', usd(data.balance));
+    bar += stat('Открыто', String(rows.length));
+    if (rows.length) bar += stat('Нереализованный PnL', signed(pnl), tone(pnl));
+    barEl.innerHTML = bar;
+    listEl.innerHTML = rows.length
+      ? rows.map(card).join('')
+      : note('<b>На вашем счёте нет открытых позиций.</b>');
+  }
+
+  function loadLive() { return api('/api/dashboard').then(renderLive); }
+
+  // --------------------------------------------------------------- driver
+
+  function load() {
+    var run = tab === 'paper' ? loadPaper : loadLive;
+    return run().then(stamp).catch(function (err) {
+      barEl.innerHTML = '';
+      listEl.innerHTML = note(err.message === 'AUTH'
+        ? 'Сессия Telegram истекла. Закройте окно и откройте его из бота заново.'
+        : 'Не удалось прочитать данные: <b>' + esc(err.message) + '</b>', 'err');
+    });
+  }
+
+  function schedule() {
+    clearTimeout(timer);
+    if (!document.hidden) timer = setTimeout(function () { load().then(schedule); }, REFRESH_MS);
+  }
+
+  function select(next) {
+    tab = next;
+    document.getElementById('tab-paper').setAttribute('aria-selected', String(next === 'paper'));
+    document.getElementById('tab-live').setAttribute('aria-selected', String(next === 'live'));
+    barEl.innerHTML = '';
+    listEl.innerHTML = note('Загрузка…');
+    load().then(schedule);
+  }
+
+  document.getElementById('tab-paper').onclick = function () { select('paper'); };
+  document.getElementById('tab-live').onclick = function () { select('live'); };
+  document.getElementById('refresh').onclick = function () { load().then(schedule); };
+  // A hidden tab costs nothing: the price reads above stop with it.
+  document.addEventListener('visibilitychange', function () {
+    if (document.hidden) clearTimeout(timer); else load().then(schedule);
+  });
+
+  select('paper');
+})();
+</script>
+</body>
+</html>

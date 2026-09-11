@@ -1,0 +1,11 @@
+#!/bin/bash
+# Refuse to commit secrets or financial state, however they got staged.
+bad=$(git diff --cached --name-only --diff-filter=ACM | grep -Ei \
+  '(^|/)\.env($|\.)|\.key$|\.pem$|\.p12$|\.session$|\.sqlite3?($|-wal|-shm)$|^data/' || true)
+if [ -n "$bad" ]; then
+  echo "ОТКАЗ: в коммит попали файлы состояния или секреты:" >&2
+  echo "$bad" | sed 's/^/  /' >&2
+  echo >&2
+  echo "Уберите их:  git restore --staged <файл>" >&2
+  exit 1
+fi

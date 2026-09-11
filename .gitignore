@@ -1,0 +1,38 @@
+# Byte code
+__pycache__/
+*.pyc
+*.pyo
+
+# Secrets and credentials. Never commit any of these.
+.env
+.env.*
+*.key
+*.pem
+*.p12
+desktop/*.session
+desktop/*.session-journal
+
+# Runtime and financial state. Every path below is an artifact the backup
+# owns (see runtime-state-manifest.json) - a different lifecycle from source.
+# It includes the PAPER/SHADOW state directories and the API budget.
+data/
+*.sqlite
+*.sqlite3
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite3-wal
+*.sqlite3-shm
+*.db
+
+# Local scratch
+*.tar.gz
+*.tgz
+*.zip
+*.orig
+*.rej
+backup-*/
+
+# Virtual environment: third-party code, rebuilt from requirements.lock
+.venv/
+venv/
+env/

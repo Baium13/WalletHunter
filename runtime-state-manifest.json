@@ -1,0 +1,221 @@
+{
+  "version": 1,
+  "artifacts": [
+    {
+      "path": "/home/ubuntu/WalletHunterV07/WalletHunterV05_final/data/ai_research.sqlite3",
+      "archive": "data/ai_research.sqlite3",
+      "kind": "sqlite",
+      "required": true
+    },
+    {
+      "path": "/home/ubuntu/WalletHunterV07/WalletHunterV05_final/data/ai_learning.sqlite3",
+      "archive": "data/ai_learning.sqlite3",
+      "kind": "sqlite",
+      "required": true
+    },
+    {
+      "path": "/home/ubuntu/WalletHunterV07/WalletHunterV05_final/data/executions.sqlite3",
+      "archive": "data/executions.sqlite3",
+      "kind": "sqlite",
+      "required": true
+    },
+    {
+      "path": "/home/ubuntu/WalletHunterV07/WalletHunterV05_final/data/intelligence.sqlite",
+      "archive": "data/intelligence.sqlite",
+      "kind": "sqlite",
+      "required": true
+    },
+    {
+      "path": "/home/ubuntu/WalletHunterV07/WalletHunterV05_final/data/ai_outcomes.sqlite3",
+      "archive": "data/ai_outcomes.sqlite3",
+      "kind": "sqlite",
+      "required": true
+    },
+    {
+      "path": "/home/ubuntu/WalletHunterV07/WalletHunterV05_final/data/ai_entry_observer.sqlite3",
+      "archive": "data/ai_entry_observer.sqlite3",
+      "kind": "sqlite",
+      "required": true
+    },
+    {
+      "path": "/home/ubuntu/WalletHunterV07/WalletHunterV05_final/data/ai_user_orders.sqlite3",
+      "archive": "data/ai_user_orders.sqlite3",
+      "kind": "sqlite",
+      "required": true
+    },
+    {
+      "path": "/home/ubuntu/WalletHunterV07/WalletHunterV05_final/data/ai_modes.sqlite3",
+      "archive": "data/ai_modes.sqlite3",
+      "kind": "sqlite",
+      "required": true
+    },
+    {
+      "path": "/home/ubuntu/WalletHunterV07/WalletHunterV05_final/data/ai_trader.sqlite3",
+      "archive": "data/ai_trader.sqlite3",
+      "kind": "sqlite",
+      "required": true
+    },
+    {
+      "path": "/home/ubuntu/WalletHunterV07/WalletHunterV05_final/data/ai_shadow.sqlite3",
+      "archive": "data/ai_shadow.sqlite3",
+      "kind": "sqlite",
+      "required": true
+    },
+    {
+      "path": "/home/ubuntu/WalletHunterV07/WalletHunterV05_final/data/ai_position_actions.sqlite3",
+      "archive": "data/ai_position_actions.sqlite3",
+      "kind": "sqlite",
+      "required": true
+    },
+    {
+      "path": "/home/ubuntu/WalletHunterV07/WalletHunterV05_final/data/ai_reviews.sqlite3",
+      "archive": "data/ai_reviews.sqlite3",
+      "kind": "sqlite",
+      "required": true
+    },
+    {
+      "path": "/home/ubuntu/WalletHunterV07/WalletHunterV05_final/data/state.json",
+      "archive": "data/state.json",
+      "kind": "state",
+      "required": true
+    },
+    {
+      "path": "/home/ubuntu/WalletHunterV07/WalletHunterV05_final/.env",
+      "archive": ".env",
+      "kind": "file",
+      "required": true
+    },
+    {
+      "path": "/home/ubuntu/WalletHunterV07/WalletHunterV05_final/desktop/bot.session",
+      "archive": "desktop/bot.session",
+      "kind": "sqlite",
+      "required": true
+    },
+    {
+      "path": "/etc/systemd/system/wallethunter-web.service",
+      "archive": "operations/wallethunter-web.service",
+      "kind": "file",
+      "required": true
+    },
+    {
+      "path": "/etc/systemd/system/wallethunter.service",
+      "archive": "operations/wallethunter.service",
+      "kind": "file",
+      "required": true
+    },
+    {
+      "path": "/etc/systemd/system/wallethunter-intelligence.service",
+      "archive": "operations/wallethunter-intelligence.service",
+      "kind": "file",
+      "required": true
+    },
+    {
+      "path": "/etc/systemd/system/wallethunter-backup.service",
+      "archive": "operations/wallethunter-backup.service",
+      "kind": "file",
+      "required": true
+    },
+    {
+      "path": "/home/ubuntu/WalletHunterV07/WalletHunterV05_final/data/product.sqlite3",
+      "archive": "data/product.sqlite3",
+      "kind": "sqlite",
+      "required": true
+    },
+    {
+      "path": "/etc/systemd/system/wallethunter.service.d/20-release-url.conf",
+      "archive": "operations/20-release-url.conf",
+      "kind": "file",
+      "required": true
+    },
+    {
+      "path": "/home/ubuntu/WalletHunterV07/WalletHunterV05_final/data/product-runtime.json",
+      "archive": "data/product-runtime.json",
+      "kind": "file",
+      "required": true
+    },
+    {
+      "path": "/home/ubuntu/WalletHunterV07/WalletHunterV05_final/data/validation/paper-20260908T121351Z-07515b5c/30-paper-session.conf",
+      "archive": "data/validation/paper-20260908T121351Z-07515b5c/30-paper-session.conf",
+      "kind": "file",
+      "required": true
+    },
+    {
+      "path": "/home/ubuntu/WalletHunterV07/WalletHunterV05_final/data/validation/paper-20260908T121351Z-07515b5c/paper.json",
+      "archive": "data/validation/paper-20260908T121351Z-07515b5c/paper.json",
+      "kind": "file",
+      "required": true
+    },
+    {
+      "path": "/home/ubuntu/WalletHunterV07/WalletHunterV05_final/data/validation/paper-20260908T121351Z-07515b5c/policy.sha256",
+      "archive": "data/validation/paper-20260908T121351Z-07515b5c/policy.sha256",
+      "kind": "file",
+      "required": true
+    },
+    {
+      "path": "/home/ubuntu/WalletHunterV07/WalletHunterV05_final/data/validation/paper-20260908T121351Z-07515b5c/session.json",
+      "archive": "data/validation/paper-20260908T121351Z-07515b5c/session.json",
+      "kind": "file",
+      "required": true
+    },
+    {
+      "path": "/home/ubuntu/WalletHunterV07/WalletHunterV05_final/data/validation/paper-20260908T121351Z-07515b5c/shadow.json",
+      "archive": "data/validation/paper-20260908T121351Z-07515b5c/shadow.json",
+      "kind": "file",
+      "required": true
+    },
+    {
+      "path": "/home/ubuntu/WalletHunterV07/WalletHunterV05_final/data/validation/paper-20260908T121351Z-07515b5c/shadow/autonomy.sqlite",
+      "archive": "data/validation/paper-20260908T121351Z-07515b5c/shadow/autonomy.sqlite",
+      "kind": "sqlite",
+      "required": true
+    },
+    {
+      "path": "/home/ubuntu/WalletHunterV07/WalletHunterV05_final/data/validation/paper-20260908T121351Z-07515b5c/shadow/fake.sqlite",
+      "archive": "data/validation/paper-20260908T121351Z-07515b5c/shadow/fake.sqlite",
+      "kind": "sqlite",
+      "required": true
+    },
+    {
+      "path": "/home/ubuntu/WalletHunterV07/WalletHunterV05_final/data/validation/paper-20260908T121351Z-07515b5c/paper/autonomy.sqlite",
+      "archive": "data/validation/paper-20260908T121351Z-07515b5c/paper/autonomy.sqlite",
+      "kind": "sqlite",
+      "required": true
+    },
+    {
+      "path": "/home/ubuntu/WalletHunterV07/WalletHunterV05_final/data/validation/paper-20260908T121351Z-07515b5c/paper/fake.sqlite",
+      "archive": "data/validation/paper-20260908T121351Z-07515b5c/paper/fake.sqlite",
+      "kind": "sqlite",
+      "required": true
+    },
+    {
+      "path": "/etc/systemd/system/wallethunter-intelligence.service.d/30-paper-session.conf",
+      "archive": "operations/30-paper-session.conf",
+      "kind": "file",
+      "required": true
+    },
+    {
+      "path": "/home/ubuntu/WalletHunterV07/WalletHunterV05_final/data/hl-api-budget.sqlite3",
+      "archive": "data/hl-api-budget.sqlite3",
+      "kind": "sqlite",
+      "required": true
+    },
+    {
+      "path": "/etc/systemd/system/wallethunter-web.service.d/40-api-budget.conf",
+      "archive": "operations/wallethunter-web-40-api-budget.conf",
+      "kind": "file",
+      "required": true
+    },
+    {
+      "path": "/etc/systemd/system/wallethunter.service.d/40-api-budget.conf",
+      "archive": "operations/wallethunter-40-api-budget.conf",
+      "kind": "file",
+      "required": true
+    },
+    {
+      "path": "/etc/systemd/system/wallethunter-intelligence.service.d/40-api-budget.conf",
+      "archive": "operations/wallethunter-intelligence-40-api-budget.conf",
+      "kind": "file",
+      "required": true
+    }
+  ]
+}

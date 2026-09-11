@@ -1,0 +1,14 @@
+/* Visually isolate the destructive account-removal action. */
+#deleteAccountButton {
+  width: 100%;
+  margin-top: 18px;
+  padding: 15px;
+  border: 1px solid #ff5368;
+  border-radius: 14px;
+  background: linear-gradient(135deg, #7f182b, #421018);
+  color: #fff3f5;
+  font-weight: 800;
+  box-shadow: 0 0 0 1px #311016, 0 8px 24px #4b101a66;
+}
+#deleteAccountButton::before { content: "⚠ "; }
+#deleteAccountButton:hover { background: linear-gradient(135deg, #a42138, #59131f); }

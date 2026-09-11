@@ -14,7 +14,11 @@ from core.foundation.ledger import Reservation
 
 class RuntimeBinding(Contract):
     scope: Scope
-    mode: str = Field(pattern='^(OBSERVE|PAPER_AUTO|SHADOW|LIVE_CONFIRM)$')
+    # LIVE_AUTO is a real configured mode since the unattended consumer
+    # landed. Excluding it here made a live runtime unreadable by the
+    # product view, so the interface could not show that real money was
+    # trading unattended - the one state it must never hide.
+    mode: str = Field(pattern='^(OBSERVE|PAPER_AUTO|SHADOW|LIVE_CONFIRM|LIVE_AUTO)$')
     state_path: str
     config_path: str
 
@@ -545,7 +549,10 @@ class ProductReadModel:
         from core.operational_health import storage_health
         storage=storage_health(self.root,self.clock())
         if storage['status'] in {'UNHEALTHY','DEGRADED'} and status=='HEALTHY':status='DEGRADED'
-        return clean({'version':'product-v1','scope':self.scope.model_dump(mode='json'),'checked_ms':self.clock(),'live_auto':False,
+        return clean({'version':'product-v1','scope':self.scope.model_dump(mode='json'),'checked_ms':self.clock(),
+            # Reported, not asserted: whether any configured runtime is
+            # actually placing unconfirmed live orders right now.
+            'live_auto':any(m.get('mode')=='LIVE_AUTO' for m in modes),
             'runtimes':modes,'analysis':self.shared_analysis(modes),'account':account,'manual_copy':manual,'discovery':discovery,'health':{'status':status,'components':components,'api_budget':api_budget,'storage':storage},
             'history_limit':100,'legacy_paper_substitution':False})
 

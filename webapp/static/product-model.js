@@ -2,7 +2,7 @@
 (function(root){
  'use strict';
  const number=v=>typeof v==='number'&&Number.isFinite(v)?v:null;
- const modes=['OBSERVE','PAPER_AUTO','SHADOW','LIVE_CONFIRM'];
+ const modes=['OBSERVE','PAPER_AUTO','SHADOW','LIVE_CONFIRM','LIVE_AUTO'];
  const runtime=(s,m)=>(s?.runtimes||[]).find(r=>r.mode===m)||null;
  const analysis=(s,m)=>{const own=runtime(s,m==='LIVE'?'LIVE_CONFIRM':m);return own?.agents?.length?own:s?.analysis||null;};
  const scopeKey=s=>JSON.stringify([s?.tenant,s?.account,s?.network]);

@@ -167,3 +167,7 @@ body[data-motion="off"] .w-dot.good{animation:none}
 .w-rank.bad{background:#F0616A1f;color:var(--red)}
 .w-rank.warn{background:#E0A3401f;color:var(--amber)}
 .w-panel .agent-core,.w-panel .core-scene{max-width:100%}
+/* A price older than the mark window is shown, but never as if it were live. */
+.w-pos.aging .w-cell b,.w-pos.aging .w-pos-pnl{opacity:.62}
+.w-pos.aging .w-cell small{color:var(--amber)}
+.w-pos{position:relative}

@@ -57,10 +57,32 @@ function mergePortfolio(previous,next){
  });
  return {...next,positions};
 }
+// A mark is display data the snapshot does not carry: the server only fills
+// current_price when a fresh 30s quote happened to sit in the decision store,
+// so a snapshot every 5s wiped every price, PnL and ROE and the UI price feed
+// wrote them back up to 10s later. Measured: a position showed no P&L 65% of
+// the time. Carry the last mark across snapshots, but never past MARK_MAX_AGE -
+// a frozen number is a worse lie than a dash.
+const MARK_MAX_AGE=60000;
+function mergeMarked(previous,next,key){
+ const old=new Map((previous||[]).map(row=>[key(row),row]));
+ return (next||[]).map(row=>{
+  const prior=old.get(key(row));
+  if(!prior)return row;
+  const stamp=N(prior.mark_timestamp);
+  if(N(row.current_price)!==null||stamp===null||Date.now()-stamp>MARK_MAX_AGE)return row;
+  return {...row,current_price:prior.current_price,mark_timestamp:prior.mark_timestamp,
+   pnl:N(row.pnl)!==null?row.pnl:prior.pnl,pnl_kind:row.pnl_kind&&row.pnl_kind!=='UNAVAILABLE'?row.pnl_kind:prior.pnl_kind};
+ });
+}
 function mergeSnapshot(next){
  const previous=S.snapshot;
  if(!previous||M.scopeKey(previous.scope)!==M.scopeKey(next.scope))return next;
  const merged={...next};
+ if(Array.isArray(next.runtimes))merged.runtimes=next.runtimes.map(run=>{
+  const before=(previous.runtimes||[]).find(x=>x.mode===run.mode);
+  return before?{...run,episodes:mergeMarked(before.episodes,run.episodes,e=>e.episode_id)}:run;
+ });
  if(!next.account&&previous.account)merged.account=previous.account;
  else if(next.account?.portfolio||previous.account?.portfolio)merged.account={...previous.account,...next.account,portfolio:mergePortfolio(previous.account?.portfolio,next.account?.portfolio)};
  if(!Array.isArray(next.runtimes)&&Array.isArray(previous.runtimes))merged.runtimes=previous.runtimes;
@@ -179,16 +201,17 @@ function capitalPanel(){
  const portfolio=live?S.snapshot.account?.portfolio:run?.portfolio;
  const allocation=live?null:run?.allocation;
  const open=openRows(),analytics=run?.analytics||{};
- const used=open.reduce((sum,p)=>sum+(N(p.margin)||0),0);
+ const knownMargins=open.every(p=>N(p.margin)!==null);
+ const used=knownMargins?open.reduce((sum,p)=>sum+p.margin,0):null;
  const limit=N(allocation?.allocation_limit)??N(portfolio?.sizing_capital)??N(portfolio?.equity);
  const free=N(allocation?.available)??(limit!==null?Math.max(0,limit-used):null);
  const unrealized=open.reduce((sum,p)=>sum+(N(p.pnl)||0),0);
- const bar=limit>0?`<div class="w-bar" role="img" aria-label="${esc(t('Задействованная маржа','Margin in use'))}">
+ const bar=limit>0&&knownMargins?`<div class="w-bar" role="img" aria-label="${esc(t('Задействованная маржа','Margin in use'))}">
    ${open.map((p,i)=>`<span style="width:${Math.max(1,Math.min(100,(N(p.margin)||0)/limit*100))}%;background:${HUES[i%HUES.length]}"></span>`).join('')}
   </div>
   <div class="w-legend">${open.map((p,i)=>`<span><i style="background:${HUES[i%HUES.length]}"></i>${esc(p.instrument?.symbol||'—')} ${cash(p.margin)}</span>`).join('')}</div>`:'';
  return `<section class="w-money" data-key="capital">
-  <div class="w-eyebrow">${esc(modeTitle())} · ${esc(String(S.mode).replace('_',' '))}</div>
+  <div class="w-eyebrow">${esc(modeTitle())}</div>
   <div class="w-sum">${cash(portfolio?.equity)}</div>
   <div class="w-row">
    ${cell(t('открытый P&L','open P&L'),`<span class="${sign(unrealized)}">${secret(signed(unrealized))}</span>`)}
@@ -199,16 +222,20 @@ function capitalPanel(){
     :cell(t('реализовано','realized'),`<span class="${sign(analytics.net_pnl)}">${secret(signed(analytics.net_pnl))}</span>`)+cell(t('сделок','trades'),secret(num(analytics.trade_count,0)))}
   </div>
   ${limit>0?`<div class="w-eyebrow w-thin">${esc(t('задействовано маржи','margin in use'))} · ${cash(used)} ${esc(t('из','of'))} ${cash(limit)}</div>${bar}
-   <div class="w-free">${esc(t('свободно','free'))} ${cash(free)}</div>`:''}
+   ${knownMargins?`<div class="w-free">${esc(t('свободно','free'))} ${cash(free)}</div>`
+    :`<div class="w-free">${esc(t('Маржа части позиций не подтверждена — доля бюджета не считается.','Margin is unverified on some positions — the budget share is not computed.'))}</div>`}`:''}
   <p class="w-note">${esc(live?t('Биржевой счёт. Каждая строка подтверждена биржей.','Exchange account. Every row is exchange-confirmed.'):t('Виртуальные деньги. Ордера на биржу не уходят.','Virtual money. No orders reach the exchange.'))} · ${freshness(portfolio?.received_ms)}</p>
  </section>`;
 }
 
 function positionCard(p){
- const mark=N(p.current_price),entry=N(p.entry??p.entry_price),margin=N(p.margin),pnl=N(p.pnl);
+ const stamp=N(p.mark_timestamp),age=stamp===null?null:Date.now()-stamp;
+ const fresh=age===null||age<=MARK_MAX_AGE;
+ const mark=fresh?N(p.current_price):null,entry=N(p.entry??p.entry_price),margin=N(p.margin),pnl=fresh?N(p.pnl):null;
  const roe=pnl!==null&&margin>0?pnl/margin*100:null;
  const lev=N(p.leverage),closed=!M.isOpen(p);
- return `<button class="w-pos" data-key="pos-${esc(p.id)}" data-position="${esc(p.id)}">
+ const aging=mark!==null&&age!==null&&age>30000;
+ return `<button class="w-pos${aging?' aging':''}" data-key="pos-${esc(p.id)}" data-position="${esc(p.id)}">
   <span class="w-pos-head"><b>${esc(p.instrument?.symbol||'—')}</b>
    <span class="w-tag ${p.side==='SHORT'?'bad':'good'}">${esc(L(p.side))}</span>
    ${p.unresolved||['UNKNOWN','PARTIAL','RECONCILIATION_REQUIRED'].includes(p.state)?badge(p.state):''}
@@ -216,7 +243,7 @@ function positionCard(p){
   <span class="w-pos-grid">
    ${cell(t('размер','size'),secret(num(p.size,6)))}
    ${cell(t('вход','entry'),cash(entry))}
-   ${cell(closed?t('выход','exit'):t('сейчас','now'),cash(closed?(N(p.outcome?.exit_price)??mark):mark))}
+   ${cell(closed?t('выход','exit'):aging?t('цена','price')+' · '+num(age/1000,0)+t(' с','s'):t('сейчас','now'),cash(closed?(N(p.outcome?.exit_price)??mark):mark))}
    ${cell(t('объём','notional'),cash(p.notional))}
    ${cell(t('плечо','leverage'),lev===null?'—':esc(num(lev,0))+'×')}
    ${cell(closed?t('результат','result'):'ROE',roe===null?'—':`<span class="${sign(roe)}">${esc(num(roe,1))}%</span>`)}
@@ -238,7 +265,11 @@ function convictionPanel(){
  if(!c)return panel(t('ПОЧЕМУ ТАК РЕШЕНО','WHY THIS DECISION'),empty(t('Ждём событие лидера','Waiting for a leader event')),'conviction');
  const own=Boolean(d?.consensus);
  const lead=(ai()?.agents||[]).find(a=>a.agent_id==='leader')?.result;
- const quality=N(lead?.score)!==null?Math.min(1,Math.abs(lead.score)):null;
+ // The agent board is whatever the research worker looked at last. Labelling
+ // its leader score as this decision's input is only true for the same market.
+ const sameMarket=Boolean(lead&&c.instrument&&lead.instrument?.symbol===c.instrument.symbol
+  &&(lead.instrument?.dex||'')===(c.instrument.dex||''))||Boolean(lead&&e?.instrument&&lead.instrument?.symbol===e.instrument.symbol);
+ const quality=sameMarket&&N(lead?.score)!==null?Math.min(1,Math.abs(lead.score)):null;
  const final=N(c.confidence);
  const refused=(c.blockers||[]),reduced=(c.attenuation||[]);
  const gap=quality!==null&&final!==null?quality-final:null;
@@ -253,6 +284,13 @@ function convictionPanel(){
    <div class="w-step"><span>${esc(t('Итоговая убеждённость','Final conviction'))}</span><b class="${final<quality?'bad':'good'}">${pc(final)}</b></div>
    <div class="w-track"><i class="w-final" style="width:${(final*100).toFixed(0)}%"></i></div>
    ${gap>0.005?`<p class="w-note">${esc(t('Снижено на ','Reduced by ')+num(gap*100,0)+' '+t('п.п.','pp'))}</p>`:''}
+  </div>`:final!==null?`
+  <div class="w-chain">
+   <div class="w-step"><span>${esc(t('Итоговая убеждённость','Final conviction'))}</span><b>${pc(final)}</b></div>
+   <div class="w-track"><i class="w-final" style="width:${(final*100).toFixed(0)}%"></i></div>
+   ${reduced.length?`<p class="w-reasons">${esc(t('Уменьшили размер: ','Sized down by: ')+reduced.map(L).join(' · '))}</p>`:''}
+   ${refused.length?`<p class="w-reasons bad">${esc(t('Отменили сделку: ','Refused by: ')+refused.map(L).join(' · '))}</p>`:''}
+   <p class="w-note">${esc(t('Оценка лидера по этому рынку сейчас недоступна, поэтому шаг снижения не показан.','The leader score for this market is not available now, so the step-down is not shown.'))}</p>
   </div>`:'';
  const size=d?.sizing||{};
  return panel(t('ПОЧЕМУ ТАК РЕШЕНО','WHY THIS DECISION'),`
@@ -317,6 +355,11 @@ function healthPanel(){
 
 function resultsPanel(){
  const run=r(),a=run?.analytics||{},closed=closedRows();
+ // The exchange account is a balance, not a strategy ledger: it records no
+ // outcomes, so every figure here would be a dash dressed up as a result.
+ if(S.mode==='LIVE')return panel(t('РЕЗУЛЬТАТ','RESULTS'),
+  `<p class="w-note">${esc(t('У биржевого счёта нет журнала результатов по стратегии: он хранит баланс и открытые позиции, а не закрытые сделки движка. Результат считается по режиму, который торговал — переключитесь на PAPER.','The exchange account keeps no per-strategy ledger: it holds a balance and open positions, not the engine’s closed trades. Switch to PAPER to read the result.'))}</p>
+   <button class="w-link" data-mode="PAPER">${esc(t('Показать результат PAPER','Show the PAPER result'))}</button>`,'results');
  const small=(N(a.sample_size)||0)<10;
  return panel(t('РЕЗУЛЬТАТ','RESULTS'),`
   <div class="w-row w-wide">
@@ -386,7 +429,7 @@ function showSheet(title,html,type='info'){if(!document.querySelector('dialog'))
 function toast(message){document.querySelector('.toast')?.remove();const e=document.createElement('div');e.className='toast';e.setAttribute('role','status');e.textContent=message;document.body.append(e);setTimeout(()=>e.remove(),2500);}
 const headers=()=>({'Content-Type':'application/json','x-telegram-init-data':window.Telegram?.WebApp?.initData||''});
 async function read(url,options={}){const response=await fetch(url,{cache:'no-store',...options,headers:headers()});if(!response.ok){const error=new Error(`HTTP_${response.status}`);try{error.detail=(await response.json()).detail;}catch{}throw error;}return response.json();}
-function snapshot(s,{cached=false}={}){if(!s||s.version!=='product-v1'||!s.scope||typeof s.live_auto!=='boolean')throw new Error('INVALID_PRODUCT');if(S.snapshot&&M.scopeKey(S.snapshot.scope)!==M.scopeKey(s.scope)){S.events=[];S.cursor=0;S.position=null;S.homePositionId=null;S.homeCandles=[];S.homeMark=null;S.page='terminal';S.proposals=[];S.notificationPrefs=null;$('sheet')?.close();}S.snapshot=mergeSnapshot(s);S.snapshotCached=cached;S.snapshotSavedAt=cached?(S.snapshotSavedAt||Date.now()):Date.now();if(!cached)persistSnapshot(S.snapshot);if(!M.runtime(S.snapshot,S.mode)&&S.mode!=='LIVE')S.mode=S.snapshot.runtimes[0]?.mode||(S.snapshot.account?'LIVE':'UNKNOWN');if(S.position){const current=allPositions().find(p=>p.id===S.position.id);if(current){S.position={...S.position,...current};applyMark();}}S.error=false;render();if(!cached&&['LIVE','OBSERVE','PAPER_AUTO','SHADOW','LIVE_CONFIRM'].includes(S.position?.mode||S.mode))void refreshLiveMarks();}
+function snapshot(s,{cached=false}={}){if(!s||s.version!=='product-v1'||!s.scope||typeof s.live_auto!=='boolean')throw new Error('INVALID_PRODUCT');if(S.snapshot&&M.scopeKey(S.snapshot.scope)!==M.scopeKey(s.scope)){S.events=[];S.cursor=0;S.position=null;S.homePositionId=null;S.homeCandles=[];S.homeMark=null;S.page='terminal';S.proposals=[];S.notificationPrefs=null;$('sheet')?.close();}S.snapshot=mergeSnapshot(s);S.snapshotCached=cached;S.snapshotSavedAt=cached?(S.snapshotSavedAt||Date.now()):Date.now();if(!cached)persistSnapshot(S.snapshot);if(!M.runtime(S.snapshot,S.mode)&&S.mode!=='LIVE')S.mode=S.snapshot.runtimes[0]?.mode||(S.snapshot.account?'LIVE':'UNKNOWN');if(S.position){const current=allPositions().find(p=>p.id===S.position.id);if(current){S.position={...S.position,...current};applyMark();}}S.error=false;render();if(!cached&&['LIVE','OBSERVE','PAPER_AUTO','SHADOW','LIVE_CONFIRM'].includes(S.position?.mode||S.mode))void refreshLiveMarks(M.positions(S.snapshot,S.mode).some(p=>M.isOpen(p)&&N(p.current_price)===null));}
 let refreshPending=null,lastSnapshot=0;
 async function refresh(){if(refreshPending)return refreshPending;refreshPending=read('/api/product').then(s=>{snapshot(s);lastSnapshot=Date.now();}).catch(()=>{S.error=true;S.snapshotCached=Boolean(S.snapshot);render();}).finally(()=>refreshPending=null);return refreshPending;}
 function streamPayload(data){const previous=new Set(S.events.map(e=>e.id));if(data.reset_required)S.events=[];S.events=M.mergeEvents(S.events,data.events,data.reset_required);if(Number.isSafeInteger(data.cursor))S.cursor=data.cursor;if(data.snapshot){snapshot(data.snapshot);lastSnapshot=Date.now();}else{render();if((data.events?.length&&Date.now()-lastSnapshot>3000)||Date.now()-lastSnapshot>30000)void refresh();}for(const e of data.events||[]){if(previous.has(e.id)||document.hidden||Date.now()-e.timestamp>30000||Date.now()<e.timestamp)continue;pulse(document.querySelector(`[data-key="event-${CSS.escape(e.id)}"]`),'activity-arrival');if(['AGENT_UPDATED','CONSENSUS_UPDATED','POSITION_UPDATED','LEADER_PROMOTED'].includes(e.type))document.querySelectorAll('.atom-ambient').forEach(el=>pulse(el,'atom-accent'));if(e.type==='AGENT_UPDATED'){const rows=Array.isArray(e.data.evidence)?e.data.evidence:[e.data.evidence];for(const a of rows){if(!agentIds.includes(a?.agent_id))continue;document.querySelectorAll(`[data-agent-edge="${a.agent_id}"]`).forEach(el=>pulse(el,'active-edge'));document.querySelectorAll(`[data-agent="${a.agent_id}"]`).forEach(el=>pulse(el,'node-event'));}}if(['CONSENSUS_UPDATED','EXECUTION_UPDATED','AUTHORIZATION_REQUIRED'].includes(e.type))pulse(document.querySelector('.reactor'),'flash');if(e.type==='CONSENSUS_UPDATED')document.querySelectorAll('.core-ring').forEach(el=>pulse(el,'core-event'));if(e.type==='LEADER_PROMOTED')pulse(document.querySelector('[data-key="leaders"]'),'flash');if(e.type==='POSITION_UPDATED')pulse(document.querySelector('[data-key="home-positions"]'),'flash');if(e.type==='HEALTH_UPDATED'&&e.data?.status==='DEGRADED')pulse(document.querySelector('.system-banner'),'flash');if(e.type==='AUTHORIZATION_REQUIRED'&&e.data?.evidence?.outcome==='CONFIRMATION_REQUIRED')toast(t('Есть предложение LIVE — откройте подтверждения в Ядре','LIVE proposal available — open confirmations in AI Core'));} }

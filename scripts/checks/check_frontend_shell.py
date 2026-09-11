@@ -87,4 +87,30 @@ for asset in ('product.css', 'product-model.js', 'product.js'):
     ok('%s stamp matches its bytes' % asset, stamp.group(1) == want,
        '%s != %s' % (stamp.group(1), want))
 
+print('a value on screen does not blink between a number and a dash')
+# Measured before the fix: a position card showed no P&L 65% of the time,
+# because /api/product replaced the episodes every 5s and only the separate
+# mark feed put the price back, up to 10s later.
+ok('the snapshot merge carries marks forward', 'function mergeMarked(' in JS)
+ok('episodes are merged, not just the LIVE portfolio',
+   'mergeMarked(before.episodes,run.episodes,e=>e.episode_id)' in JS)
+ok('a carried mark expires instead of freezing', 'MARK_MAX_AGE' in JS)
+ok('the ceiling is a minute at most',
+   int(re.search(r'const MARK_MAX_AGE=(\d+);', JS).group(1)) <= 60000)
+ok('an expired mark is not drawn as a live price',
+   'const fresh=age===null||age<=MARK_MAX_AGE;' in JS)
+ok('an aging price is marked as such', '.w-pos.aging' in CSS and "' aging'" in JS)
+# A phone has no hover, so the age cannot live in a title attribute.
+ok('the age is on the card, not in a tooltip',
+   "aging?t('цена','price')+' · '+num(age/1000,0)" in JS and 'title="${esc(t(\'Цена получена' not in JS)
+ok('a first mark is fetched at once when a position has none',
+   'refreshLiveMarks(M.positions(S.snapshot,S.mode).some(' in JS)
+
+print('an unknown part never becomes a confident total')
+ok('unknown margins are not summed as zero', 'const knownMargins=open.every(' in JS)
+ok('and the bar is not drawn from a partial sum', 'limit>0&&knownMargins?' in JS)
+ok('the leader step is only shown for the decision\'s own market', 'const sameMarket=' in JS)
+ok('the exchange account does not fake a strategy result',
+   "if(S.mode==='LIVE')return panel(t('РЕЗУЛЬТАТ'" in JS)
+
 print('ALL OK')

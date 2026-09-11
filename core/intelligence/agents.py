@@ -83,7 +83,7 @@ def evaluate(event, leader, candles, book, now, policy, *, context=None, actiona
     output.append(result('leader',direction if leader.qualified else 'CAUTION',leader.confidence,
         leader.score*(1 if direction=='LONG' else -1),('VERSIONED_LEADER_SCORE',),
         'FRESH' if 0 <= now-leader.computed_ms <= policy.reevaluate_ms else 'STALE'))
-    fresh=0 <= now-event.exchange_ms <= policy.max_signal_age_ms
+    fresh=0 <= now-event.exchange_ms <= policy.signal_window_ms(event.action)
     output.append(result('risk_context','PASS' if fresh else 'CAUTION',1.,1. if fresh else -1.,('SIGNAL_AGE',),'FRESH' if fresh else 'STALE'))
     if actionable or context is not None:
         from .risk_context import analyze
@@ -137,7 +137,10 @@ def consensus(event, agents, now, policy, *, position=None):
     if len(by_id)!=len(agents): blockers.append('DUPLICATE_AGENT')
     if any(a.instrument!=event.instrument or a.created_ms>now or now-a.created_ms>policy.max_market_age_ms for a in agents):
         blockers.append('AGENT_SCOPE_OR_AGE')
-    if not 0<=now-event.exchange_ms<=policy.max_signal_age_ms: blockers.append('STALE_SIGNAL')
+    # An exit keeps its own, much wider window: see max_exit_signal_age_ms.
+    # An unproven reduction is still refused by POSITION_LIFECYCLE_REQUIRED
+    # below, so the wider window can never authorize an unowned exit.
+    if not 0<=now-event.exchange_ms<=policy.signal_window_ms(event.action): blockers.append('STALE_SIGNAL')
     reducing=event.action in {'REDUCE','CLOSE'}
     if reducing and position is not None:
         if (position.instrument!=event.instrument or position.evidence!='VERIFIED' or

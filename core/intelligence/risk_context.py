@@ -7,7 +7,7 @@ def analyze(event, agents, evidence, now, policy):
     blocked=[]; cautions=[]
     def check(ok,reason):
         if not ok: blocked.append(reason)
-    check(0<=now-event.exchange_ms<=policy.max_signal_age_ms,'SIGNAL_STALE')
+    check(0<=now-event.exchange_ms<=policy.signal_window_ms(event.action),'SIGNAL_STALE')
     by_id={a.agent_id:a for a in agents}
     for key in ('liquidity','volatility'):
         a=by_id.get(key)

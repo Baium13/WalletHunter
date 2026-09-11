@@ -672,13 +672,39 @@ class WalletDiscoveryEngine:
         return {'prints':len(window),'notional':total,'imbalance':max(-1.,min(1.,signed/total)),
                 'exchange_ms':window[-1][0],'window_ms':self.FLOW_WINDOW_MS}
 
+    def expired(self,event,now):
+        """Past the window in which this action could still be acted on."""
+        return not 0<=now-event.exchange_ms<=self.policy.signal_window_ms(event.action)
+
+    def research_slots(self,depth):
+        """Live market researches this cycle, scaled by how backed up we are.
+
+        A fixed four per thirty-second cycle is eight events a minute. Eight
+        watched leaders trading in bursts exceed that, the queue grows, and
+        everything in it ages past its window - which is the mechanism that
+        made the median signal 67 seconds old and the worst twelve minutes.
+        Expired events are cleared without a market read and are not counted
+        here, so this bound covers only work that can still produce an order.
+        """
+        base=self.policy.research_per_cycle
+        ceiling=max(base,self.policy.research_max_per_cycle)
+        if depth<=base: return base
+        return min(ceiling,depth)
+
     def research(self,event,leader,info,now,clock=None):
         with self.store.transaction() as db:
             existing=db.execute('SELECT r.body FROM decision_links l JOIN intelligence_records r ON r.id=l.record_id WHERE l.event_id=?',(event.event_id,)).fetchone()
         if existing: return ConsensusDecision.model_validate(json.loads(existing[0])['consensus'])
         coin=event.instrument.market_key.split('|')[0]
-        book=info({'type':'l2Book','coin':coin})
-        candles=info({'type':'candleSnapshot','req':{'coin':coin,'interval':'15m','startTime':now-64*900000,'endTime':now}})
+        if self.expired(event,now):
+            # Two market reads to reach a foregone refusal is throughput the
+            # queue cannot spare - and the queue's own depth is why this event
+            # expired. Score it on the evidence actually held (none), which
+            # yields STALE_SIGNAL honestly, and let it leave the queue.
+            book,candles=({},[])
+        else:
+            book=info({'type':'l2Book','coin':coin})
+            candles=info({'type':'candleSnapshot','req':{'coin':coin,'interval':'15m','startTime':now-64*900000,'endTime':now}})
         if clock is not None: now=clock()
         if not isinstance(candles,list): candles=[]
         candles=[c for c in candles if type(c.get('T')) is int and c['T']<=now]
@@ -764,14 +790,34 @@ class WalletDiscoveryEngine:
                         'scan_lag_ms':max(0,clock()-completed) if completed else None,
                         'fill_stream':stream_details})
             with self.store.transaction() as db:
-                queue=db.execute("SELECT r.body,c.analysis FROM intelligence_records r JOIN candidates c ON c.network=r.network AND c.wallet=json_extract(r.body,'$.wallet') LEFT JOIN decision_links l ON l.event_id=json_extract(r.body,'$.event_id') WHERE r.network=? AND r.kind='LEADER_TRADE' AND l.event_id IS NULL ORDER BY r.rowid LIMIT 4",(self.network,)).fetchall()
+                # Exits first, then newest entries. Strict insertion order let a
+                # backlog of dead entries starve a fresh exit for cycles, and an
+                # exit is the one action whose lateness costs a position.
+                queue=db.execute("SELECT r.body,c.analysis FROM intelligence_records r "
+                    "JOIN candidates c ON c.network=r.network AND c.wallet=json_extract(r.body,'$.wallet') "
+                    "LEFT JOIN decision_links l ON l.event_id=json_extract(r.body,'$.event_id') "
+                    "WHERE r.network=? AND r.kind='LEADER_TRADE' AND l.event_id IS NULL "
+                    "ORDER BY CASE WHEN json_extract(r.body,'$.action') IN ('REDUCE','CLOSE') THEN 0 ELSE 1 END,"
+                    "json_extract(r.body,'$.exchange_ms') DESC LIMIT ?",
+                    (self.network,self.policy.research_scan_limit)).fetchall()
+            slots=self.research_slots(len(queue));cleared=0;researched=0
             for queued in queue:
                 try:
                     event=LeaderTradeEvent.model_validate_json(queued['body'])
+                    # Expired events are cleared for free, so they neither
+                    # consume a slot nor keep the queue growing behind them.
+                    dead=self.expired(event,clock())
+                    if not dead and researched>=slots: continue
                     leader=LeaderScore.model_validate(json.loads(queued['analysis'])['score'])
                     self.research(event,leader,info,clock(),clock=clock)
-                    if on_decision is not None:on_decision()
+                    if dead: cleared+=1
+                    else:
+                        researched+=1
+                        if on_decision is not None:on_decision()
                 except Exception: errors.append('RESEARCH_DEFERRED')
+            self.health_observation('research_queue',clock(),details={'depth':len(queue),'slots':slots,
+                'researched':researched,'expired_cleared':cleared,
+                'scan_limit':self.policy.research_scan_limit})
             capacity=self.research_capacity(clock())
             # Backpressure: while the public buffer is backing up, stop
             # admitting NEW wallets. Discovery is the only optional consumer of

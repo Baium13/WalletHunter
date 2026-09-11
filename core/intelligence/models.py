@@ -41,6 +41,20 @@ class IntelligencePolicy(Contract):
     promotion_confidence: Unit = .4
     reevaluate_ms: int = Field(default=21600000, ge=60000)
     max_signal_age_ms: int = Field(default=60000, ge=1000, le=300000)
+    # An exit is not an entry. A stale ENTRY signal means the price has moved
+    # and the setup is gone, so refusing is right. A stale EXIT means the
+    # leader has already left a position we still hold and have proven: being
+    # late is a reason to hurry, not a reason to stay in. Sharing one 60s
+    # window meant every CLOSE that waited in the research queue was refused,
+    # which is why episodes opened and none ever resolved. Set this equal to
+    # max_signal_age_ms to restore the single-window behaviour.
+    max_exit_signal_age_ms: int = Field(default=900000, ge=1000, le=3600000)
+    # Live research per cycle. The base is what a quiet queue uses; the
+    # ceiling is what a backlog may reach. Expired events are cleared without
+    # a market read and do not count against either.
+    research_per_cycle: int = Field(default=4, ge=1, le=32)
+    research_max_per_cycle: int = Field(default=12, ge=1, le=32)
+    research_scan_limit: int = Field(default=64, ge=1, le=512)
     max_market_age_ms: int = Field(default=30000, ge=1000, le=60000)
     max_spread_bps: Positive = 20.
     minimum_depth_usd: Positive = 10000.
@@ -74,6 +88,10 @@ class IntelligencePolicy(Contract):
             if key in seen: raise ValueError('Duplicate liquidity override')
             seen.add(key)
         return self
+
+    def signal_window_ms(self, action):
+        """How long this action stays actionable after the leader's fill."""
+        return self.max_exit_signal_age_ms if action in ('REDUCE','CLOSE') else self.max_signal_age_ms
 
     def liquidity_for(self, instrument):
         """(max_spread_bps, minimum_depth_usd) for one market.

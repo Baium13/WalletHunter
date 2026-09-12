@@ -83,8 +83,38 @@ class EpisodeService:
                 if not position or not any(set(json.loads(p[0])['order_ids']) & set(position.order_ids) for p in proofs):continue
                 e=e.model_copy(update={'state':'RECONCILIATION_REQUIRED'})
             matches.append(e)
-        if len(matches)>1: raise ValueError('Ambiguous position episode')
+        if len(matches)>1:
+            # Two non-closed episodes for one (mode, leader, instrument) used to
+            # raise, which the worker recorded as a bare "ValueError" and
+            # quarantined - 37 ADD jobs in one deployment, with nothing in the
+            # record to say why. Ambiguity is not the same as unknowability:
+            # the position itself says which episode owns it. Prefer the
+            # episode whose FILLED/PARTIAL order ids are actually in the held
+            # position; that is the same exact-order evidence the REJECTED
+            # repair above demands, so this widens nothing. Only when the
+            # evidence cannot single one out is the call still refused.
+            owner=[e for e in matches if self._owns_in(db,scope,e,instrument)]
+            if len(owner)==1: return owner[0]
+            if not owner:
+                live=[e for e in matches if e.state!='REJECTED']
+                if len(live)==1: return live[0]
+            raise ValueError('Ambiguous position episode: %d candidates for %s/%s, %d with order evidence'
+                             %(len(matches),leader,instrument.symbol,len(owner)))
         return matches[0] if matches else None
+
+    def _owns_in(self,db,scope,episode,instrument):
+        """Does the held position carry an order id this episode actually filled?"""
+        portfolio=self.store.portfolio_in(db,scope)
+        position=next((p for p in portfolio.positions
+                       if p.instrument==instrument and p.evidence=='VERIFIED'),None)
+        if not position: return False
+        proofs=db.execute("SELECT i.receipt FROM episode_actions a JOIN intents i ON i.id=a.id "
+                          "WHERE a.episode=? AND i.status IN ('FILLED','PARTIAL')",(episode.episode_id,)).fetchall()
+        for proof in proofs:
+            try: ids=set(json.loads(proof[0])['order_ids'])
+            except (TypeError,ValueError,KeyError): continue
+            if ids&set(position.order_ids): return True
+        return False
 
     def transition_in(self,db,episode,action_id,state,evidence):
         key=action_id+'-'+state

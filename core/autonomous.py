@@ -21,6 +21,19 @@ from core.foundation.risk import RiskGateway
 from core.foundation.store import scope_key,encoded,digest
 
 
+def _fault(exc):
+    """Name the failure, not just its class.
+
+    Every quarantine and recovery record stored ``type(exc).__name__``. One
+    deployment accumulated 37 jobs all reading "ValueError" - which turned out
+    to be a single ambiguity check - with nothing in the record to say so. The
+    message is bounded and carries no payload: these are the engine's own
+    control-flow errors, never user or exchange data.
+    """
+    detail=' '.join(str(exc).split())[:180]
+    return type(exc).__name__+(': '+detail if detail else '')
+
+
 class LiveGuardPolicy(Contract):
     """Account-level stops for unattended live submission.
 
@@ -118,7 +131,7 @@ class AutonomousBackend:
             except Exception as exc:
                 # Financial work is retained by process()/canonical intents;
                 # dead-lettering the delivery never releases its reservation.
-                self.jobs.quarantine(row['seq'],row['body'],type(exc).__name__)
+                self.jobs.quarantine(row['seq'],row['body'],_fault(exc))
             self.jobs.advance(row['seq'])
         with self.store.transaction() as db:
             old_health=db.execute('SELECT body FROM autonomous_health WHERE scope=?',(scope,)).fetchone()
@@ -170,7 +183,7 @@ class AutonomousBackend:
                 with self.store.transaction() as db:
                     financial=db.execute('SELECT intent FROM autonomous_decisions WHERE scope=? AND event_id=?',
                         (scope_key(self.auth_policy.scope),event.event_id)).fetchone()
-                self.jobs.stage(event.event_id,'RECOVERY_REQUIRED' if financial and financial['intent'] else 'QUARANTINED',type(exc).__name__)
+                self.jobs.stage(event.event_id,'RECOVERY_REQUIRED' if financial and financial['intent'] else 'QUARANTINED',_fault(exc))
                 raise
 
     def _live_guard_reasons(self,db,portfolio,now,action):
@@ -513,7 +526,7 @@ class AutonomousBackend:
                 except Exception as exc:
                     with self.store.transaction() as db:
                         financial=db.execute('SELECT intent FROM autonomous_decisions WHERE scope=? AND event_id=?',(scope_key(scope),job['event_id'])).fetchone()
-                    self.jobs.stage(job['event_id'],'RECOVERY_REQUIRED' if financial and financial['intent'] else 'QUARANTINED',type(exc).__name__)
+                    self.jobs.stage(job['event_id'],'RECOVERY_REQUIRED' if financial and financial['intent'] else 'QUARANTINED',_fault(exc))
 
     def reverse(self,record):
         """Derived legs retain original public fill evidence; each is re-evaluated.

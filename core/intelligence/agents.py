@@ -123,10 +123,20 @@ def _exit_gates(by_id):
     itself: a usable book and a financial context that does not BLOCK.
     """
     blockers=[]
-    for key in ('liquidity','risk_context'):
-        a=by_id.get(key)
-        if a is None or a.freshness!='FRESH' or a.direction in {'WAIT','BLOCK'}:
-            blockers.append(key+'_UNAVAILABLE_OR_BLOCKING')
+    # A usable book is an ABILITY to place the reduction, so liquidity still
+    # has to be fresh and not blocking.
+    book=by_id.get('liquidity')
+    if book is None or book.freshness!='FRESH' or book.direction in {'WAIT','BLOCK'}:
+        blockers.append('liquidity_UNAVAILABLE_OR_BLOCKING')
+    # risk_context is different, and the docstring above already said so: only
+    # a real financial failure (BLOCK) may stop an exit. Blocking on WAIT, on a
+    # missing reading or on staleness trapped the operator in the position
+    # whenever the context feed lagged - measured as the single most common
+    # exit refusal on a live PAPER run. Shedding exposure cannot breach an
+    # allocation limit, so an unknown context is not a reason to keep holding.
+    context=by_id.get('risk_context')
+    if context is not None and context.direction=='BLOCK':
+        blockers.append('risk_context_UNAVAILABLE_OR_BLOCKING')
     return blockers
 
 
@@ -140,8 +150,17 @@ def consensus(event, agents, now, policy, *, position=None):
     # An exit keeps its own, much wider window: see max_exit_signal_age_ms.
     # An unproven reduction is still refused by POSITION_LIFECYCLE_REQUIRED
     # below, so the wider window can never authorize an unowned exit.
-    if not 0<=now-event.exchange_ms<=policy.signal_window_ms(event.action): blockers.append('STALE_SIGNAL')
     reducing=event.action in {'REDUCE','CLOSE'}
+    # A CLOSE on a position we have PROVEN we hold is never refused for age.
+    # Signal age says whether a market opportunity has passed; it says nothing
+    # about whether we should still be carrying exposure the leader has already
+    # abandoned. The risk is one-way - this can only reduce a position, never
+    # open one - and an unproven exit is still refused by
+    # POSITION_LIFECYCLE_REQUIRED below. REDUCE keeps its window: a partial
+    # trim IS a sizing opinion, and a stale one is worth refusing.
+    if not (event.action=='CLOSE' and position is not None):
+        if not 0<=now-event.exchange_ms<=policy.signal_window_ms(event.action):
+            blockers.append('STALE_SIGNAL')
     if reducing and position is not None:
         if (position.instrument!=event.instrument or position.evidence!='VERIFIED' or
                 (position.side=='LONG')==(event.side=='BUY')):

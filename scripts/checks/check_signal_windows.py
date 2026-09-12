@@ -62,10 +62,18 @@ for action, age in (('CLOSE', 315), ('REDUCE', 766)):
     d = consensus(event(action=action, side='SELL', age_s=age), board('SELL'), NOW, P, position=held)
     ok('%s at %ds closes' % (action, age), d.decision == 'COPY_SHORT' and not d.blockers, d)
 
+# A proven CLOSE stopped consulting the window at all in the exit-path fix, so
+# the equal-window experiment now has to be run on REDUCE, which still honours
+# it. That is the intended contract, not a weakened test: signal age tells you
+# whether a market opportunity has passed, and a full exit from exposure the
+# leader has abandoned is not an opportunity.
 single = IntelligencePolicy(max_exit_signal_age_ms=P.max_signal_age_ms)
-d = consensus(event(action='CLOSE', side='SELL', age_s=315), board('SELL'), NOW, single, position=held)
-ok('setting the windows equal restores the old refusal',
+d = consensus(event(action='REDUCE', side='SELL', age_s=315), board('SELL'), NOW, single, position=held)
+ok('setting the windows equal restores the old refusal for REDUCE',
    d.decision == 'WAIT' and 'STALE_SIGNAL' in d.blockers, d)
+d = consensus(event(action='CLOSE', side='SELL', age_s=315), board('SELL'), NOW, single, position=held)
+ok('but a proven CLOSE ignores the window even when it is narrow',
+   d.decision == 'COPY_SHORT' and not d.blockers, d)
 
 
 print('the wider window does not leak into entries or unowned exits')
@@ -79,13 +87,16 @@ ok('an UNPROVEN exit is still refused at 315s',
    d.decision == 'WAIT' and 'POSITION_LIFECYCLE_REQUIRED' in d.blockers, d)
 
 beyond = P.max_exit_signal_age_ms // 1000 + 60
-d = consensus(event(action='CLOSE', side='SELL', age_s=beyond), board('SELL'), NOW, P, position=held)
-ok('an exit past its own window is still refused',
+d = consensus(event(action='REDUCE', side='SELL', age_s=beyond), board('SELL'), NOW, P, position=held)
+ok('a REDUCE past its own window is still refused',
    d.decision == 'WAIT' and 'STALE_SIGNAL' in d.blockers, d)
+d = consensus(event(action='CLOSE', side='SELL', age_s=beyond), board('SELL'), NOW, P, position=held)
+ok('a proven CLOSE past that window now goes through - the whole point',
+   d.decision == 'COPY_SHORT' and not d.blockers, d)
 
-future = event(action='CLOSE', side='SELL', age_s=-120)
+future = event(action='REDUCE', side='SELL', age_s=-120)
 d = consensus(future, board('SELL'), NOW, P, position=held)
-ok('an exit timestamped in the future is refused',
+ok('a REDUCE timestamped in the future is refused',
    d.decision == 'WAIT' and 'STALE_SIGNAL' in d.blockers, d)
 
 

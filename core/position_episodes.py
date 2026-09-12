@@ -12,7 +12,12 @@ from core.foundation.store import encoded,digest,scope_key
 class PositionEpisode(Contract):
     episode_id: Name
     scope: Scope
-    mode: Literal['PAPER_AUTO','SHADOW','LIVE_CONFIRM','OBSERVE']
+    # Every mode the authorization policy can hold must be nameable here.
+    # LIVE_AUTO was added to the policy without being added to this list,
+    # so every unattended live OPEN raised ValidationError, rolled the
+    # transaction back and quarantined the job. It failed closed - nothing
+    # was ever submitted - but the mode could not work at all.
+    mode: Literal['PAPER_AUTO','SHADOW','LIVE_CONFIRM','LIVE_AUTO','OBSERVE']
     leader: str
     instrument: InstrumentId
     first_event_id: Name

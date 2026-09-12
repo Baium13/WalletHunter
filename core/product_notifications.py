@@ -31,7 +31,7 @@ def execution_identity(data):
         if isinstance(node,dict):nodes.append(node)
     ids={n['intent_id'] for n in nodes if isinstance(n.get('intent_id'),str) and n['intent_id']}
     mode=data.get('mode') or data.get('execution_mode')
-    mode={'PAPER_AUTO':'PAPER','LIVE_CONFIRM':'LIVE'}.get(mode,mode)
+    mode={'PAPER_AUTO':'PAPER','LIVE_CONFIRM':'LIVE','LIVE_AUTO':'LIVE'}.get(mode,mode)
     return (next(iter(ids)) if len(ids)==1 else None),mode
 
 

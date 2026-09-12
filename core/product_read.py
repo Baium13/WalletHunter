@@ -302,7 +302,7 @@ class ProductReadModel:
             h=m.get('worker',{})
             if h.get('readiness_version')=='configured-worker-v1' and h.get('heartbeat_ms',0)>worker.get('heartbeat_ms',0):worker=h
         return clean(dict(**analysis_projection(latest,worker,self.clock()),scope=self.scope.model_dump(mode='json'),
-            analysis_scope='PUBLIC_RESEARCH',input_evidence=flow,shared_across_modes=['OBSERVE','PAPER_AUTO','SHADOW','LIVE_CONFIRM']))
+            analysis_scope='PUBLIC_RESEARCH',input_evidence=flow,shared_across_modes=['OBSERVE','PAPER_AUTO','SHADOW','LIVE_CONFIRM','LIVE_AUTO']))
 
     def discovery(self):
         result={'status':'UNKNOWN','counts':None,'leaders':[],'coverage':{'meaning':'CURRENTLY_OBSERVED_OR_SUBSCRIBED_MARKETS','instruments':None}}

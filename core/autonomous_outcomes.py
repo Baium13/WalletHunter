@@ -60,12 +60,12 @@ def record_outcome(db,episode):
         for fill in fills:
             # Live fees are unavailable in the current canonical fill contract.
             # Never substitute simulated fees or zero for missing exchange fees.
-            fee=fill['size']*fill['price']*costs['fee_bps']/10000 if episode.mode!='LIVE_CONFIRM' and costs else None
+            fee=fill['size']*fill['price']*costs['fee_bps']/10000 if episode.mode not in ('LIVE_CONFIRM','LIVE_AUTO') and costs else None
             normalized.append(dict(fill,fee=fee))
         executions.append(dict(intent_id=row['id'],action=intent['action'],fills=normalized,
             reference_price=prediction['market']['price']))
     direction='LONG' if json.loads(rows[0]['prediction'])['event']['side']=='BUY' else 'SHORT'
-    mode={'PAPER_AUTO':'PAPER','SHADOW':'SHADOW','LIVE_CONFIRM':'LIVE'}[episode.mode]
+    mode={'PAPER_AUTO':'PAPER','SHADOW':'SHADOW','LIVE_CONFIRM':'LIVE','LIVE_AUTO':'LIVE'}[episode.mode]
     if mode=='LIVE' and any(x!='EXCHANGE' for x in evidence):raise ValueError('Live evidence mismatch')
     result=calculate(executions,direction)
     outcome=dict(result,version='outcome-v2',mode=mode,operating_mode=episode.mode,episode_id=episode.episode_id,

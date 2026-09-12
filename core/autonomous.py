@@ -48,6 +48,44 @@ class LiveGuardPolicy(Contract):
     policy_id: str='live-guard-v1'
 
 
+
+def carried_attribution(fresh, previous):
+    """Carry proven ownership across a fresh exchange read.
+
+    A live account read returns every position as UNKNOWN: the exchange cannot
+    say which of its positions we opened. ``publish_portfolio_in`` replaces the
+    snapshot wholesale, so the refresh that runs before every live decision
+    erased the VERIFIED attribution the gateway had just written from the order,
+    fill and delta proof of our own submission.
+
+    Measured on an offline LIVE_AUTO run of the real backend: one OPEN filled
+    and was recorded VERIFIED; the next event refreshed the account, the
+    position came back UNKNOWN, and the CLOSE was refused pre-consensus as
+    REDUCTION_OWNERSHIP_OR_SIDE while the ledger reported ATTRIBUTION_UNKNOWN.
+    An unattended live account could therefore open a position and then never
+    close it, and never open another.
+
+    Ownership is re-asserted only where the exchange still reports exactly what
+    we proved: same instrument, same side, same size. Any divergence leaves the
+    position UNKNOWN, because a position that moved is no longer the position
+    the receipt proved. Nothing here can create ownership that was not already
+    canonical - it only stops a read from discarding it.
+    """
+    if previous is None: return fresh
+    proven={p.instrument:p for p in previous.positions if p.evidence=='VERIFIED'}
+    if not proven: return fresh
+    positions=[]
+    for position in fresh.positions:
+        prior=proven.get(position.instrument)
+        if (prior is None or position.evidence!='UNKNOWN' or prior.side!=position.side
+                or prior.notional<=0 or not math.isclose(prior.size,position.size,rel_tol=1e-9,abs_tol=0.)):
+            positions.append(position); continue
+        scale=position.notional/prior.notional
+        positions.append(position.model_copy(update={'evidence':'VERIFIED','order_ids':prior.order_ids,
+            'contributions':tuple(c.model_copy(update={'notional':c.notional*scale}) for c in prior.contributions)}))
+    return fresh.model_copy(update={'positions':tuple(positions)})
+
+
 class AutonomousBackend:
     @staticmethod
     def _child_event_id(parent, suffix):
@@ -303,6 +341,7 @@ class AutonomousBackend:
             # would stall every other consumer of this store.
             fresh=self.evidence(before.revision+1,event.instrument.dex)
             if fresh is not None:
+                fresh=carried_attribution(fresh,before)
                 with self.store.transaction() as db:
                     self.store.publish_portfolio_in(db,fresh,event.event_id)
                 before=fresh
@@ -502,6 +541,25 @@ class AutonomousBackend:
                             ledger=AutonomousLedger(before,self.allocation_policy)
                             self.gateway.authorize_paper(intent,auth)
                             receipt=self.gateway.execute(intent,MarketSnapshot.model_validate(body['market']),autonomous_ledger=ledger)
+                        elif self.auth_policy.mode=='LIVE_AUTO':
+                            # No canonical reservation exists, so nothing was ever
+                            # signed: the gateway reserves before it submits. Do not
+                            # re-sign it here. The copy window is tens of seconds, so
+                            # an entry that survived a crash is stale even while its
+                            # grant is technically valid, and this path never evaluates
+                            # the live guard - halted, daily loss and concurrency are
+                            # only checked on the decision path. Abandon the unsent
+                            # action and let the next leader event decide afresh.
+                            # Without this branch a LIVE_AUTO job fell into the
+                            # confirmation wait below and stalled forever, because no
+                            # human confirmation is ever minted in this mode.
+                            body['status']='ABANDONED_BEFORE_SUBMISSION'
+                            from core.position_episodes import PositionEpisode
+                            with self.store.transaction() as db:
+                                episode=db.execute('SELECT p.body FROM position_episodes p JOIN episode_actions a ON a.episode=p.id WHERE a.id=?',(row['id'],)).fetchone()
+                                if episode:self.episodes.transition_in(db,PositionEpisode.model_validate_json(episode[0]),row['id'],'REJECTED',{'reason':'ABANDONED_BEFORE_SUBMISSION','no_submission':True})
+                                db.execute('UPDATE autonomous_decisions SET body=? WHERE id=?',(json.dumps(body),row['id']))
+                            self.jobs.stage(job['event_id'],'COMPLETED');continue
                         else:
                             with self.store.transaction() as db:
                                 confirmed=db.execute('SELECT body FROM authorization_confirmations WHERE id=? AND scope=?',(intent.intent_id,scope_key(scope))).fetchone()

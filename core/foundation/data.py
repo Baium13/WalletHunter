@@ -20,7 +20,7 @@ class MarketData:
         self.reader, self.store, self.clock = reader, store, clock_ms
         self.max_age, self.min_request, self.capacity = max_age_ms, min_request_ms, capacity
         self._cache, self._sequences, self._gaps = {}, {}, set()
-        self._last_request = None
+        self._last_request = {}
         self._lock = threading.RLock()
 
     def _scope(self, scope, instrument):
@@ -45,9 +45,10 @@ class MarketData:
             if current and instrument not in self._gaps and self._fresh(current, now):
                 self._publish(scope, current)
                 return current
-            if self._last_request is not None and now-self._last_request < self.min_request:
+            last_request = self._last_request.get(instrument)
+            if last_request is not None and now-last_request < self.min_request:
                 raise DataUnavailable("REST_RATE_LIMIT")
-            self._last_request = now
+            self._last_request[instrument] = now
             try:
                 coin = (instrument.dex+":" if instrument.dex else "")+instrument.symbol
                 raw = self.reader._info({"type": "l2Book", "coin": coin})

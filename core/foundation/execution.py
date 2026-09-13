@@ -249,6 +249,65 @@ class ExecutionGateway:
             if old and old[0] != digest(intent): raise ValueError('Grant identity collision')
             db.execute('INSERT OR IGNORE INTO grants VALUES(?,?,?)', (intent.intent_id, scope_key(intent.scope), digest(intent)))
 
+    def authorize_protective(self, intent, evidence):
+        """A reducing-only grant that carries no consensus, because it is not an opinion.
+
+        Every other grant in this gateway rests on an approving consensus over a
+        leader event. A protective exit has neither and must not pretend to: it
+        exists precisely because nothing decided anything - the leader did not
+        close, the feed may be dead, and the position is past a limit the
+        account set for itself.
+
+        So the authority is constrained to what it is for. It can only reduce or
+        close, never open or add; the position must already be canonically ours,
+        VERIFIED with our own source attribution; the size may not exceed what we
+        hold, and a CLOSE must be exactly what we hold; and the supplied evidence
+        must name at least one triggered reason, which is stored immutably beside
+        the grant. Risk, the ledger, reconciliation and the adapter's own scope
+        check all still run afterwards, unchanged.
+        """
+        from .copy_execution import HyperliquidExecutionAdapter
+        intent = OrderIntent.model_validate_json(intent.model_dump_json())
+        if intent.action not in ('REDUCE', 'CLOSE'):
+            raise ValueError('Protective authority may only reduce exposure')
+        paper = (type(self.__exchange) is FakeExchange and intent.version == 1
+                 and intent.execution_mode == 'PAPER' and intent.authorization == 'PAPER_POLICY')
+        live = (type(self.__exchange) is HyperliquidExecutionAdapter and intent.version == 3
+                and intent.execution_mode == 'LIVE' and intent.authorization == 'AUTONOMOUS_POLICY')
+        if not (paper or live):
+            raise ValueError('Protective adapter and policy required')
+        if live: self.__exchange.validate_scope(intent)
+        reasons = tuple(evidence.get('reasons') or ()) if isinstance(evidence, dict) else ()
+        if not reasons or not all(isinstance(reason, str) and reason for reason in reasons):
+            raise ValueError('Protective authority requires a stated reason')
+        with self.store.transaction() as db:
+            self.store.bind(db, intent.scope)
+            db.execute("""CREATE TABLE IF NOT EXISTS protective_exits(id TEXT PRIMARY KEY,scope TEXT NOT NULL,body TEXT NOT NULL)""")
+            db.execute("CREATE TRIGGER IF NOT EXISTS protective_immutable BEFORE UPDATE ON protective_exits BEGIN SELECT RAISE(ABORT,'immutable protective exit'); END")
+            db.execute("CREATE TRIGGER IF NOT EXISTS protective_retained BEFORE DELETE ON protective_exits BEGIN SELECT RAISE(ABORT,'immutable protective exit'); END")
+            held = self.store.portfolio_in(db, intent.scope)
+            position = next((row for row in held.positions if row.instrument == intent.instrument), None)
+            if (position is None or position.evidence != 'VERIFIED' or not position.contributions
+                    or any(c.source != intent.source for c in position.contributions)):
+                raise ValueError('Protective exit requires a position this account has proven it owns')
+            if (position.side == 'LONG') == (intent.side == 'BUY'):
+                raise ValueError('Protective exit must trade against the position')
+            if intent.size > position.size:
+                raise ValueError('Protective exit may not exceed the position')
+            if intent.action == 'CLOSE' and intent.size != position.size:
+                raise ValueError('A protective CLOSE must be exactly the position')
+            record = json.dumps({'version': 'protective-exit-v1', 'intent_id': intent.intent_id,
+                'reasons': list(reasons), 'episode_id': evidence.get('episode_id'),
+                'policy': evidence.get('policy'), 'position': json.loads(encoded(position)),
+                'decided_ms': self.clock()}, sort_keys=True, allow_nan=False)
+            old = db.execute('SELECT body FROM protective_exits WHERE id=?', (intent.intent_id,)).fetchone()
+            if old and old[0] != record: raise ValueError('Protective exit identity collision')
+            db.execute('INSERT OR IGNORE INTO protective_exits VALUES(?,?,?)',
+                (intent.intent_id, scope_key(intent.scope), record))
+            previous = db.execute('SELECT intent_hash FROM grants WHERE id=?', (intent.intent_id,)).fetchone()
+            if previous and previous[0] != digest(intent): raise ValueError('Grant identity collision')
+            db.execute('INSERT OR IGNORE INTO grants VALUES(?,?,?)', (intent.intent_id, scope_key(intent.scope), digest(intent)))
+
     def execute(self, intent, market, *, copy_ledger=None, autonomous_ledger=None):
         intent = OrderIntent.model_validate_json(intent.model_dump_json())
         with self.store.transaction() as db:

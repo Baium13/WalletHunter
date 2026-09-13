@@ -72,6 +72,28 @@ class EpisodeService:
         if body['authorization']['outcome']=='AUTHORIZED':
             self.transition_in(db,episode,intent.intent_id,'AUTHORIZED',body['authorization'])
 
+    def prepare_protective_in(self,db,body,intent,episode):
+        """Link a policy-driven exit to the episode it closes.
+
+        prepare_in() finds the episode from the leader event that caused the
+        action. A protective exit has no leader event - it is caused by this
+        account's own policy, precisely because nothing else acted - so the
+        episode is named directly rather than inferred from a synthetic event.
+        """
+        original=json.dumps(body,sort_keys=True,allow_nan=False)
+        old=db.execute('SELECT body FROM autonomous_predictions WHERE id=?',(intent.intent_id,)).fetchone()
+        if old:
+            if old[0]!=original: raise ValueError('Immutable prediction collision')
+            return
+        if intent.action not in ('REDUCE','CLOSE'): raise ValueError('Protective action reduces only')
+        if episode.scope!=intent.scope or episode.instrument!=intent.instrument or episode.state=='CLOSED':
+            raise ValueError('Protective exit episode mismatch')
+        db.execute('INSERT INTO autonomous_predictions VALUES(?,?,?)',(intent.intent_id,scope_key(intent.scope),original))
+        db.execute('INSERT INTO episode_actions VALUES(?,?)',(intent.intent_id,episode.episode_id))
+        self.transition_in(db,episode,intent.intent_id,'PROPOSED',
+            {'prediction_id':intent.intent_id,'authority':'PROTECTION_POLICY'})
+        self.transition_in(db,episode,intent.intent_id,'AUTHORIZED',dict(body['authorization']))
+
     def active_in(self,db,scope,mode,leader,instrument):
         rows=db.execute('SELECT body FROM position_episodes WHERE scope=?',(scope_key(scope),)).fetchall()
         matches=[]

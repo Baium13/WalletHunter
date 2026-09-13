@@ -92,7 +92,7 @@ class AutonomousBackend:
         return hashlib.sha256((parent+'|'+suffix).encode()).hexdigest()[:48]
     def __init__(self,store,exchange,allocation_policy,authorization_policy,risk_policy,clock,cost_model=None,
                  *,multi_instrument=False,symbols=(),precision=None,live_guard=None,evidence=None,
-                 ceilings=None,leader_leverage=None):
+                 ceilings=None,leader_leverage=None,protection=None):
         from core.foundation.copy_execution import HyperliquidExecutionAdapter
         expected = HyperliquidExecutionAdapter if authorization_policy.mode in ('LIVE_CONFIRM','LIVE_AUTO') else FakeExchange
         if type(exchange) is not expected: raise ValueError('Mode-specific controlled adapter required')
@@ -126,6 +126,14 @@ class AutonomousBackend:
         if authorization_policy.mode=='LIVE_AUTO' and evidence is None:
             raise ValueError('LIVE_AUTO requires an account evidence reader')
         self.evidence=evidence
+        # The only exit that does not need the leader to act. Off unless the
+        # configuration names a threshold; a policy whose thresholds are all
+        # zero is a stop that silently never fires, so it is refused rather
+        # than kept.
+        if protection is not None:
+            if protection.scope!=authorization_policy.scope: raise ValueError('Scope mismatch')
+            if not protection.enabled: raise ValueError('A protection policy with no threshold protects nothing')
+        self.protection=protection
         self.authorization=AuthorizationService(store)
         self.gateway=ExecutionGateway(store,self.risk,exchange,clock)
         from core.foundation.paper_costs import PaperCosts
@@ -202,6 +210,109 @@ class AutonomousBackend:
             health['processing_lag_ms']=max(0,self.clock()-pending_job) if pending_job else 0
             db.execute('INSERT OR REPLACE INTO autonomous_health VALUES(?,?)',(scope,json.dumps(health)))
         return True
+
+    def protect(self,market):
+        """Close what the account's own policy says must be closed.
+
+        ``market(instrument)`` returns a fresh MarketSnapshot for an instrument,
+        or None when the venue cannot be read. Returns one record per position
+        it acted on or tried to act on, so an operator log shows the exits it
+        took AND the exits it could not take: a stop that quietly does nothing
+        is worse than no stop at all.
+
+        This is the only path here that can close a position without a leader
+        event. It can never open or add - the authority it uses reduces only -
+        and Risk, the ledger, reconciliation and the adapter's own scope check
+        all still run exactly as they do for a copied exit. In particular an
+        unresolved execution still blocks it, because closing on a position we
+        cannot currently size is how one stuck order becomes two.
+        """
+        from pathlib import Path
+        from core.ai_review import account_guard
+        from core.position_protection import protection_reasons
+        from core.position_episodes import PositionEpisode
+        if self.protection is None or self.auth_policy.mode not in ('PAPER_AUTO','LIVE_AUTO'): return []
+        scope=self.auth_policy.scope
+        results=[]
+        with account_guard(Path(self.store.path).parent,scope.account):
+            now=self.clock()
+            with self.store.transaction() as db:
+                portfolio=self.store.portfolio_in(db,scope)
+                pending=bool(db.execute("SELECT 1 FROM intents WHERE scope=? AND status IN ('SUBMITTING','UNKNOWN','PARTIAL')",
+                    (scope_key(scope),)).fetchone())
+                episodes=[PositionEpisode.model_validate_json(r[0]) for r in
+                    db.execute('SELECT body FROM position_episodes WHERE scope=?',(scope_key(scope),)).fetchall()]
+                if not pending and portfolio.evidence=='FAKE' and now>portfolio.received_ms:
+                    # Same renewal the decision path performs: local PAPER state
+                    # is authoritative, and a stop must not be refused for the
+                    # staleness of a watermark only we advance.
+                    portfolio=portfolio.model_copy(update={'revision':portfolio.revision+1,'exchange_ms':now,'received_ms':now})
+                    self.store.publish_portfolio_in(db,portfolio,'protection-'+str(now))
+            for episode in episodes:
+                if episode.mode!=self.auth_policy.mode or episode.state not in {'OPEN','INCREASED','REDUCED','PARTIAL'}:
+                    continue
+                if self.evidence is not None and not pending:
+                    fresh=self.evidence(portfolio.revision+1,episode.instrument.dex)
+                    if fresh is not None:
+                        fresh=carried_attribution(fresh,portfolio)
+                        with self.store.transaction() as db:
+                            self.store.publish_portfolio_in(db,fresh,'protection-'+str(now))
+                        portfolio=fresh
+                position=next((p for p in portfolio.positions
+                               if p.instrument==episode.instrument and p.evidence=='VERIFIED'),None)
+                if position is None: continue
+                snapshot=market(episode.instrument)
+                reasons=protection_reasons(position,snapshot.price if snapshot is not None else None,
+                                           episode.created_ms,now,self.protection)
+                if not reasons: continue
+                entry={'episode_id':episode.episode_id,'symbol':episode.instrument.symbol,'reasons':list(reasons)}
+                if snapshot is None:
+                    results.append(dict(entry,status='MARKET_UNAVAILABLE'));continue
+                try:
+                    results.append(dict(entry,**self._protective_exit(episode,position,snapshot,reasons,now)))
+                except Exception as exc:
+                    # A refused stop is a fact the operator needs, not a crash
+                    # that stops the remaining positions being checked.
+                    results.append(dict(entry,status='REFUSED',detail=_fault(exc)))
+        return results
+
+    def _protective_exit(self,episode,position,market,reasons,now):
+        side='SELL' if position.side=='LONG' else 'BUY'
+        limit=(market.bid if side=='SELL' else market.ask) or market.price
+        live=self.auth_policy.mode=='LIVE_AUTO'
+        # One attempt per minute per episode: a retry inside the same minute is
+        # the same intent identity, and a retry after a refusal is a new one.
+        action_id=self._child_event_id(episode.episode_id,'protect|%d'%(now//60000))
+        intent=OrderIntent(version=3 if live else 1,intent_id=action_id,scope=episode.scope,
+            instrument=episode.instrument,source=self.allocation_policy.source,action='CLOSE',side=side,
+            size=position.size,limit_price=limit,leverage=position.leverage,
+            slippage_pct=self.risk.policy.max_slippage_pct,
+            authorization='AUTONOMOUS_POLICY' if live else 'PAPER_POLICY',
+            execution_mode='LIVE' if live else 'PAPER',correlation_id=action_id,
+            created_ms=now,expires_ms=now+self.auth_policy.max_signal_age_ms)
+        body={'version':'protective-exit-v1','authority':'PROTECTION_POLICY','mode':self.auth_policy.mode,
+            'leader':episode.leader,'agents':[],'consensus':None,
+            # Derived, and labelled as derived. No leader event caused this, and
+            # none is invented: these fields describe the action we are taking.
+            'event':{'wallet':episode.leader,'action':'CLOSE','side':side,'derived_from':'PROTECTION_POLICY',
+                     'instrument':episode.instrument.model_dump(mode='json'),'exchange_ms':now},
+            'protection':{'policy':self.protection.model_dump(mode='json'),'reasons':list(reasons),
+                          'held_ms':now-episode.created_ms,'mark':market.price,
+                          'liquidation_price':position.liquidation_price},
+            'market':market.model_dump(mode='json'),
+            'authorization':{'outcome':'AUTHORIZED','authority':'PROTECTION_POLICY','mode':self.auth_policy.mode,
+                             'created_ms':now,'expires_ms':intent.expires_ms},
+            'cost_model':None if live else self.cost_model.model_dump(mode='json')}
+        with self.store.transaction() as db:
+            self.episodes.prepare_protective_in(db,body,intent,episode)
+        self.gateway.authorize_protective(intent,{'reasons':list(reasons),'episode_id':episode.episode_id,
+            'policy':self.protection.model_dump(mode='json')})
+        ledger=AutonomousLedger(self.store.portfolio(episode.scope),self.allocation_policy)
+        receipt=self.gateway.execute(intent,market,autonomous_ledger=ledger)
+        final=self.episodes.sync(intent.intent_id,episode.scope)
+        return {'status':receipt.status,'intent_id':intent.intent_id,
+                'episode_state':final.state if final else None,
+                'risk':None if receipt.status!='REJECTED' else 'RISK_REJECTED'}
 
     def process(self,record):
         from pathlib import Path
@@ -677,6 +788,7 @@ def load_paper_backend(config_path,state_directory,network,clock,precision=None,
     from core.foundation.contracts import Positive,PortfolioSnapshot
     from core.foundation.store import Store
     from core.foundation.paper_costs import PaperCosts
+    from core.position_protection import PositionProtectionPolicy
     class Config(BaseModel):
         model_config=ConfigDict(extra='forbid')
         allocation: AutonomousAllocationPolicy
@@ -689,6 +801,7 @@ def load_paper_backend(config_path,state_directory,network,clock,precision=None,
         multi_instrument: bool=False
         symbols: tuple[str,...]=()
         live_guard: LiveGuardPolicy|None=None
+        protection: PositionProtectionPolicy|None=None
     config=Config.model_validate_json(Path(config_path).read_text(encoding='utf-8'))
     if config.authorization.scope.network!=network: raise ValueError('Explicit configuration required')
     if config.authorization.mode not in ('OBSERVE','PAPER_AUTO','SHADOW','LIVE_AUTO'):
@@ -709,7 +822,8 @@ def load_paper_backend(config_path,state_directory,network,clock,precision=None,
     exchange=exchange if exchange is not None else FakeExchange(directory/'fake.sqlite')
     backend=AutonomousBackend(store,exchange,config.allocation,config.authorization,config.risk,clock,config.costs,
         multi_instrument=config.multi_instrument,symbols=config.symbols,precision=precision,
-        live_guard=config.live_guard,evidence=evidence,ceilings=ceilings,leader_leverage=leader_leverage)
+        live_guard=config.live_guard,evidence=evidence,ceilings=ceilings,leader_leverage=leader_leverage,
+        protection=config.protection)
     with store.transaction() as db:
         row=db.execute('SELECT body FROM portfolios WHERE scope=?',(scope_key(config.authorization.scope),)).fetchone()
         # Only a simulated run may invent its own opening balance. A live scope
